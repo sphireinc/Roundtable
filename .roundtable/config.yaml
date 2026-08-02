@@ -1,0 +1,71 @@
+version: 1
+project_name: Roundtable
+storage:
+  sqlite_path: .roundtable/roundtable.db
+  wal: true
+mcp:
+  transport: unix
+  socket_path: .roundtable/mcp/roundtable.sock
+agents:
+  chair:
+    role: Chair
+    adapter: claude
+    model: default
+  architect:
+    role: Architect
+    adapter: claude
+    model: default
+  implementers:
+    count: 2
+    adapter: codex
+    model: default
+  reviewers:
+    count: 1
+    adapter: gemini
+    model: default
+  tester:
+    role: Tester
+    adapter: codex
+    model: default
+  security:
+    role: Security
+    adapter: claude
+    model: default
+  memory_oracle:
+    role: MemoryOracle
+    adapter: claude
+    model: default
+adapters:
+  codex:
+    command: codex
+    supports_resume: true
+    resume_pattern: "codex resume {{external_session_id}}"
+    supports_mcp: true
+    supports_readonly_workspace: true
+    captures_session_id: true
+  claude:
+    command: claude
+    supports_resume: true
+    resume_pattern: "claude --resume {{external_session_id}}"
+    supports_mcp: true
+    supports_readonly_workspace: true
+    captures_session_id: true
+  gemini:
+    command: gemini
+    supports_resume: true
+    resume_pattern: "gemini resume {{external_session_id}}"
+    supports_mcp: true
+    supports_readonly_workspace: true
+    captures_session_id: true
+  opencode:
+    command: opencode
+    supports_resume: false
+    supports_mcp: true
+    supports_readonly_workspace: true
+    captures_session_id: false
+  generic:
+    command: sh
+    supports_resume: false
+    supports_mcp: false
+    supports_readonly_workspace: true
+    captures_session_id: false

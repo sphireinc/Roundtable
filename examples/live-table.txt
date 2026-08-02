@@ -1,0 +1,20 @@
+GOAL
+Refactor auth to support refresh-token rotation without breaking current login
+
+ACTIVE CLAIMS
+Claude    write   src/auth/session.go          expires 12m
+Codex     read    tests/auth/*                 waiting on Claude
+Gemini    review  src/auth/session.go          active
+
+OPEN PROPOSALS
+P-0017 Claude: Add refresh-token validation
+  Codex: approve, requests regression test
+  Gemini: revise, concern about token replay
+  Chair: waiting for Claude revision
+
+DECISIONS
+D-0005 Use hash-at-rest for refresh tokens
+D-0006 Keep current login response shape unchanged
+
+TRANSACTIONS
+TX-0003 Applied P-0011, tests passed
