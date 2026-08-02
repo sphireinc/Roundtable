@@ -1,0 +1,7 @@
+{
+  "name": "roundtable",
+  "transport": "unix",
+  "socket_path": ".roundtable/mcp/roundtable.sock",
+  "manifest_path": ".roundtable/mcp/AGENT_MCP_MANIFEST.md",
+  "tools_schema_path": ".roundtable/mcp/tools.schema.json"
+}

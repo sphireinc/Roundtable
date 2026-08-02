@@ -1,0 +1,80 @@
+{
+  "tools": [
+    {
+      "name": "table.get_state",
+      "description": "Return current Roundtable state including tasks, agents, claims, proposals, votes, decisions, blockers, and required human approvals.",
+      "input_schema": { "type": "object", "properties": {} }
+    },
+    {
+      "name": "task.get",
+      "description": "Fetch a task by id.",
+      "input_schema": {
+        "type": "object",
+        "required": ["task_id"],
+        "properties": { "task_id": { "type": "string" } }
+      }
+    },
+    {
+      "name": "resource.claim",
+      "description": "Claim a file, symbol, directory, command, endpoint, schema, or other resource before proposing changes.",
+      "input_schema": {
+        "type": "object",
+        "required": ["resource_type", "resource_id", "claim_type", "task_id"],
+        "properties": {
+          "resource_type": { "type": "string", "enum": ["repo", "directory", "file", "symbol", "range", "endpoint", "schema", "command", "test-suite", "document-section", "design-file"] },
+          "resource_id": { "type": "string" },
+          "claim_type": { "type": "string", "enum": ["read", "write", "review", "exclusive"] },
+          "task_id": { "type": "string" },
+          "ttl_seconds": { "type": "integer" },
+          "rationale": { "type": "string" }
+        }
+      }
+    },
+    {
+      "name": "proposal.create",
+      "description": "Submit a patch proposal. The orchestrator validates claims and consensus before applying.",
+      "input_schema": {
+        "type": "object",
+        "required": ["task_id", "title", "summary_md", "affected_resources", "risk", "patch"],
+        "properties": {
+          "task_id": { "type": "string" },
+          "title": { "type": "string" },
+          "summary_md": { "type": "string" },
+          "affected_resources": { "type": "array", "items": { "type": "string" } },
+          "risk": { "type": "string", "enum": ["low", "normal", "high", "critical"] },
+          "patch": { "type": "string" },
+          "expected_tests": { "type": "array", "items": { "type": "string" } },
+          "rollback_notes": { "type": "string" }
+        }
+      }
+    },
+    {
+      "name": "vote.cast",
+      "description": "Cast a role-aware vote on a proposal.",
+      "input_schema": {
+        "type": "object",
+        "required": ["proposal_id", "vote", "reason_md"],
+        "properties": {
+          "proposal_id": { "type": "string" },
+          "vote": { "type": "string", "enum": ["approve", "approve_with_notes", "revise", "reject", "veto", "abstain"] },
+          "confidence": { "type": "number" },
+          "reason_md": { "type": "string" }
+        }
+      }
+    },
+    {
+      "name": "memory.query",
+      "description": "Query persistent project memory and prior decisions.",
+      "input_schema": {
+        "type": "object",
+        "required": ["query"],
+        "properties": {
+          "query": { "type": "string" },
+          "scope": { "type": "string" },
+          "kind": { "type": "string" },
+          "limit": { "type": "integer" }
+        }
+      }
+    }
+  ]
+}

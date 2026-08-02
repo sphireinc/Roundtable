@@ -1,0 +1,55 @@
+  - Bootstrap application skeleton in Go
+  - roundtable init, roundtable run, roundtable table, roundtable symbols
+  - SQLite setup with WAL pragmas and full initial schema
+  - Repository/store layer for runs, tasks, claims, proposals, votes, decisions, transactions, memory, sessions, events
+  - Event bus/pub-sub foundation
+  - Generated MCP manifest/schema/server metadata from a central registry
+  - Working local MCP runtime and socket server
+  - Implemented MCP handlers for:
+      - table.get_state
+      - task.list/get/create/update_status
+      - resource.claim/release/claim_status/get/search
+      - repo.read_file/search/symbols
+      - memory.query/record
+      - proposal.create/get/list
+      - vote.cast/list
+      - decision.record
+      - patch.validate/reject/apply
+
+  - Claims system with:
+      - lifecycle transitions
+      - TTL expiry
+      - file/directory conflicts
+      - symbol/file/directory overlap handling
+
+  - Symbol indexing for Go, TypeScript, Python
+  - Patch parsing, temp-workspace validation, real patch application via patch, workspace hashing, rollback artifact generation
+  - Extracted policy evaluation package with approval/blocker/veto/high-risk path handling
+  - Automatic file resource inference from patch diffs
+  - Test coverage across DB, claims, symbols, repo patching, MCP runtime, and CLI paths
+  - Extract proposal/patch orchestration out of internal/mcp/runtime.go into dedicated services
+  - Real policy engine loading/compiling from POLICIES.ROUNDTABLE.md instead of hardcoded logic
+  - Human approval workflow and persistence
+  - Security review workflow/tool behavior beyond veto semantics
+  - Patch/resource validation at symbol granularity, not just inferred file paths
+  - Base-hash validation for stale claims/resources during patch apply
+  - Resume/session subsystem: adapter capability wiring
+  - Resume/session subsystem: resume briefings
+  - Resume/session subsystem: agent session persistence behavior
+  - Resume/session subsystem: stale claim reconciliation
+  - MCP tool coverage gaps: proposal.attach_patch
+  - MCP tool coverage gaps: proposal.request_review
+  - MCP tool coverage gaps: memory summarize/stale handling
+  - MCP tool coverage gaps: testing tools
+  - MCP tool coverage gaps: patch/policy/human/security related remaining tools
+  - Transaction history presentation and richer state projections for inspector/watch/TUI
+  - Git-aware before/after hashes instead of workspace-only hashing when repo exists
+  - More robust patch parser/validator for creates, deletes, renames, multi-file edge cases
+  - End-to-end run/resume/watch/sessions flows
+  - TUI implementation beyond the stub layout
+  - CLI agent adapters for Codex/Claude/Gemini/OpenCode/generic
+  - Actual agent orchestration/chair loop
+  - Broader integration and acceptance testing
+  - Tree-sitter-grade symbol engine if you want to match the original spec more literally
+  - Add live subscriptions/refresh to the TUI and watch path instead of snapshot-first rendering.
+  - Expand acceptance coverage for failure paths, long-running session behavior, interrupted transactions, and concurrent-agent contention.
