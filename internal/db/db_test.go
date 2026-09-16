@@ -39,8 +39,17 @@ func TestOpenBootstrapsControlPlaneSchema(t *testing.T) {
 	if err := sqlDB.QueryRow("SELECT MAX(version) FROM schema_migrations").Scan(&version); err != nil {
 		t.Fatalf("migration version: %v", err)
 	}
-	if version != 3 {
-		t.Fatalf("migration version = %d, want 3", version)
+	if version != 4 {
+		t.Fatalf("migration version = %d, want 4", version)
+	}
+	for _, column := range []string{"revision"} {
+		var count int
+		if err := sqlDB.QueryRow("SELECT COUNT(*) FROM pragma_table_info('workspaces') WHERE name = ?", column).Scan(&count); err != nil {
+			t.Fatalf("workspace column %s: %v", column, err)
+		}
+		if count != 1 {
+			t.Fatalf("workspace column %s missing", column)
+		}
 	}
 }
 

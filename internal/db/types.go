@@ -20,6 +20,14 @@ type Workspace struct {
 	CreatedAt                   string
 	LastOpenedAt                string
 	UpdatedAt                   string
+	Revision                    int
+}
+
+type WorkspaceImpact struct {
+	ActiveSessions     int
+	ActiveClaims       int
+	OpenProposals      int
+	ActiveTransactions int
 }
 
 type Event struct {

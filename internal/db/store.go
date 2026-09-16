@@ -3,6 +3,8 @@ package db
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
+	"errors"
 	"fmt"
 
 	"roundtable/internal/events"
@@ -32,8 +34,8 @@ func (s *Store) UpsertWorkspace(ctx context.Context, workspace Workspace) error 
 	_, err := s.db.ExecContext(ctx, `
 		INSERT INTO workspaces (
 			id, name, root_path, status, display_name, root_alias,
-			canonical_repository_identity, default_branch, last_opened_at
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+			canonical_repository_identity, default_branch, last_opened_at, revision
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(id) DO UPDATE SET
 			name = excluded.name,
 			root_path = excluded.root_path,
@@ -43,8 +45,9 @@ func (s *Store) UpsertWorkspace(ctx context.Context, workspace Workspace) error 
 			canonical_repository_identity = excluded.canonical_repository_identity,
 			default_branch = excluded.default_branch,
 			last_opened_at = excluded.last_opened_at,
+			revision = revision + 1,
 			updated_at = CURRENT_TIMESTAMP
-	`, workspace.ID, workspace.DisplayName, workspace.RootPath, defaultIfEmpty(workspace.Status, "active"), workspace.DisplayName, nullIfEmpty(workspace.RootAlias), nullIfEmpty(workspace.CanonicalRepositoryIdentity), nullIfEmpty(workspace.DefaultBranch), nullIfEmpty(workspace.LastOpenedAt))
+	`, workspace.ID, workspace.DisplayName, workspace.RootPath, defaultIfEmpty(workspace.Status, "active"), workspace.DisplayName, nullIfEmpty(workspace.RootAlias), nullIfEmpty(workspace.CanonicalRepositoryIdentity), nullIfEmpty(workspace.DefaultBranch), nullIfEmpty(workspace.LastOpenedAt), revisionValue(workspace.Revision))
 	return wrapErr("upsert workspace", err)
 }
 
@@ -53,11 +56,11 @@ func (s *Store) GetWorkspace(ctx context.Context, id string) (Workspace, error) 
 		SELECT id, COALESCE(display_name, name), COALESCE(root_alias, ''),
 		       COALESCE(canonical_repository_identity, ''), status,
 		       COALESCE(default_branch, ''), root_path, created_at,
-		       COALESCE(last_opened_at, ''), updated_at
+		       COALESCE(last_opened_at, ''), updated_at, revision
 		FROM workspaces WHERE id = ?
 	`, id)
 	var workspace Workspace
-	if err := row.Scan(&workspace.ID, &workspace.DisplayName, &workspace.RootAlias, &workspace.CanonicalRepositoryIdentity, &workspace.Status, &workspace.DefaultBranch, &workspace.RootPath, &workspace.CreatedAt, &workspace.LastOpenedAt, &workspace.UpdatedAt); err != nil {
+	if err := row.Scan(&workspace.ID, &workspace.DisplayName, &workspace.RootAlias, &workspace.CanonicalRepositoryIdentity, &workspace.Status, &workspace.DefaultBranch, &workspace.RootPath, &workspace.CreatedAt, &workspace.LastOpenedAt, &workspace.UpdatedAt, &workspace.Revision); err != nil {
 		return Workspace{}, fmt.Errorf("get workspace %s: %w", id, err)
 	}
 	return workspace, nil
@@ -68,7 +71,7 @@ func (s *Store) ListWorkspaces(ctx context.Context) ([]Workspace, error) {
 		SELECT id, COALESCE(display_name, name), COALESCE(root_alias, ''),
 		       COALESCE(canonical_repository_identity, ''), status,
 		       COALESCE(default_branch, ''), root_path, created_at,
-		       COALESCE(last_opened_at, ''), updated_at
+		       COALESCE(last_opened_at, ''), updated_at, revision
 		FROM workspaces ORDER BY display_name, id
 	`)
 	if err != nil {
@@ -78,12 +81,19 @@ func (s *Store) ListWorkspaces(ctx context.Context) ([]Workspace, error) {
 	var out []Workspace
 	for rows.Next() {
 		var workspace Workspace
-		if err := rows.Scan(&workspace.ID, &workspace.DisplayName, &workspace.RootAlias, &workspace.CanonicalRepositoryIdentity, &workspace.Status, &workspace.DefaultBranch, &workspace.RootPath, &workspace.CreatedAt, &workspace.LastOpenedAt, &workspace.UpdatedAt); err != nil {
+		if err := rows.Scan(&workspace.ID, &workspace.DisplayName, &workspace.RootAlias, &workspace.CanonicalRepositoryIdentity, &workspace.Status, &workspace.DefaultBranch, &workspace.RootPath, &workspace.CreatedAt, &workspace.LastOpenedAt, &workspace.UpdatedAt, &workspace.Revision); err != nil {
 			return nil, fmt.Errorf("scan workspace: %w", err)
 		}
 		out = append(out, workspace)
 	}
 	return out, rows.Err()
+}
+
+func revisionValue(revision int) int {
+	if revision < 1 {
+		return 1
+	}
+	return revision
 }
 
 func (s *Store) DetachWorkspace(ctx context.Context, id string) error {
@@ -93,6 +103,108 @@ func (s *Store) DetachWorkspace(ctx context.Context, id string) error {
 	}
 	if affected, _ := result.RowsAffected(); affected == 0 {
 		return fmt.Errorf("detach workspace %s: %w", id, sql.ErrNoRows)
+	}
+	return nil
+}
+
+func (s *Store) CreateWorkspace(ctx context.Context, workspace Workspace, actorID, requestID string) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin workspace create: %w", err)
+	}
+	defer tx.Rollback()
+	_, err = tx.ExecContext(ctx, `INSERT INTO workspaces (id, name, root_path, status, display_name, root_alias, canonical_repository_identity, default_branch, last_opened_at, revision) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, workspace.ID, workspace.DisplayName, workspace.RootPath, "active", workspace.DisplayName, nullIfEmpty(workspace.RootAlias), nullIfEmpty(workspace.CanonicalRepositoryIdentity), nullIfEmpty(workspace.DefaultBranch), nullIfEmpty(workspace.LastOpenedAt), revisionValue(workspace.Revision))
+	if err != nil {
+		return wrapErr("create workspace", err)
+	}
+	if err := appendWorkspaceAudit(ctx, tx, workspace.ID, actorID, requestID, "workspace.created", workspace.Revision); err != nil {
+		return err
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit workspace create: %w", err)
+	}
+	return nil
+}
+
+func (s *Store) UpdateWorkspace(ctx context.Context, workspace Workspace, expectedRevision int, actorID, requestID string) (Workspace, error) {
+	if expectedRevision < 1 {
+		return Workspace{}, fmt.Errorf("expected revision must be positive")
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return Workspace{}, fmt.Errorf("begin workspace update: %w", err)
+	}
+	defer tx.Rollback()
+	result, err := tx.ExecContext(ctx, `UPDATE workspaces SET name = ?, display_name = ?, root_alias = ?, default_branch = ?, last_opened_at = ?, revision = revision + 1, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND revision = ?`, workspace.DisplayName, workspace.DisplayName, nullIfEmpty(workspace.RootAlias), nullIfEmpty(workspace.DefaultBranch), nullIfEmpty(workspace.LastOpenedAt), workspace.ID, expectedRevision)
+	if err != nil {
+		return Workspace{}, wrapErr("update workspace", err)
+	}
+	if affected, _ := result.RowsAffected(); affected != 1 {
+		return Workspace{}, fmt.Errorf("workspace %s: %w", workspace.ID, ErrRevisionConflict)
+	}
+	if err := appendWorkspaceAudit(ctx, tx, workspace.ID, actorID, requestID, "workspace.updated", expectedRevision+1); err != nil {
+		return Workspace{}, err
+	}
+	if err := tx.Commit(); err != nil {
+		return Workspace{}, fmt.Errorf("commit workspace update: %w", err)
+	}
+	return s.GetWorkspace(ctx, workspace.ID)
+}
+
+func (s *Store) DetachWorkspaceVersioned(ctx context.Context, id string, expectedRevision int, actorID, requestID string) (Workspace, error) {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return Workspace{}, fmt.Errorf("begin workspace detach: %w", err)
+	}
+	defer tx.Rollback()
+	result, err := tx.ExecContext(ctx, `UPDATE workspaces SET status = 'detached', revision = revision + 1, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND revision = ?`, id, expectedRevision)
+	if err != nil {
+		return Workspace{}, wrapErr("detach workspace", err)
+	}
+	if affected, _ := result.RowsAffected(); affected != 1 {
+		return Workspace{}, fmt.Errorf("workspace %s: %w", id, ErrRevisionConflict)
+	}
+	if err := appendWorkspaceAudit(ctx, tx, id, actorID, requestID, "workspace.detached", expectedRevision+1); err != nil {
+		return Workspace{}, err
+	}
+	if err := tx.Commit(); err != nil {
+		return Workspace{}, fmt.Errorf("commit workspace detach: %w", err)
+	}
+	return s.GetWorkspace(ctx, id)
+}
+
+func (s *Store) WorkspaceImpact(ctx context.Context, workspaceID string) (WorkspaceImpact, error) {
+	var impact WorkspaceImpact
+	queries := []struct {
+		query  string
+		target *int
+	}{
+		{"SELECT COUNT(*) FROM agent_sessions WHERE workspace_id = ? AND status IN ('active', 'running')", &impact.ActiveSessions},
+		{"SELECT COUNT(*) FROM claims WHERE workspace_id = ? AND status = 'active'", &impact.ActiveClaims},
+		{"SELECT COUNT(*) FROM proposals WHERE workspace_id = ? AND status IN ('pending', 'in_review')", &impact.OpenProposals},
+		{"SELECT COUNT(*) FROM transactions WHERE workspace_id = ? AND status IN ('pending', 'running')", &impact.ActiveTransactions},
+	}
+	for _, item := range queries {
+		if err := s.db.QueryRowContext(ctx, item.query, workspaceID).Scan(item.target); err != nil {
+			return WorkspaceImpact{}, fmt.Errorf("workspace impact: %w", err)
+		}
+	}
+	return impact, nil
+}
+
+var ErrRevisionConflict = errors.New("workspace revision conflict")
+
+func appendWorkspaceAudit(ctx context.Context, tx *sql.Tx, workspaceID, actorID, requestID, action string, revision int) error {
+	payload, err := json.Marshal(map[string]any{"workspace_id": workspaceID, "revision": revision, "action": action})
+	if err != nil {
+		return fmt.Errorf("marshal workspace audit: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, `INSERT INTO audit_events (workspace_id, actor_id, action, entity_type, entity_id, request_id, payload_json) VALUES (?, ?, ?, 'workspace', ?, ?, ?)`, workspaceID, actorID, action, workspaceID, nullIfEmpty(requestID), string(payload)); err != nil {
+		return fmt.Errorf("audit workspace mutation: %w", err)
+	}
+	eventID := fmt.Sprintf("workspace:%s:%d:%s", workspaceID, revision, action)
+	if _, err := tx.ExecContext(ctx, `INSERT INTO event_outbox (workspace_id, event_id, event_type, entity_type, entity_id, payload_json) VALUES (?, ?, ?, 'workspace', ?, ?)`, workspaceID, eventID, action, workspaceID, string(payload)); err != nil {
+		return fmt.Errorf("outbox workspace mutation: %w", err)
 	}
 	return nil
 }
