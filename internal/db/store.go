@@ -192,6 +192,46 @@ func (s *Store) WorkspaceImpact(ctx context.Context, workspaceID string) (Worksp
 	return impact, nil
 }
 
+// RecordRepositoryBranchSwitch persists the branch context change and its
+// after-commit publication records in one database transaction.
+func (s *Store) RecordRepositoryBranchSwitch(ctx context.Context, workspaceID, actorID, requestID, beforeBranch, afterBranch string, expectedRevision int) (Workspace, error) {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return Workspace{}, fmt.Errorf("begin branch switch: %w", err)
+	}
+	defer tx.Rollback()
+	result, err := tx.ExecContext(ctx, `
+		UPDATE workspaces
+		SET default_branch = ?, revision = revision + 1, last_opened_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP
+		WHERE id = ? AND revision = ? AND status = 'active'
+	`, afterBranch, workspaceID, expectedRevision)
+	if err != nil {
+		return Workspace{}, fmt.Errorf("record branch switch: %w", err)
+	}
+	if affected, _ := result.RowsAffected(); affected == 0 {
+		return Workspace{}, ErrRevisionConflict
+	}
+	var revision int
+	if err := tx.QueryRowContext(ctx, `SELECT revision FROM workspaces WHERE id = ?`, workspaceID).Scan(&revision); err != nil {
+		return Workspace{}, fmt.Errorf("read branch switch revision: %w", err)
+	}
+	payload, err := json.Marshal(map[string]any{"workspace_id": workspaceID, "before_branch": beforeBranch, "after_branch": afterBranch, "revision": revision})
+	if err != nil {
+		return Workspace{}, fmt.Errorf("marshal branch switch audit: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, `INSERT INTO audit_events (workspace_id, actor_id, action, entity_type, entity_id, request_id, payload_json) VALUES (?, ?, 'repository.branch_switched', 'workspace', ?, ?, ?)`, workspaceID, actorID, workspaceID, nullIfEmpty(requestID), string(payload)); err != nil {
+		return Workspace{}, fmt.Errorf("audit branch switch: %w", err)
+	}
+	eventID := fmt.Sprintf("repository:%s:%d:branch-switched", workspaceID, revision)
+	if _, err := tx.ExecContext(ctx, `INSERT INTO event_outbox (workspace_id, event_id, event_type, entity_type, entity_id, payload_json) VALUES (?, ?, 'repository.branch_switched', 'workspace', ?, ?)`, workspaceID, eventID, workspaceID, string(payload)); err != nil {
+		return Workspace{}, fmt.Errorf("outbox branch switch: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return Workspace{}, fmt.Errorf("commit branch switch: %w", err)
+	}
+	return s.GetWorkspace(ctx, workspaceID)
+}
+
 var ErrRevisionConflict = errors.New("workspace revision conflict")
 
 func appendWorkspaceAudit(ctx context.Context, tx *sql.Tx, workspaceID, actorID, requestID, action string, revision int) error {
