@@ -9,6 +9,19 @@ type Run struct {
 	MetadataJSON string
 }
 
+type Workspace struct {
+	ID                          string
+	DisplayName                 string
+	RootAlias                   string
+	CanonicalRepositoryIdentity string
+	Status                      string
+	DefaultBranch               string
+	RootPath                    string
+	CreatedAt                   string
+	LastOpenedAt                string
+	UpdatedAt                   string
+}
+
 type Event struct {
 	ID          int64
 	RunID       string

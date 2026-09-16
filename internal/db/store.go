@@ -28,6 +28,75 @@ func (s *Store) Events() *events.Bus[Event] {
 	return s.eventBus
 }
 
+func (s *Store) UpsertWorkspace(ctx context.Context, workspace Workspace) error {
+	_, err := s.db.ExecContext(ctx, `
+		INSERT INTO workspaces (
+			id, name, root_path, status, display_name, root_alias,
+			canonical_repository_identity, default_branch, last_opened_at
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+		ON CONFLICT(id) DO UPDATE SET
+			name = excluded.name,
+			root_path = excluded.root_path,
+			status = excluded.status,
+			display_name = excluded.display_name,
+			root_alias = excluded.root_alias,
+			canonical_repository_identity = excluded.canonical_repository_identity,
+			default_branch = excluded.default_branch,
+			last_opened_at = excluded.last_opened_at,
+			updated_at = CURRENT_TIMESTAMP
+	`, workspace.ID, workspace.DisplayName, workspace.RootPath, defaultIfEmpty(workspace.Status, "active"), workspace.DisplayName, nullIfEmpty(workspace.RootAlias), nullIfEmpty(workspace.CanonicalRepositoryIdentity), nullIfEmpty(workspace.DefaultBranch), nullIfEmpty(workspace.LastOpenedAt))
+	return wrapErr("upsert workspace", err)
+}
+
+func (s *Store) GetWorkspace(ctx context.Context, id string) (Workspace, error) {
+	row := s.db.QueryRowContext(ctx, `
+		SELECT id, COALESCE(display_name, name), COALESCE(root_alias, ''),
+		       COALESCE(canonical_repository_identity, ''), status,
+		       COALESCE(default_branch, ''), root_path, created_at,
+		       COALESCE(last_opened_at, ''), updated_at
+		FROM workspaces WHERE id = ?
+	`, id)
+	var workspace Workspace
+	if err := row.Scan(&workspace.ID, &workspace.DisplayName, &workspace.RootAlias, &workspace.CanonicalRepositoryIdentity, &workspace.Status, &workspace.DefaultBranch, &workspace.RootPath, &workspace.CreatedAt, &workspace.LastOpenedAt, &workspace.UpdatedAt); err != nil {
+		return Workspace{}, fmt.Errorf("get workspace %s: %w", id, err)
+	}
+	return workspace, nil
+}
+
+func (s *Store) ListWorkspaces(ctx context.Context) ([]Workspace, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT id, COALESCE(display_name, name), COALESCE(root_alias, ''),
+		       COALESCE(canonical_repository_identity, ''), status,
+		       COALESCE(default_branch, ''), root_path, created_at,
+		       COALESCE(last_opened_at, ''), updated_at
+		FROM workspaces ORDER BY display_name, id
+	`)
+	if err != nil {
+		return nil, fmt.Errorf("list workspaces: %w", err)
+	}
+	defer rows.Close()
+	var out []Workspace
+	for rows.Next() {
+		var workspace Workspace
+		if err := rows.Scan(&workspace.ID, &workspace.DisplayName, &workspace.RootAlias, &workspace.CanonicalRepositoryIdentity, &workspace.Status, &workspace.DefaultBranch, &workspace.RootPath, &workspace.CreatedAt, &workspace.LastOpenedAt, &workspace.UpdatedAt); err != nil {
+			return nil, fmt.Errorf("scan workspace: %w", err)
+		}
+		out = append(out, workspace)
+	}
+	return out, rows.Err()
+}
+
+func (s *Store) DetachWorkspace(ctx context.Context, id string) error {
+	result, err := s.db.ExecContext(ctx, `UPDATE workspaces SET status = 'detached', updated_at = CURRENT_TIMESTAMP WHERE id = ?`, id)
+	if err != nil {
+		return wrapErr("detach workspace", err)
+	}
+	if affected, _ := result.RowsAffected(); affected == 0 {
+		return fmt.Errorf("detach workspace %s: %w", id, sql.ErrNoRows)
+	}
+	return nil
+}
+
 func (s *Store) AppendEvent(ctx context.Context, event Event) (Event, error) {
 	res, err := s.db.ExecContext(ctx, `
 		INSERT INTO events (run_id, type, actor_id, task_id, payload_json)

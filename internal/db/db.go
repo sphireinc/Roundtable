@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	_ "github.com/mattn/go-sqlite3"
 )
@@ -249,6 +250,49 @@ func migrate(db *sql.DB) error {
 		if _, err := db.Exec(stmt); err != nil {
 			return fmt.Errorf("migrate statement failed: %w", err)
 		}
+	}
+	if err := ensureWorkspaceColumns(db); err != nil {
+		return err
+	}
+	return nil
+}
+
+func ensureWorkspaceColumns(db *sql.DB) error {
+	rows, err := db.Query(`PRAGMA table_info(workspaces)`)
+	if err != nil {
+		return fmt.Errorf("inspect workspaces schema: %w", err)
+	}
+	defer rows.Close()
+	existing := map[string]bool{}
+	for rows.Next() {
+		var cid, notNull, pk int
+		var name, columnType string
+		var defaultValue sql.NullString
+		if err := rows.Scan(&cid, &name, &columnType, &notNull, &defaultValue, &pk); err != nil {
+			return fmt.Errorf("scan workspaces schema: %w", err)
+		}
+		existing[name] = true
+	}
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("read workspaces schema: %w", err)
+	}
+	for _, column := range []string{
+		"display_name TEXT",
+		"root_alias TEXT",
+		"canonical_repository_identity TEXT",
+		"default_branch TEXT",
+		"last_opened_at TEXT",
+	} {
+		name := column[:strings.IndexByte(column, ' ')]
+		if existing[name] {
+			continue
+		}
+		if _, err := db.Exec("ALTER TABLE workspaces ADD COLUMN " + column); err != nil {
+			return fmt.Errorf("add workspaces.%s: %w", name, err)
+		}
+	}
+	if _, err := db.Exec("INSERT OR IGNORE INTO schema_migrations(version) VALUES (3)"); err != nil {
+		return fmt.Errorf("record workspace migration: %w", err)
 	}
 	return nil
 }

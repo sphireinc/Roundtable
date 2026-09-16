@@ -26,8 +26,135 @@ paths:
           content:
             application/json:
               schema: {$ref: '#/components/schemas/StatusResponse'}
+  /api/v1/workspaces:
+    get:
+      operationId: listWorkspaces
+      summary: List registered workspaces
+      responses:
+        '200':
+          description: Workspace collection
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items: {type: array, items: {$ref: '#/components/schemas/Workspace'}}
+                  next_cursor: {type: [string, 'null']}
+        '500': {$ref: '#/components/responses/Problem'}
+    post:
+      operationId: createWorkspace
+      summary: Register a workspace without mutating its repository
+      parameters:
+        - {$ref: '#/components/parameters/ActorID'}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/WorkspaceInput'}
+      responses:
+        '201':
+          description: Workspace registered
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Workspace'}
+        '400': {$ref: '#/components/responses/Problem'}
+        '403': {$ref: '#/components/responses/Problem'}
+  /api/v1/workspaces/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: {type: string}
+    get:
+      operationId: getWorkspace
+      summary: Get a registered workspace
+      responses:
+        '200':
+          description: Workspace
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Workspace'}
+        '404': {$ref: '#/components/responses/Problem'}
+    patch:
+      operationId: updateWorkspace
+      summary: Update workspace metadata
+      parameters:
+        - {$ref: '#/components/parameters/ActorID'}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/WorkspacePatch'}
+      responses:
+        '200':
+          description: Updated workspace
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Workspace'}
+        '403': {$ref: '#/components/responses/Problem'}
+        '404': {$ref: '#/components/responses/Problem'}
+    delete:
+      operationId: detachWorkspace
+      summary: Detach metadata without deleting the repository
+      parameters:
+        - {$ref: '#/components/parameters/ActorID'}
+      responses:
+        '200':
+          description: Detached workspace and impact report
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [workspace, impact]
+                properties:
+                  workspace: {$ref: '#/components/schemas/Workspace'}
+                  impact: {$ref: '#/components/schemas/WorkspaceImpact'}
+        '403': {$ref: '#/components/responses/Problem'}
+        '404': {$ref: '#/components/responses/Problem'}
 components:
+  parameters:
+    ActorID:
+      name: X-Actor-ID
+      in: header
+      required: true
+      schema: {type: string}
   schemas:
+    WorkspaceInput:
+      type: object
+      required: [root_path]
+      properties:
+        display_name: {type: string}
+        root_alias: {type: string}
+        root_path: {type: string}
+        default_branch: {type: string}
+    WorkspacePatch:
+      type: object
+      minProperties: 1
+      properties:
+        display_name: {type: string}
+        root_alias: {type: string}
+        default_branch: {type: string}
+    Workspace:
+      type: object
+      required: [id, display_name, canonical_repository_identity, status, created_at]
+      properties:
+        id: {type: string}
+        display_name: {type: string}
+        root_alias: {type: string}
+        canonical_repository_identity: {type: string}
+        status: {type: string, enum: [active, detached]}
+        default_branch: {type: string}
+        created_at: {type: string, format: date-time}
+        last_opened_at: {type: string, format: date-time}
+    WorkspaceImpact:
+      type: object
+      required: [active_sessions, active_claims, open_proposals, active_transactions]
+      properties:
+        active_sessions: {type: integer}
+        active_claims: {type: integer}
+        open_proposals: {type: integer}
+        active_transactions: {type: integer}
     HealthResponse:
       type: object
       required: [status, version, request_id]
