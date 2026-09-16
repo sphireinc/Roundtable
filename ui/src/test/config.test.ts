@@ -1,0 +1,3 @@
+import { describe, expect, it } from "vitest";
+import { loadRuntimeConfig } from "@/api/config";
+describe("runtime configuration", () => { it("reports missing required values", () => { expect(loadRuntimeConfig({})).toEqual({ error: expect.stringContaining("NEXT_PUBLIC_API_BASE_URL") }); }); it("returns typed configuration", () => { expect(loadRuntimeConfig({ NEXT_PUBLIC_API_BASE_URL: "http://api", NEXT_PUBLIC_WS_URL: "ws://api/events", NEXT_PUBLIC_WORKSPACE_ID: "ws-1", NEXT_PUBLIC_ENABLE_DEV_MOCKS: "false" })).toEqual({ config: expect.objectContaining({ apiBaseUrl: "http://api", workspaceId: "ws-1", enableDevMocks: false }) }); }); });

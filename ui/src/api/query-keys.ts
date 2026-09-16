@@ -1,0 +1,1 @@
+export const queryKeys = { workspace: (workspaceId: string) => ["workspace", workspaceId] as const, health: (workspaceId: string) => ["workspace", workspaceId, "health"] as const, proposals: (workspaceId: string, filters: Record<string, string> = {}) => ["workspace", workspaceId, "proposals", filters] as const };

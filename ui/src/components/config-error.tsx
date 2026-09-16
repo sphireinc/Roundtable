@@ -1,0 +1,1 @@
+export function ConfigError({ message }: { message: string }) { return <main className="state-screen" role="alert"><p className="eyebrow">ROUNDTABLE / CONFIGURATION</p><h1>Configuration required</h1><p>{message}</p><p className="muted">Copy <code>.env.example</code> to <code>.env.local</code>, provide the API and workspace values, then reload.</p></main>; }

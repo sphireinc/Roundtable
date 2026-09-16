@@ -1,0 +1,1 @@
+export default function Loading() { return <main className="state-screen" aria-busy="true"><p className="eyebrow">ROUNDTABLE / LOADING</p><div className="skeleton" /><p className="muted">Loading the control center…</p></main>; }
