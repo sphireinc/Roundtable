@@ -67,6 +67,28 @@ type workspaceImpact struct {
 	ActiveTransactions int `json:"active_transactions"`
 }
 
+type componentHealth struct {
+	Status  string         `json:"status"`
+	Details map[string]any `json:"details,omitempty"`
+}
+type nodeHealthResponse struct {
+	Status          string                     `json:"status"`
+	Version         string                     `json:"version"`
+	APIVersion      string                     `json:"api_version"`
+	Time            string                     `json:"time"`
+	RequestID       string                     `json:"request_id"`
+	Components      map[string]componentHealth `json:"components"`
+	DegradedReasons []string                   `json:"degraded_reasons,omitempty"`
+}
+type workspaceHealthResponse struct {
+	Workspace       workspaceResponse          `json:"workspace"`
+	Status          string                     `json:"status"`
+	Components      map[string]componentHealth `json:"components"`
+	Impact          workspaceImpact            `json:"impact"`
+	DegradedReasons []string                   `json:"degraded_reasons,omitempty"`
+	RequestID       string                     `json:"request_id"`
+}
+
 func NewServer(cfg Config) *Server {
 	if cfg.Version == "" {
 		cfg.Version = "dev"
@@ -81,6 +103,7 @@ func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /api/v1/health", s.health)
 	mux.HandleFunc("GET /api/v1/status", s.status)
+	mux.HandleFunc("GET /api/v1/workspaces/{id}/health", s.workspaceHealth)
 	mux.HandleFunc("GET /api/v1/workspaces", s.listWorkspaces)
 	mux.HandleFunc("POST /api/v1/workspaces", s.createWorkspace)
 	mux.HandleFunc("GET /api/v1/workspaces/{id}", s.getWorkspace)
@@ -110,7 +133,85 @@ func (s *Server) health(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ok", "version": s.config.Version, "request_id": requestID(r.Context())})
 }
 func (s *Server) status(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, http.StatusOK, map[string]string{"status": "ok", "version": s.config.Version, "api_version": "v1", "time": time.Now().UTC().Format(time.RFC3339Nano), "request_id": requestID(r.Context())})
+	writeJSON(w, http.StatusOK, s.nodeHealth(r))
+}
+
+func (s *Server) nodeHealth(r *http.Request) nodeHealthResponse {
+	components := map[string]componentHealth{
+		"event_stream":        {Status: "ready"},
+		"transaction_manager": {Status: "ready"},
+		"repository_index":    {Status: "ready", Details: map[string]any{"configured_roots": len(s.config.AllowedWorkspaceRoots)}},
+	}
+	degraded := []string{}
+	if s.config.Store == nil {
+		components["database"] = componentHealth{Status: "unavailable"}
+		components["agent_adapters"] = componentHealth{Status: "unknown"}
+		degraded = append(degraded, "authoritative database store is unavailable")
+	} else {
+		var one int
+		if err := s.config.Store.DB().QueryRowContext(r.Context(), "SELECT 1").Scan(&one); err != nil {
+			components["database"] = componentHealth{Status: "unavailable"}
+			degraded = append(degraded, "authoritative database connectivity failed")
+		} else {
+			var migration int
+			if err := s.config.Store.DB().QueryRowContext(r.Context(), "SELECT COALESCE(MAX(version), 0) FROM schema_migrations").Scan(&migration); err != nil {
+				components["database"] = componentHealth{Status: "degraded", Details: map[string]any{"connectivity": "ready"}}
+				degraded = append(degraded, "database migration status is unavailable")
+			} else {
+				components["database"] = componentHealth{Status: "ready", Details: map[string]any{"migration_version": migration}}
+			}
+		}
+		agents, err := s.config.Store.ListAgents(r.Context())
+		if err != nil {
+			components["agent_adapters"] = componentHealth{Status: "degraded"}
+			degraded = append(degraded, "agent adapter aggregate is unavailable")
+		} else {
+			healthy := 0
+			for _, agent := range agents {
+				if agent.Status == "ready" || agent.Status == "idle" {
+					healthy++
+				}
+			}
+			adapterStatus := "ready"
+			if len(agents) > 0 && healthy != len(agents) {
+				adapterStatus = "degraded"
+				degraded = append(degraded, "one or more agent adapters are not ready")
+			}
+			components["agent_adapters"] = componentHealth{Status: adapterStatus, Details: map[string]any{"configured": len(agents), "ready": healthy}}
+		}
+	}
+	status := "ok"
+	if len(degraded) > 0 {
+		status = "degraded"
+	}
+	return nodeHealthResponse{Status: status, Version: s.config.Version, APIVersion: "v1", Time: nowRFC3339Nano(), RequestID: requestID(r.Context()), Components: components, DegradedReasons: degraded}
+}
+
+func (s *Server) workspaceHealth(w http.ResponseWriter, r *http.Request) {
+	workspace, err := s.workspace(r)
+	if err != nil {
+		writeWorkspaceError(w, r, err)
+		return
+	}
+	impact, err := s.config.Store.WorkspaceImpact(r.Context(), workspace.ID)
+	if err != nil {
+		WriteProblem(w, r, http.StatusInternalServerError, "workspace_impact_failed", "Unable to determine workspace health", err.Error())
+		return
+	}
+	node := s.nodeHealth(r)
+	components := node.Components
+	degraded := append([]string(nil), node.DegradedReasons...)
+	if workspace.Status != "active" {
+		components["workspace"] = componentHealth{Status: workspace.Status}
+		degraded = append(degraded, "workspace is detached")
+	} else {
+		components["workspace"] = componentHealth{Status: "ready"}
+	}
+	status := "ok"
+	if len(degraded) > 0 {
+		status = "degraded"
+	}
+	writeJSON(w, http.StatusOK, workspaceHealthResponse{Workspace: toWorkspaceResponse(workspace), Status: status, Components: components, Impact: toWorkspaceImpact(impact), DegradedReasons: degraded, RequestID: requestID(r.Context())})
 }
 
 func (s *Server) listWorkspaces(w http.ResponseWriter, r *http.Request) {

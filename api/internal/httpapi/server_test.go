@@ -11,6 +11,41 @@ import (
 	"roundtable/internal/db"
 )
 
+func TestStatusReportsComponentsWithoutSecretsOrPaths(t *testing.T) {
+	sqlDB, err := db.Open(filepath.Join(t.TempDir(), "roundtable.db"))
+	if err != nil {
+		t.Fatalf("open database: %v", err)
+	}
+	defer sqlDB.Close()
+	server := NewServer(Config{Version: "test", Store: db.NewStore(sqlDB, nil), AllowedWorkspaceRoots: []string{"/configured/root"}})
+	request := httptest.NewRequest(http.MethodGet, "/api/v1/status", nil)
+	response := httptest.NewRecorder()
+	server.Handler().ServeHTTP(response, request)
+	if response.Code != http.StatusOK {
+		t.Fatalf("status code = %d", response.Code)
+	}
+	for _, field := range []string{"database", "event_stream", "transaction_manager", "repository_index", "agent_adapters"} {
+		if !bytes.Contains(response.Body.Bytes(), []byte(`"`+field+`"`)) {
+			t.Fatalf("status missing component %s: %s", field, response.Body.String())
+		}
+	}
+	if bytes.Contains(response.Body.Bytes(), []byte("/configured/root")) {
+		t.Fatal("status exposed configured filesystem path")
+	}
+	if !bytes.Contains(response.Body.Bytes(), []byte(`"migration_version":4`)) {
+		t.Fatalf("status missing migration version: %s", response.Body.String())
+	}
+}
+
+func TestHealthIsLightweightWithoutStore(t *testing.T) {
+	request := httptest.NewRequest(http.MethodGet, "/api/v1/health", nil)
+	response := httptest.NewRecorder()
+	NewServer(Config{}).Handler().ServeHTTP(response, request)
+	if response.Code != http.StatusOK || !bytes.Contains(response.Body.Bytes(), []byte(`"status":"ok"`)) {
+		t.Fatalf("health response = %d %s", response.Code, response.Body.String())
+	}
+}
+
 func TestHealthRequestID(t *testing.T) {
 	r := httptest.NewRequest(http.MethodGet, "/api/v1/health", nil)
 	r.Header.Set("X-Request-ID", "test-1")
