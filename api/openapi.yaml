@@ -25,7 +25,23 @@ paths:
           description: Current status
           content:
             application/json:
-              schema: {$ref: '#/components/schemas/StatusResponse'}
+              schema: {$ref: '#/components/schemas/NodeHealthResponse'}
+  /api/v1/workspaces/{id}/health:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: {type: string}
+    get:
+      operationId: getWorkspaceHealth
+      summary: Lightweight workspace health summary
+      responses:
+        '200':
+          description: Workspace health
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/WorkspaceHealthResponse'}
+        '404': {$ref: '#/components/responses/Problem'}
   /api/v1/workspaces:
     get:
       operationId: listWorkspaces
@@ -128,6 +144,33 @@ components:
       description: Expected workspace revision for optimistic concurrency control.
       schema: {type: integer, minimum: 1}
   schemas:
+    ComponentHealth:
+      type: object
+      required: [status]
+      properties:
+        status: {type: string, enum: [ready, ok, degraded, unavailable, unknown, active, detached]}
+        details: {type: object, additionalProperties: true}
+    NodeHealthResponse:
+      type: object
+      required: [status, version, api_version, time, request_id, components]
+      properties:
+        status: {type: string, enum: [ok, degraded]}
+        version: {type: string}
+        api_version: {type: string, enum: [v1]}
+        time: {type: string, format: date-time}
+        request_id: {type: string}
+        components: {type: object, additionalProperties: {$ref: '#/components/schemas/ComponentHealth'}}
+        degraded_reasons: {type: array, items: {type: string}}
+    WorkspaceHealthResponse:
+      type: object
+      required: [workspace, status, components, impact, request_id]
+      properties:
+        workspace: {$ref: '#/components/schemas/Workspace'}
+        status: {type: string, enum: [ok, degraded]}
+        components: {type: object, additionalProperties: {$ref: '#/components/schemas/ComponentHealth'}}
+        impact: {$ref: '#/components/schemas/WorkspaceImpact'}
+        degraded_reasons: {type: array, items: {type: string}}
+        request_id: {type: string}
     WorkspaceInput:
       type: object
       required: [root_path]
