@@ -2,6 +2,18 @@
 
 SQLite runs in WAL mode.
 
+Schema migrations are recorded in `schema_migrations`. Version 2 adds the
+control-plane tables for workspaces, deliberations, proposal files, claim
+contentions, consensus snapshots, policies and evaluations, transaction
+phases, memory revisions, notifications, configuration revisions, immutable
+audit events, and the after-commit event outbox. Current-state tables may be
+updated, while audit, event, and revision rows are append-only.
+
+Governance transitions that compete on the same proposal, claim, policy, or
+transaction must use `BEGIN IMMEDIATE` so validation and the state change are
+serialized. The outbox row is inserted in that same transaction and is marked
+published only after commit.
+
 Large payloads such as full patches, large logs, and raw transcript dumps should be stored on disk under `.roundtable/`, with paths recorded in SQLite.
 
 ## Required pragmas

@@ -243,6 +243,7 @@ func migrate(db *sql.DB) error {
 			updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 		);`,
 		`INSERT OR IGNORE INTO schema_migrations(version) VALUES (1);`,
+		apiControlPlaneMigration,
 	}
 	for _, stmt := range stmts {
 		if _, err := db.Exec(stmt); err != nil {
@@ -251,3 +252,179 @@ func migrate(db *sql.DB) error {
 	}
 	return nil
 }
+
+const apiControlPlaneMigration = `
+CREATE TABLE IF NOT EXISTS workspaces (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    root_path TEXT NOT NULL UNIQUE,
+    status TEXT NOT NULL DEFAULT 'active',
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE TABLE IF NOT EXISTS deliberations (
+    id TEXT PRIMARY KEY,
+    workspace_id TEXT NOT NULL REFERENCES workspaces(id),
+    title TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'open',
+    created_by TEXT NOT NULL,
+    started_at TEXT,
+    ended_at TEXT,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE TABLE IF NOT EXISTS deliberation_messages (
+    id TEXT PRIMARY KEY,
+    deliberation_id TEXT NOT NULL REFERENCES deliberations(id),
+    agent_id TEXT,
+    actor TEXT NOT NULL,
+    message_type TEXT NOT NULL,
+    body TEXT NOT NULL,
+    sequence INTEGER NOT NULL,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(deliberation_id, sequence)
+);
+CREATE TABLE IF NOT EXISTS proposal_files (
+    id TEXT PRIMARY KEY,
+    proposal_id TEXT NOT NULL REFERENCES proposals(id),
+    path TEXT NOT NULL,
+    blob_path TEXT NOT NULL,
+    content_hash TEXT NOT NULL,
+    operation TEXT NOT NULL,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(proposal_id, path)
+);
+CREATE TABLE IF NOT EXISTS claim_contentions (
+    id TEXT PRIMARY KEY,
+    resource_id TEXT NOT NULL REFERENCES resources(id),
+    claimant_id TEXT NOT NULL REFERENCES claims(id),
+    challenged_claim_id TEXT NOT NULL REFERENCES claims(id),
+    status TEXT NOT NULL DEFAULT 'open',
+    reason TEXT NOT NULL,
+    resolved_by TEXT,
+    resolved_at TEXT,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE TABLE IF NOT EXISTS consensus_snapshots (
+    id TEXT PRIMARY KEY,
+    proposal_id TEXT NOT NULL REFERENCES proposals(id),
+    status TEXT NOT NULL,
+    approval_count INTEGER NOT NULL DEFAULT 0,
+    rejection_count INTEGER NOT NULL DEFAULT 0,
+    abstain_count INTEGER NOT NULL DEFAULT 0,
+    policy_version TEXT,
+    snapshot_json TEXT NOT NULL,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE TABLE IF NOT EXISTS policies (
+    id TEXT PRIMARY KEY,
+    workspace_id TEXT REFERENCES workspaces(id),
+    name TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'active',
+    current_revision_id TEXT,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE TABLE IF NOT EXISTS policy_revisions (
+    id TEXT PRIMARY KEY,
+    policy_id TEXT NOT NULL REFERENCES policies(id),
+    version INTEGER NOT NULL,
+    definition_json TEXT NOT NULL,
+    created_by TEXT NOT NULL,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(policy_id, version)
+);
+CREATE TABLE IF NOT EXISTS policy_evaluations (
+    id TEXT PRIMARY KEY,
+    policy_id TEXT NOT NULL REFERENCES policies(id),
+    policy_revision_id TEXT NOT NULL REFERENCES policy_revisions(id),
+    proposal_id TEXT REFERENCES proposals(id),
+    subject_type TEXT NOT NULL,
+    subject_id TEXT NOT NULL,
+    result TEXT NOT NULL,
+    reasons_json TEXT NOT NULL,
+    evaluated_by TEXT NOT NULL,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE TABLE IF NOT EXISTS transaction_phases (
+    id TEXT PRIMARY KEY,
+    transaction_id TEXT NOT NULL REFERENCES transactions(id),
+    phase TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'pending',
+    actor TEXT NOT NULL,
+    reason TEXT,
+    request_id TEXT,
+    started_at TEXT,
+    ended_at TEXT,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(transaction_id, phase)
+);
+CREATE TABLE IF NOT EXISTS memory_revisions (
+    id TEXT PRIMARY KEY,
+    memory_id TEXT NOT NULL REFERENCES memory_entries(id),
+    revision INTEGER NOT NULL,
+    body_md TEXT NOT NULL,
+    provenance_json TEXT NOT NULL,
+    created_by TEXT NOT NULL,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(memory_id, revision)
+);
+CREATE TABLE IF NOT EXISTS notifications (
+    id TEXT PRIMARY KEY,
+    workspace_id TEXT REFERENCES workspaces(id),
+    recipient_id TEXT NOT NULL,
+    severity TEXT NOT NULL DEFAULT 'info',
+    category TEXT NOT NULL,
+    title TEXT NOT NULL,
+    body TEXT NOT NULL,
+    entity_type TEXT,
+    entity_id TEXT,
+    read_at TEXT,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE TABLE IF NOT EXISTS configuration_revisions (
+    id TEXT PRIMARY KEY,
+    workspace_id TEXT REFERENCES workspaces(id),
+    version INTEGER NOT NULL,
+    values_json TEXT NOT NULL,
+    changed_by TEXT NOT NULL,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(workspace_id, version)
+);
+CREATE TABLE IF NOT EXISTS audit_events (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    workspace_id TEXT REFERENCES workspaces(id),
+    actor_id TEXT NOT NULL,
+    action TEXT NOT NULL,
+    entity_type TEXT NOT NULL,
+    entity_id TEXT NOT NULL,
+    request_id TEXT,
+    reason TEXT,
+    payload_json TEXT NOT NULL,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE TABLE IF NOT EXISTS event_outbox (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    workspace_id TEXT REFERENCES workspaces(id),
+    event_id TEXT NOT NULL UNIQUE,
+    event_type TEXT NOT NULL,
+    entity_type TEXT NOT NULL,
+    entity_id TEXT NOT NULL,
+    payload_json TEXT NOT NULL,
+    published_at TEXT,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_deliberations_workspace_status ON deliberations(workspace_id, status, updated_at DESC);
+CREATE INDEX IF NOT EXISTS idx_deliberation_messages_timeline ON deliberation_messages(deliberation_id, sequence);
+CREATE INDEX IF NOT EXISTS idx_proposal_files_proposal ON proposal_files(proposal_id, path);
+CREATE INDEX IF NOT EXISTS idx_contentions_resource_status ON claim_contentions(resource_id, status, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_consensus_proposal_created ON consensus_snapshots(proposal_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_policy_revisions_policy_version ON policy_revisions(policy_id, version DESC);
+CREATE INDEX IF NOT EXISTS idx_policy_evaluations_subject ON policy_evaluations(subject_type, subject_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_transaction_phases_timeline ON transaction_phases(transaction_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_memory_revisions_timeline ON memory_revisions(memory_id, revision DESC);
+CREATE INDEX IF NOT EXISTS idx_notifications_recipient_unread ON notifications(recipient_id, read_at, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_audit_events_entity ON audit_events(entity_type, entity_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_audit_events_workspace ON audit_events(workspace_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_event_outbox_pending ON event_outbox(published_at, created_at);
+INSERT OR IGNORE INTO schema_migrations(version) VALUES (2);`
