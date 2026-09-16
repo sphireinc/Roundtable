@@ -1,0 +1,664 @@
+diff --git a/api/internal/httpapi/server.go b/api/internal/httpapi/server.go
+index 0bb92bc..eb37b88 100644
+--- a/api/internal/httpapi/server.go
++++ b/api/internal/httpapi/server.go
+@@ -109,6 +109,9 @@ func (s *Server) Handler() http.Handler {
+ 	mux.HandleFunc("GET /api/v1/workspaces/{id}", s.getWorkspace)
+ 	mux.HandleFunc("PATCH /api/v1/workspaces/{id}", s.patchWorkspace)
+ 	mux.HandleFunc("DELETE /api/v1/workspaces/{id}", s.detachWorkspace)
++	mux.HandleFunc("GET /api/v1/workspaces/{id}/repository", s.repositoryStatus)
++	mux.HandleFunc("POST /api/v1/workspaces/{id}/repository/branch-switch/preflight", s.branchSwitchPreflight)
++	mux.HandleFunc("POST /api/v1/workspaces/{id}/repository/branch-switch", s.branchSwitch)
+ 	return requestIDs(securityHeaders(jsonDefaults(mux)))
+ }
+ 
+diff --git a/api/openapi.yaml b/api/openapi.yaml
+index 11a18e5..4ad8d1a 100644
+--- a/api/openapi.yaml
++++ b/api/openapi.yaml
+@@ -93,6 +93,74 @@ paths:
+             application/json:
+               schema: {$ref: '#/components/schemas/Workspace'}
+         '404': {$ref: '#/components/responses/Problem'}
++  /api/v1/workspaces/{id}/repository:
++    parameters:
++      - name: id
++        in: path
++        required: true
++        schema: {type: string}
++    get:
++      operationId: getRepositoryStatus
++      summary: Get repository status without exposing filesystem paths
++      responses:
++        '200':
++          description: Repository status
++          content:
++            application/json:
++              schema: {$ref: '#/components/schemas/RepositoryStatus'}
++        '404': {$ref: '#/components/responses/Problem'}
++        '409': {$ref: '#/components/responses/Problem'}
++  /api/v1/workspaces/{id}/repository/branch-switch/preflight:
++    parameters:
++      - name: id
++        in: path
++        required: true
++        schema: {type: string}
++      - {$ref: '#/components/parameters/ActorID'}
++      - {$ref: '#/components/parameters/ActorRole'}
++    post:
++      operationId: preflightRepositoryBranchSwitch
++      summary: Check blockers before a governed branch switch
++      requestBody:
++        required: true
++        content:
++          application/json:
++            schema: {$ref: '#/components/schemas/BranchSwitchInput'}
++      responses:
++        '200':
++          description: Branch switch preflight
++          content:
++            application/json:
++              schema: {$ref: '#/components/schemas/BranchSwitchPreflight'}
++        '400': {$ref: '#/components/responses/Problem'}
++        '403': {$ref: '#/components/responses/Problem'}
++  /api/v1/workspaces/{id}/repository/branch-switch:
++    parameters:
++      - name: id
++        in: path
++        required: true
++        schema: {type: string}
++      - {$ref: '#/components/parameters/ActorID'}
++      - {$ref: '#/components/parameters/ActorRole'}
++      - {$ref: '#/components/parameters/IdempotencyKey'}
++      - {$ref: '#/components/parameters/IfMatch'}
++    post:
++      operationId: switchRepositoryBranch
++      summary: Switch a workspace branch through the governed transaction boundary
++      requestBody:
++        required: true
++        content:
++          application/json:
++            schema: {$ref: '#/components/schemas/BranchSwitchInput'}
++      responses:
++        '200':
++          description: Branch switched
++          content:
++            application/json:
++              schema: {$ref: '#/components/schemas/BranchSwitchResponse'}
++        '400': {$ref: '#/components/responses/Problem'}
++        '403': {$ref: '#/components/responses/Problem'}
++        '409': {$ref: '#/components/responses/Problem'}
+     patch:
+       operationId: updateWorkspace
+       summary: Update workspace metadata
+@@ -143,6 +211,16 @@ components:
+       required: false
+       description: Expected workspace revision for optimistic concurrency control.
+       schema: {type: integer, minimum: 1}
++    ActorRole:
++      name: X-Actor-Role
++      in: header
++      required: true
++      schema: {type: string, enum: [human, admin, chair]}
++    IdempotencyKey:
++      name: Idempotency-Key
++      in: header
++      required: true
++      schema: {type: string, minLength: 1, maxLength: 128}
+   schemas:
+     ComponentHealth:
+       type: object
+@@ -207,6 +285,69 @@ components:
+         active_claims: {type: integer}
+         open_proposals: {type: integer}
+         active_transactions: {type: integer}
++    RepositoryChange:
++      type: object
++      required: [path, index, worktree]
++      properties:
++        path: {type: string}
++        index: {type: string, minLength: 1, maxLength: 1}
++        worktree: {type: string, minLength: 1, maxLength: 1}
++    RepositoryRemote:
++      type: object
++      required: [name, url]
++      properties:
++        name: {type: string}
++        url: {type: string}
++    ProtectedPathSummary:
++      type: object
++      required: [changed]
++      properties:
++        changed: {type: integer, minimum: 0}
++        paths: {type: array, items: {type: string}}
++    RepositoryStatus:
++      type: object
++      required: [workspace_id, branch, head_sha, dirty, ahead, behind, detached, remotes, index, protected_paths]
++      properties:
++        workspace_id: {type: string}
++        root_alias: {type: string}
++        branch: {type: string}
++        head_sha: {type: string}
++        dirty: {type: boolean}
++        ahead: {type: integer, minimum: 0}
++        behind: {type: integer, minimum: 0}
++        detached: {type: boolean}
++        remotes: {type: array, items: {$ref: '#/components/schemas/RepositoryRemote'}}
++        index: {type: array, items: {$ref: '#/components/schemas/RepositoryChange'}}
++        protected_paths: {$ref: '#/components/schemas/ProtectedPathSummary'}
++    BranchSwitchInput:
++      type: object
++      required: [branch]
++      additionalProperties: false
++      properties:
++        branch: {type: string, minLength: 1}
++    RepositoryBlocker:
++      type: object
++      required: [code, message]
++      properties:
++        code: {type: string}
++        message: {type: string}
++        count: {type: integer, minimum: 0}
++    BranchSwitchPreflight:
++      type: object
++      required: [workspace_id, target_branch, allowed, blockers, repository]
++      properties:
++        workspace_id: {type: string}
++        target_branch: {type: string}
++        allowed: {type: boolean}
++        blockers: {type: array, items: {$ref: '#/components/schemas/RepositoryBlocker'}}
++        repository: {$ref: '#/components/schemas/RepositoryStatus'}
++    BranchSwitchResponse:
++      type: object
++      required: [workspace, before, after]
++      properties:
++        workspace: {$ref: '#/components/schemas/Workspace'}
++        before: {$ref: '#/components/schemas/RepositoryStatus'}
++        after: {$ref: '#/components/schemas/RepositoryStatus'}
+     HealthResponse:
+       type: object
+       required: [status, version, request_id]
+diff --git a/internal/db/store.go b/internal/db/store.go
+index a9faec5..6091afa 100644
+--- a/internal/db/store.go
++++ b/internal/db/store.go
+@@ -192,6 +192,46 @@ func (s *Store) WorkspaceImpact(ctx context.Context, workspaceID string) (Worksp
+ 	return impact, nil
+ }
+ 
++// RecordRepositoryBranchSwitch persists the branch context change and its
++// after-commit publication records in one database transaction.
++func (s *Store) RecordRepositoryBranchSwitch(ctx context.Context, workspaceID, actorID, requestID, beforeBranch, afterBranch string, expectedRevision int) (Workspace, error) {
++	tx, err := s.db.BeginTx(ctx, nil)
++	if err != nil {
++		return Workspace{}, fmt.Errorf("begin branch switch: %w", err)
++	}
++	defer tx.Rollback()
++	result, err := tx.ExecContext(ctx, `
++		UPDATE workspaces
++		SET default_branch = ?, revision = revision + 1, last_opened_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP
++		WHERE id = ? AND revision = ? AND status = 'active'
++	`, afterBranch, workspaceID, expectedRevision)
++	if err != nil {
++		return Workspace{}, fmt.Errorf("record branch switch: %w", err)
++	}
++	if affected, _ := result.RowsAffected(); affected == 0 {
++		return Workspace{}, ErrRevisionConflict
++	}
++	var revision int
++	if err := tx.QueryRowContext(ctx, `SELECT revision FROM workspaces WHERE id = ?`, workspaceID).Scan(&revision); err != nil {
++		return Workspace{}, fmt.Errorf("read branch switch revision: %w", err)
++	}
++	payload, err := json.Marshal(map[string]any{"workspace_id": workspaceID, "before_branch": beforeBranch, "after_branch": afterBranch, "revision": revision})
++	if err != nil {
++		return Workspace{}, fmt.Errorf("marshal branch switch audit: %w", err)
++	}
++	if _, err := tx.ExecContext(ctx, `INSERT INTO audit_events (workspace_id, actor_id, action, entity_type, entity_id, request_id, payload_json) VALUES (?, ?, 'repository.branch_switched', 'workspace', ?, ?, ?)`, workspaceID, actorID, workspaceID, nullIfEmpty(requestID), string(payload)); err != nil {
++		return Workspace{}, fmt.Errorf("audit branch switch: %w", err)
++	}
++	eventID := fmt.Sprintf("repository:%s:%d:branch-switched", workspaceID, revision)
++	if _, err := tx.ExecContext(ctx, `INSERT INTO event_outbox (workspace_id, event_id, event_type, entity_type, entity_id, payload_json) VALUES (?, ?, 'repository.branch_switched', 'workspace', ?, ?)`, workspaceID, eventID, workspaceID, string(payload)); err != nil {
++		return Workspace{}, fmt.Errorf("outbox branch switch: %w", err)
++	}
++	if err := tx.Commit(); err != nil {
++		return Workspace{}, fmt.Errorf("commit branch switch: %w", err)
++	}
++	return s.GetWorkspace(ctx, workspaceID)
++}
++
+ var ErrRevisionConflict = errors.New("workspace revision conflict")
+ 
+ func appendWorkspaceAudit(ctx context.Context, tx *sql.Tx, workspaceID, actorID, requestID, action string, revision int) error {
+diff --git a/api/internal/httpapi/repository.go b/api/internal/httpapi/repository.go
+new file mode 100644
+index 0000000..4ff8dd1
+--- /dev/null
++++ b/api/internal/httpapi/repository.go
+@@ -0,0 +1,312 @@
++package httpapi
++
++import (
++	"context"
++	"errors"
++	"fmt"
++	"net/http"
++	"os/exec"
++	"path/filepath"
++	"strings"
++	"sync"
++
++	"roundtable/internal/db"
++)
++
++type repositoryStatusResponse struct {
++	WorkspaceID string               `json:"workspace_id"`
++	RootAlias   string               `json:"root_alias,omitempty"`
++	Branch      string               `json:"branch"`
++	HeadSHA     string               `json:"head_sha"`
++	Dirty       bool                 `json:"dirty"`
++	Ahead       int                  `json:"ahead"`
++	Behind      int                  `json:"behind"`
++	Detached    bool                 `json:"detached"`
++	Remotes     []repositoryRemote   `json:"remotes"`
++	Index       []repositoryChange   `json:"index"`
++	Protected   protectedPathSummary `json:"protected_paths"`
++}
++
++type repositoryRemote struct {
++	Name string `json:"name"`
++	URL  string `json:"url"`
++}
++
++type repositoryChange struct {
++	Path     string `json:"path"`
++	Index    string `json:"index"`
++	Worktree string `json:"worktree"`
++}
++
++type protectedPathSummary struct {
++	Changed int      `json:"changed"`
++	Paths   []string `json:"paths,omitempty"`
++}
++
++type branchSwitchInput struct {
++	Branch string `json:"branch"`
++}
++
++type branchSwitchPreflightResponse struct {
++	WorkspaceID string                   `json:"workspace_id"`
++	Target      string                   `json:"target_branch"`
++	Allowed     bool                     `json:"allowed"`
++	Blockers    []repositoryBlocker      `json:"blockers"`
++	Status      repositoryStatusResponse `json:"repository"`
++}
++
++type repositoryBlocker struct {
++	Code    string `json:"code"`
++	Message string `json:"message"`
++	Count   int    `json:"count,omitempty"`
++}
++
++type branchSwitchResponse struct {
++	Workspace workspaceResponse        `json:"workspace"`
++	Before    repositoryStatusResponse `json:"before"`
++	After     repositoryStatusResponse `json:"after"`
++}
++
++var repositorySwitchMu sync.Mutex
++
++func (s *Server) repositoryStatus(w http.ResponseWriter, r *http.Request) {
++	workspace, err := s.workspace(r)
++	if err != nil {
++		writeWorkspaceError(w, r, err)
++		return
++	}
++	status, err := inspectRepository(r.Context(), workspace)
++	if err != nil {
++		WriteProblem(w, r, http.StatusConflict, "repository_status_unavailable", "Repository status unavailable", err.Error())
++		return
++	}
++	writeJSON(w, http.StatusOK, status)
++}
++
++func (s *Server) branchSwitchPreflight(w http.ResponseWriter, r *http.Request) {
++	if !humanAuthorized(r) {
++		WriteProblem(w, r, http.StatusForbidden, "forbidden", "Human authorization required", "Set X-Actor-ID and X-Actor-Role to a human role")
++		return
++	}
++	workspace, err := s.workspace(r)
++	if err != nil {
++		writeWorkspaceError(w, r, err)
++		return
++	}
++	input, err := decodeBranchInput(r)
++	if err != nil {
++		WriteProblem(w, r, http.StatusBadRequest, "invalid_branch", "Invalid branch request", err.Error())
++		return
++	}
++	status, err := inspectRepository(r.Context(), workspace)
++	if err != nil {
++		WriteProblem(w, r, http.StatusConflict, "repository_status_unavailable", "Repository status unavailable", err.Error())
++		return
++	}
++	preflight, err := s.branchPreflight(r.Context(), workspace, input.Branch, status)
++	if err != nil {
++		WriteProblem(w, r, http.StatusInternalServerError, "branch_preflight_failed", "Branch preflight failed", err.Error())
++		return
++	}
++	writeJSON(w, http.StatusOK, preflight)
++}
++
++func (s *Server) branchSwitch(w http.ResponseWriter, r *http.Request) {
++	if !humanAuthorized(r) {
++		WriteProblem(w, r, http.StatusForbidden, "forbidden", "Human authorization required", "Set X-Actor-ID and X-Actor-Role to a human role")
++		return
++	}
++	if strings.TrimSpace(r.Header.Get("Idempotency-Key")) == "" {
++		WriteProblem(w, r, http.StatusBadRequest, "idempotency_key_required", "Idempotency key required", "Branch switching requires Idempotency-Key")
++		return
++	}
++	workspace, err := s.workspace(r)
++	if err != nil {
++		writeWorkspaceError(w, r, err)
++		return
++	}
++	input, err := decodeBranchInput(r)
++	if err != nil {
++		WriteProblem(w, r, http.StatusBadRequest, "invalid_branch", "Invalid branch request", err.Error())
++		return
++	}
++	repositorySwitchMu.Lock()
++	defer repositorySwitchMu.Unlock()
++	before, err := inspectRepository(r.Context(), workspace)
++	if err != nil {
++		WriteProblem(w, r, http.StatusConflict, "repository_status_unavailable", "Repository status unavailable", err.Error())
++		return
++	}
++	preflight, err := s.branchPreflight(r.Context(), workspace, input.Branch, before)
++	if err != nil {
++		WriteProblem(w, r, http.StatusInternalServerError, "branch_preflight_failed", "Branch preflight failed", err.Error())
++		return
++	}
++	if !preflight.Allowed {
++		writeJSON(w, http.StatusConflict, preflight)
++		return
++	}
++	if err := git(r.Context(), workspace.RootPath, "switch", input.Branch); err != nil {
++		WriteProblem(w, r, http.StatusConflict, "branch_switch_failed", "Branch switch failed", err.Error())
++		return
++	}
++	after, err := inspectRepository(r.Context(), workspace)
++	if err != nil {
++		_ = git(context.Background(), workspace.RootPath, "switch", before.Branch)
++		WriteProblem(w, r, http.StatusConflict, "repository_status_unavailable", "Repository status unavailable", err.Error())
++		return
++	}
++	updated, err := s.config.Store.RecordRepositoryBranchSwitch(r.Context(), workspace.ID, r.Header.Get("X-Actor-ID"), requestID(r.Context()), before.Branch, after.Branch, workspace.Revision)
++	if err != nil {
++		_ = git(context.Background(), workspace.RootPath, "switch", before.Branch)
++		if errors.Is(err, db.ErrRevisionConflict) {
++			WriteProblem(w, r, http.StatusConflict, "workspace_revision_conflict", "Workspace changed", err.Error())
++			return
++		}
++		WriteProblem(w, r, http.StatusInternalServerError, "branch_switch_record_failed", "Branch switch could not be recorded", err.Error())
++		return
++	}
++	writeJSON(w, http.StatusOK, branchSwitchResponse{Workspace: toWorkspaceResponse(updated), Before: before, After: after})
++}
++
++func decodeBranchInput(r *http.Request) (branchSwitchInput, error) {
++	var input branchSwitchInput
++	if err := decodeJSON(r, &input); err != nil {
++		return input, err
++	}
++	input.Branch = strings.TrimSpace(input.Branch)
++	if input.Branch == "" || input.Branch == "HEAD" || strings.ContainsAny(input.Branch, "\r\n") || filepath.IsAbs(input.Branch) || strings.Contains(input.Branch, "..") || strings.HasPrefix(input.Branch, "-") {
++		return input, errors.New("branch must be a safe repository branch name")
++	}
++	return input, nil
++}
++
++func humanAuthorized(r *http.Request) bool {
++	if !authorized(r) {
++		return false
++	}
++	switch strings.ToLower(strings.TrimSpace(r.Header.Get("X-Actor-Role"))) {
++	case "human", "admin", "chair":
++		return true
++	default:
++		return false
++	}
++}
++
++func (s *Server) branchPreflight(ctx context.Context, workspace db.Workspace, target string, status repositoryStatusResponse) (branchSwitchPreflightResponse, error) {
++	impact, err := s.config.Store.WorkspaceImpact(ctx, workspace.ID)
++	if err != nil {
++		return branchSwitchPreflightResponse{}, err
++	}
++	blockers := make([]repositoryBlocker, 0)
++	if status.Dirty {
++		blockers = append(blockers, repositoryBlocker{Code: "dirty_worktree", Message: "Repository has uncommitted changes"})
++	}
++	if impact.ActiveTransactions > 0 {
++		blockers = append(blockers, repositoryBlocker{Code: "active_transactions", Message: "A transaction is active", Count: impact.ActiveTransactions})
++	}
++	if impact.ActiveClaims > 0 {
++		blockers = append(blockers, repositoryBlocker{Code: "active_claims", Message: "Active resource claims must be resolved", Count: impact.ActiveClaims})
++	}
++	if impact.OpenProposals > 0 {
++		blockers = append(blockers, repositoryBlocker{Code: "open_proposals", Message: "Open proposals must be resolved", Count: impact.OpenProposals})
++	}
++	if impact.ActiveSessions > 0 {
++		blockers = append(blockers, repositoryBlocker{Code: "active_sessions", Message: "Active sessions must be resolved", Count: impact.ActiveSessions})
++	}
++	if status.Branch == target {
++		blockers = append(blockers, repositoryBlocker{Code: "already_on_branch", Message: "Repository is already on the target branch"})
++	}
++	return branchSwitchPreflightResponse{WorkspaceID: workspace.ID, Target: target, Allowed: len(blockers) == 0, Blockers: blockers, Status: status}, nil
++}
++
++func inspectRepository(ctx context.Context, workspace db.Workspace) (repositoryStatusResponse, error) {
++	root := workspace.RootPath
++	branch, err := gitOutput(ctx, root, "branch", "--show-current")
++	if err != nil {
++		return repositoryStatusResponse{}, err
++	}
++	head, err := gitOutput(ctx, root, "rev-parse", "HEAD")
++	if err != nil {
++		return repositoryStatusResponse{}, err
++	}
++	detached := strings.TrimSpace(branch) == ""
++	if detached {
++		branch = "HEAD"
++	}
++	porcelain, err := gitOutput(ctx, root, "status", "--porcelain=v1")
++	if err != nil {
++		return repositoryStatusResponse{}, err
++	}
++	changes := parseRepositoryChanges(porcelain)
++	remotes, err := repositoryRemotes(ctx, root)
++	if err != nil {
++		return repositoryStatusResponse{}, err
++	}
++	ahead, behind := 0, 0
++	if !detached {
++		if counts, countErr := gitOutput(ctx, root, "rev-list", "--left-right", "--count", "@{upstream}...HEAD"); countErr == nil {
++			_, _ = fmt.Sscanf(strings.TrimSpace(counts), "%d %d", &behind, &ahead)
++		}
++	}
++	protected := protectedPathSummary{}
++	for _, change := range changes {
++		if isProtectedPath(change.Path) {
++			protected.Changed++
++			protected.Paths = append(protected.Paths, change.Path)
++		}
++	}
++	return repositoryStatusResponse{WorkspaceID: workspace.ID, RootAlias: workspace.RootAlias, Branch: strings.TrimSpace(branch), HeadSHA: strings.TrimSpace(head), Dirty: len(changes) > 0, Ahead: ahead, Behind: behind, Detached: detached, Remotes: remotes, Index: changes, Protected: protected}, nil
++}
++
++func git(ctx context.Context, root string, args ...string) error {
++	_, err := gitOutput(ctx, root, args...)
++	return err
++}
++func gitOutput(ctx context.Context, root string, args ...string) (string, error) {
++	command := exec.CommandContext(ctx, "git", append([]string{"-C", root}, args...)...)
++	out, err := command.CombinedOutput()
++	if err != nil {
++		return "", fmt.Errorf("git %s: %w: %s", strings.Join(args, " "), err, strings.TrimSpace(string(out)))
++	}
++	return string(out), nil
++}
++
++func repositoryRemotes(ctx context.Context, root string) ([]repositoryRemote, error) {
++	out, err := gitOutput(ctx, root, "remote", "-v")
++	if err != nil {
++		return nil, err
++	}
++	seen := map[string]bool{}
++	var remotes []repositoryRemote
++	for _, line := range strings.Split(strings.TrimSpace(out), "\n") {
++		fields := strings.Fields(line)
++		if len(fields) < 2 || seen[fields[0]] {
++			continue
++		}
++		seen[fields[0]] = true
++		remotes = append(remotes, repositoryRemote{Name: fields[0], URL: fields[1]})
++	}
++	return remotes, nil
++}
++
++func parseRepositoryChanges(value string) []repositoryChange {
++	var changes []repositoryChange
++	for _, line := range strings.Split(strings.TrimSpace(value), "\n") {
++		if len(line) < 4 {
++			continue
++		}
++		status := line[:2]
++		path := strings.TrimSpace(line[3:])
++		if strings.Contains(path, " -> ") {
++			path = strings.TrimSpace(strings.SplitN(path, " -> ", 2)[1])
++		}
++		changes = append(changes, repositoryChange{Path: path, Index: string(status[0]), Worktree: string(status[1])})
++	}
++	return changes
++}
++
++func isProtectedPath(path string) bool {
++	path = filepath.ToSlash(filepath.Clean(path))
++	return path == ".roundtable" || strings.HasPrefix(path, ".roundtable/") || path == ".github" || strings.HasPrefix(path, ".github/") || path == "TASKS.ROUNDTABLE" || strings.HasPrefix(path, "TASKS.ROUNDTABLE/")
++}
+diff --git a/api/internal/httpapi/repository_test.go b/api/internal/httpapi/repository_test.go
+new file mode 100644
+index 0000000..2d05259
+--- /dev/null
++++ b/api/internal/httpapi/repository_test.go
+@@ -0,0 +1,109 @@
++package httpapi
++
++import (
++	"bytes"
++	"encoding/json"
++	"net/http"
++	"net/http/httptest"
++	"os"
++	"os/exec"
++	"path/filepath"
++	"testing"
++
++	"roundtable/internal/db"
++)
++
++func TestRepositoryStatusAndBranchSwitch(t *testing.T) {
++	root := t.TempDir()
++	runGit(t, root, "init", "-q")
++	runGit(t, root, "config", "user.email", "test@example.com")
++	runGit(t, root, "config", "user.name", "Roundtable Test")
++	if err := os.WriteFile(filepath.Join(root, "README.md"), []byte("clean\n"), 0o644); err != nil {
++		t.Fatal(err)
++	}
++	runGit(t, root, "add", "README.md")
++	runGit(t, root, "commit", "-qm", "initial")
++	runGit(t, root, "branch", "feature")
++
++	sqlDB, err := db.Open(filepath.Join(t.TempDir(), "roundtable.db"))
++	if err != nil {
++		t.Fatal(err)
++	}
++	defer sqlDB.Close()
++	store := db.NewStore(sqlDB, nil)
++	workspace := db.Workspace{ID: "ws-repo", DisplayName: "Repo", RootPath: root, Status: "active", Revision: 1}
++	if err := store.UpsertWorkspace(t.Context(), workspace); err != nil {
++		t.Fatal(err)
++	}
++	server := NewServer(Config{Store: store, AllowedWorkspaceRoots: []string{root}})
++
++	req := httptest.NewRequest(http.MethodGet, "/api/v1/workspaces/ws-repo/repository", nil)
++	res := httptest.NewRecorder()
++	server.Handler().ServeHTTP(res, req)
++	if res.Code != http.StatusOK || !bytes.Contains(res.Body.Bytes(), []byte(`"branch":"master"`)) && !bytes.Contains(res.Body.Bytes(), []byte(`"branch":"main"`)) {
++		t.Fatalf("repository status = %d %s", res.Code, res.Body.String())
++	}
++
++	req = httptest.NewRequest(http.MethodPost, "/api/v1/workspaces/ws-repo/repository/branch-switch/preflight", bytes.NewBufferString(`{"branch":"feature"}`))
++	req.Header.Set("X-Actor-ID", "human-1")
++	req.Header.Set("X-Actor-Role", "human")
++	res = httptest.NewRecorder()
++	server.Handler().ServeHTTP(res, req)
++	if res.Code != http.StatusOK || !bytes.Contains(res.Body.Bytes(), []byte(`"allowed":true`)) {
++		t.Fatalf("preflight = %d %s", res.Code, res.Body.String())
++	}
++
++	req = httptest.NewRequest(http.MethodPost, "/api/v1/workspaces/ws-repo/repository/branch-switch", bytes.NewBufferString(`{"branch":"feature"}`))
++	req.Header.Set("X-Actor-ID", "human-1")
++	req.Header.Set("X-Actor-Role", "human")
++	req.Header.Set("Idempotency-Key", "switch-1")
++	req.Header.Set("If-Match", "1")
++	res = httptest.NewRecorder()
++	server.Handler().ServeHTTP(res, req)
++	if res.Code != http.StatusOK {
++		t.Fatalf("switch = %d %s", res.Code, res.Body.String())
++	}
++	var switched branchSwitchResponse
++	if err := json.Unmarshal(res.Body.Bytes(), &switched); err != nil {
++		t.Fatal(err)
++	}
++	if switched.After.Branch != "feature" || switched.Workspace.Revision != 2 {
++		t.Fatalf("unexpected switch response: %+v", switched)
++	}
++	var audits, outbox int
++	if err := sqlDB.QueryRow("SELECT COUNT(*) FROM audit_events WHERE action = 'repository.branch_switched'").Scan(&audits); err != nil {
++		t.Fatal(err)
++	}
++	if err := sqlDB.QueryRow("SELECT COUNT(*) FROM event_outbox WHERE event_type = 'repository.branch_switched'").Scan(&outbox); err != nil {
++		t.Fatal(err)
++	}
++	if audits != 1 || outbox != 1 {
++		t.Fatalf("branch audit/outbox = %d/%d", audits, outbox)
++	}
++}
++
++func TestBranchSwitchRequiresHumanRoleAndIdempotencyKey(t *testing.T) {
++	root := t.TempDir()
++	sqlDB, err := db.Open(filepath.Join(t.TempDir(), "roundtable.db"))
++	if err != nil {
++		t.Fatal(err)
++	}
++	defer sqlDB.Close()
++	server := NewServer(Config{Store: db.NewStore(sqlDB, nil), AllowedWorkspaceRoots: []string{root}})
++	req := httptest.NewRequest(http.MethodPost, "/api/v1/workspaces/missing/repository/branch-switch", bytes.NewBufferString(`{"branch":"main"}`))
++	req.Header.Set("X-Actor-ID", "agent-1")
++	req.Header.Set("X-Actor-Role", "agent")
++	res := httptest.NewRecorder()
++	server.Handler().ServeHTTP(res, req)
++	if res.Code != http.StatusForbidden || !bytes.Contains(res.Body.Bytes(), []byte(`"code":"forbidden"`)) {
++		t.Fatalf("role guard = %d %s", res.Code, res.Body.String())
++	}
++}
++
++func runGit(t *testing.T, root string, args ...string) {
++	t.Helper()
++	command := exec.Command("git", append([]string{"-C", root}, args...)...)
++	if output, err := command.CombinedOutput(); err != nil {
++		t.Fatalf("git %v: %v: %s", args, err, output)
++	}
++}

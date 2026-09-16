@@ -93,6 +93,74 @@ paths:
             application/json:
               schema: {$ref: '#/components/schemas/Workspace'}
         '404': {$ref: '#/components/responses/Problem'}
+  /api/v1/workspaces/{id}/repository:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: {type: string}
+    get:
+      operationId: getRepositoryStatus
+      summary: Get repository status without exposing filesystem paths
+      responses:
+        '200':
+          description: Repository status
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/RepositoryStatus'}
+        '404': {$ref: '#/components/responses/Problem'}
+        '409': {$ref: '#/components/responses/Problem'}
+  /api/v1/workspaces/{id}/repository/branch-switch/preflight:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: {type: string}
+      - {$ref: '#/components/parameters/ActorID'}
+      - {$ref: '#/components/parameters/ActorRole'}
+    post:
+      operationId: preflightRepositoryBranchSwitch
+      summary: Check blockers before a governed branch switch
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/BranchSwitchInput'}
+      responses:
+        '200':
+          description: Branch switch preflight
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/BranchSwitchPreflight'}
+        '400': {$ref: '#/components/responses/Problem'}
+        '403': {$ref: '#/components/responses/Problem'}
+  /api/v1/workspaces/{id}/repository/branch-switch:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: {type: string}
+      - {$ref: '#/components/parameters/ActorID'}
+      - {$ref: '#/components/parameters/ActorRole'}
+      - {$ref: '#/components/parameters/IdempotencyKey'}
+      - {$ref: '#/components/parameters/IfMatch'}
+    post:
+      operationId: switchRepositoryBranch
+      summary: Switch a workspace branch through the governed transaction boundary
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/BranchSwitchInput'}
+      responses:
+        '200':
+          description: Branch switched
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/BranchSwitchResponse'}
+        '400': {$ref: '#/components/responses/Problem'}
+        '403': {$ref: '#/components/responses/Problem'}
+        '409': {$ref: '#/components/responses/Problem'}
     patch:
       operationId: updateWorkspace
       summary: Update workspace metadata
@@ -143,6 +211,16 @@ components:
       required: false
       description: Expected workspace revision for optimistic concurrency control.
       schema: {type: integer, minimum: 1}
+    ActorRole:
+      name: X-Actor-Role
+      in: header
+      required: true
+      schema: {type: string, enum: [human, admin, chair]}
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: true
+      schema: {type: string, minLength: 1, maxLength: 128}
   schemas:
     ComponentHealth:
       type: object
@@ -207,6 +285,69 @@ components:
         active_claims: {type: integer}
         open_proposals: {type: integer}
         active_transactions: {type: integer}
+    RepositoryChange:
+      type: object
+      required: [path, index, worktree]
+      properties:
+        path: {type: string}
+        index: {type: string, minLength: 1, maxLength: 1}
+        worktree: {type: string, minLength: 1, maxLength: 1}
+    RepositoryRemote:
+      type: object
+      required: [name, url]
+      properties:
+        name: {type: string}
+        url: {type: string}
+    ProtectedPathSummary:
+      type: object
+      required: [changed]
+      properties:
+        changed: {type: integer, minimum: 0}
+        paths: {type: array, items: {type: string}}
+    RepositoryStatus:
+      type: object
+      required: [workspace_id, branch, head_sha, dirty, ahead, behind, detached, remotes, index, protected_paths]
+      properties:
+        workspace_id: {type: string}
+        root_alias: {type: string}
+        branch: {type: string}
+        head_sha: {type: string}
+        dirty: {type: boolean}
+        ahead: {type: integer, minimum: 0}
+        behind: {type: integer, minimum: 0}
+        detached: {type: boolean}
+        remotes: {type: array, items: {$ref: '#/components/schemas/RepositoryRemote'}}
+        index: {type: array, items: {$ref: '#/components/schemas/RepositoryChange'}}
+        protected_paths: {$ref: '#/components/schemas/ProtectedPathSummary'}
+    BranchSwitchInput:
+      type: object
+      required: [branch]
+      additionalProperties: false
+      properties:
+        branch: {type: string, minLength: 1}
+    RepositoryBlocker:
+      type: object
+      required: [code, message]
+      properties:
+        code: {type: string}
+        message: {type: string}
+        count: {type: integer, minimum: 0}
+    BranchSwitchPreflight:
+      type: object
+      required: [workspace_id, target_branch, allowed, blockers, repository]
+      properties:
+        workspace_id: {type: string}
+        target_branch: {type: string}
+        allowed: {type: boolean}
+        blockers: {type: array, items: {$ref: '#/components/schemas/RepositoryBlocker'}}
+        repository: {$ref: '#/components/schemas/RepositoryStatus'}
+    BranchSwitchResponse:
+      type: object
+      required: [workspace, before, after]
+      properties:
+        workspace: {$ref: '#/components/schemas/Workspace'}
+        before: {$ref: '#/components/schemas/RepositoryStatus'}
+        after: {$ref: '#/components/schemas/RepositoryStatus'}
     HealthResponse:
       type: object
       required: [status, version, request_id]

@@ -109,6 +109,9 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/v1/workspaces/{id}", s.getWorkspace)
 	mux.HandleFunc("PATCH /api/v1/workspaces/{id}", s.patchWorkspace)
 	mux.HandleFunc("DELETE /api/v1/workspaces/{id}", s.detachWorkspace)
+	mux.HandleFunc("GET /api/v1/workspaces/{id}/repository", s.repositoryStatus)
+	mux.HandleFunc("POST /api/v1/workspaces/{id}/repository/branch-switch/preflight", s.branchSwitchPreflight)
+	mux.HandleFunc("POST /api/v1/workspaces/{id}/repository/branch-switch", s.branchSwitch)
 	return requestIDs(securityHeaders(jsonDefaults(mux)))
 }
 
