@@ -50,7 +50,7 @@ func TestWorkspaceRegistryValidatesRootsAndSupportsDetach(t *testing.T) {
 	if err := json.Unmarshal(response.Body.Bytes(), &created); err != nil {
 		t.Fatalf("decode create: %v", err)
 	}
-	if created.Status != "active" || created.CanonicalRepositoryIdentity == "" {
+	if created.Status != "active" || created.CanonicalRepositoryIdentity == "" || created.Revision != 1 {
 		t.Fatalf("unexpected workspace: %+v", created)
 	}
 
@@ -61,12 +61,41 @@ func TestWorkspaceRegistryValidatesRootsAndSupportsDetach(t *testing.T) {
 		t.Fatalf("get status = %d", response.Code)
 	}
 
+	request = httptest.NewRequest(http.MethodPatch, "/api/v1/workspaces/"+created.ID, bytes.NewBufferString(`{"display_name":"Renamed"}`))
+	request.Header.Set("X-Actor-ID", "human-1")
+	request.Header.Set("If-Match", "1")
+	response = httptest.NewRecorder()
+	server.Handler().ServeHTTP(response, request)
+	if response.Code != http.StatusOK || !bytes.Contains(response.Body.Bytes(), []byte(`"revision":2`)) {
+		t.Fatalf("patch response = %d %s", response.Code, response.Body.String())
+	}
+
+	request = httptest.NewRequest(http.MethodPatch, "/api/v1/workspaces/"+created.ID, bytes.NewBufferString(`{"display_name":"Conflict"}`))
+	request.Header.Set("X-Actor-ID", "human-1")
+	request.Header.Set("If-Match", "1")
+	response = httptest.NewRecorder()
+	server.Handler().ServeHTTP(response, request)
+	if response.Code != http.StatusConflict || !bytes.Contains(response.Body.Bytes(), []byte(`workspace_revision_conflict`)) {
+		t.Fatalf("stale patch response = %d %s", response.Code, response.Body.String())
+	}
+
 	request = httptest.NewRequest(http.MethodDelete, "/api/v1/workspaces/"+created.ID, nil)
 	request.Header.Set("X-Actor-ID", "human-1")
+	request.Header.Set("If-Match", "2")
 	response = httptest.NewRecorder()
 	server.Handler().ServeHTTP(response, request)
 	if response.Code != http.StatusOK || !bytes.Contains(response.Body.Bytes(), []byte(`"status":"detached"`)) {
 		t.Fatalf("detach response = %d %s", response.Code, response.Body.String())
+	}
+	var audits, outbox int
+	if err := sqlDB.QueryRow("SELECT COUNT(*) FROM audit_events WHERE entity_id = ?", created.ID).Scan(&audits); err != nil {
+		t.Fatalf("audit count: %v", err)
+	}
+	if err := sqlDB.QueryRow("SELECT COUNT(*) FROM event_outbox WHERE entity_id = ?", created.ID).Scan(&outbox); err != nil {
+		t.Fatalf("outbox count: %v", err)
+	}
+	if audits != 3 || outbox != 3 {
+		t.Fatalf("audit/outbox counts = %d/%d, want 3/3", audits, outbox)
 	}
 }
 

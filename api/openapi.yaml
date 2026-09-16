@@ -47,6 +47,7 @@ paths:
       summary: Register a workspace without mutating its repository
       parameters:
         - {$ref: '#/components/parameters/ActorID'}
+        - {$ref: '#/components/parameters/IfMatch'}
       requestBody:
         required: true
         content:
@@ -81,6 +82,7 @@ paths:
       summary: Update workspace metadata
       parameters:
         - {$ref: '#/components/parameters/ActorID'}
+        - {$ref: '#/components/parameters/IfMatch'}
       requestBody:
         required: true
         content:
@@ -119,6 +121,12 @@ components:
       in: header
       required: true
       schema: {type: string}
+    IfMatch:
+      name: If-Match
+      in: header
+      required: false
+      description: Expected workspace revision for optimistic concurrency control.
+      schema: {type: integer, minimum: 1}
   schemas:
     WorkspaceInput:
       type: object
@@ -140,6 +148,7 @@ components:
       required: [id, display_name, canonical_repository_identity, status, created_at]
       properties:
         id: {type: string}
+        revision: {type: integer, minimum: 1}
         display_name: {type: string}
         root_alias: {type: string}
         canonical_repository_identity: {type: string}

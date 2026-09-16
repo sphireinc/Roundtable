@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -53,6 +54,7 @@ type workspaceResponse struct {
 	DefaultBranch               string `json:"default_branch,omitempty"`
 	CreatedAt                   string `json:"created_at"`
 	LastOpenedAt                string `json:"last_opened_at,omitempty"`
+	Revision                    int    `json:"revision"`
 }
 type workspaceDetachResponse struct {
 	Workspace workspaceResponse `json:"workspace"`
@@ -159,8 +161,8 @@ func (s *Server) createWorkspace(w http.ResponseWriter, r *http.Request) {
 	if strings.TrimSpace(input.DisplayName) == "" {
 		input.DisplayName = filepath.Base(root)
 	}
-	workspace := db.Workspace{ID: newWorkspaceID(), DisplayName: strings.TrimSpace(input.DisplayName), RootAlias: strings.TrimSpace(input.RootAlias), CanonicalRepositoryIdentity: repositoryIdentity(root), Status: "active", DefaultBranch: strings.TrimSpace(input.DefaultBranch), RootPath: root, LastOpenedAt: nowRFC3339Nano()}
-	if err := s.config.Store.UpsertWorkspace(r.Context(), workspace); err != nil {
+	workspace := db.Workspace{ID: newWorkspaceID(), DisplayName: strings.TrimSpace(input.DisplayName), RootAlias: strings.TrimSpace(input.RootAlias), CanonicalRepositoryIdentity: repositoryIdentity(root), Status: "active", DefaultBranch: strings.TrimSpace(input.DefaultBranch), RootPath: root, LastOpenedAt: nowRFC3339Nano(), Revision: 1}
+	if err := s.config.Store.CreateWorkspace(r.Context(), workspace, r.Header.Get("X-Actor-ID"), requestID(r.Context())); err != nil {
 		WriteProblem(w, r, 409, "workspace_create_conflict", "Workspace could not be created", err.Error())
 		return
 	}
@@ -193,11 +195,16 @@ func (s *Server) patchWorkspace(w http.ResponseWriter, r *http.Request) {
 		workspace.DefaultBranch = strings.TrimSpace(input.DefaultBranch)
 	}
 	workspace.LastOpenedAt = nowRFC3339Nano()
-	if err := s.config.Store.UpsertWorkspace(r.Context(), workspace); err != nil {
+	updated, err := s.config.Store.UpdateWorkspace(r.Context(), workspace, expectedRevision(r, workspace.Revision), r.Header.Get("X-Actor-ID"), requestID(r.Context()))
+	if err != nil {
+		if errors.Is(err, db.ErrRevisionConflict) {
+			WriteProblem(w, r, 409, "workspace_revision_conflict", "Workspace changed", err.Error())
+			return
+		}
 		WriteProblem(w, r, 409, "workspace_update_conflict", "Workspace could not be updated", err.Error())
 		return
 	}
-	writeJSON(w, 200, toWorkspaceResponse(workspace))
+	writeJSON(w, 200, toWorkspaceResponse(updated))
 }
 
 func (s *Server) detachWorkspace(w http.ResponseWriter, r *http.Request) {
@@ -210,12 +217,21 @@ func (s *Server) detachWorkspace(w http.ResponseWriter, r *http.Request) {
 		writeWorkspaceError(w, r, err)
 		return
 	}
-	if err := s.config.Store.DetachWorkspace(r.Context(), workspace.ID); err != nil {
+	impact, err := s.config.Store.WorkspaceImpact(r.Context(), workspace.ID)
+	if err != nil {
+		WriteProblem(w, r, 500, "workspace_impact_failed", "Unable to determine workspace impact", err.Error())
+		return
+	}
+	detached, err := s.config.Store.DetachWorkspaceVersioned(r.Context(), workspace.ID, expectedRevision(r, workspace.Revision), r.Header.Get("X-Actor-ID"), requestID(r.Context()))
+	if err != nil {
+		if errors.Is(err, db.ErrRevisionConflict) {
+			WriteProblem(w, r, 409, "workspace_revision_conflict", "Workspace changed", err.Error())
+			return
+		}
 		WriteProblem(w, r, 409, "workspace_detach_conflict", "Workspace could not be detached", err.Error())
 		return
 	}
-	workspace.Status = "detached"
-	writeJSON(w, 200, workspaceDetachResponse{Workspace: toWorkspaceResponse(workspace), Impact: workspaceImpact{}})
+	writeJSON(w, 200, workspaceDetachResponse{Workspace: toWorkspaceResponse(detached), Impact: toWorkspaceImpact(impact)})
 }
 
 func (s *Server) workspace(r *http.Request) (db.Workspace, error) {
@@ -276,7 +292,21 @@ func writeWorkspaceError(w http.ResponseWriter, r *http.Request, err error) {
 	WriteProblem(w, r, 404, "workspace_not_found", "Workspace not found", err.Error())
 }
 func toWorkspaceResponse(w db.Workspace) workspaceResponse {
-	return workspaceResponse{ID: w.ID, DisplayName: w.DisplayName, RootAlias: w.RootAlias, CanonicalRepositoryIdentity: w.CanonicalRepositoryIdentity, Status: w.Status, DefaultBranch: w.DefaultBranch, CreatedAt: w.CreatedAt, LastOpenedAt: w.LastOpenedAt}
+	return workspaceResponse{ID: w.ID, DisplayName: w.DisplayName, RootAlias: w.RootAlias, CanonicalRepositoryIdentity: w.CanonicalRepositoryIdentity, Status: w.Status, DefaultBranch: w.DefaultBranch, CreatedAt: w.CreatedAt, LastOpenedAt: w.LastOpenedAt, Revision: w.Revision}
+}
+func toWorkspaceImpact(i db.WorkspaceImpact) workspaceImpact {
+	return workspaceImpact{ActiveSessions: i.ActiveSessions, ActiveClaims: i.ActiveClaims, OpenProposals: i.OpenProposals, ActiveTransactions: i.ActiveTransactions}
+}
+func expectedRevision(r *http.Request, fallback int) int {
+	value := strings.TrimSpace(r.Header.Get("If-Match"))
+	if value == "" {
+		return fallback
+	}
+	revision, err := strconv.Atoi(value)
+	if err != nil {
+		return -1
+	}
+	return revision
 }
 func decodeJSON(r *http.Request, value any) error {
 	dec := json.NewDecoder(io.LimitReader(r.Body, 1<<20))

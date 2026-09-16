@@ -254,6 +254,61 @@ func migrate(db *sql.DB) error {
 	if err := ensureWorkspaceColumns(db); err != nil {
 		return err
 	}
+	if err := ensureWorkspaceHardening(db); err != nil {
+		return err
+	}
+	return nil
+}
+
+func ensureWorkspaceHardening(db *sql.DB) error {
+	if err := addColumnIfMissing(db, "workspaces", "revision INTEGER NOT NULL DEFAULT 1"); err != nil {
+		return err
+	}
+	for _, table := range []string{"agent_sessions", "claims", "proposals", "transactions"} {
+		if err := addColumnIfMissing(db, table, "workspace_id TEXT"); err != nil {
+			return err
+		}
+	}
+	for _, index := range []string{
+		"CREATE INDEX IF NOT EXISTS idx_workspace_sessions_status ON agent_sessions(workspace_id, status)",
+		"CREATE INDEX IF NOT EXISTS idx_workspace_claims_status ON claims(workspace_id, status)",
+		"CREATE INDEX IF NOT EXISTS idx_workspace_proposals_status ON proposals(workspace_id, status)",
+		"CREATE INDEX IF NOT EXISTS idx_workspace_transactions_status ON transactions(workspace_id, status)",
+	} {
+		if _, err := db.Exec(index); err != nil {
+			return fmt.Errorf("create workspace impact index: %w", err)
+		}
+	}
+	if _, err := db.Exec("INSERT OR IGNORE INTO schema_migrations(version) VALUES (4)"); err != nil {
+		return fmt.Errorf("record workspace hardening migration: %w", err)
+	}
+	return nil
+}
+
+func addColumnIfMissing(db *sql.DB, table, definition string) error {
+	rows, err := db.Query("PRAGMA table_info(" + table + ")")
+	if err != nil {
+		return fmt.Errorf("inspect %s schema: %w", table, err)
+	}
+	defer rows.Close()
+	name := definition[:strings.IndexByte(definition, ' ')]
+	for rows.Next() {
+		var cid, notNull, pk int
+		var columnName, columnType string
+		var defaultValue sql.NullString
+		if err := rows.Scan(&cid, &columnName, &columnType, &notNull, &defaultValue, &pk); err != nil {
+			return fmt.Errorf("scan %s schema: %w", table, err)
+		}
+		if columnName == name {
+			return nil
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("read %s schema: %w", table, err)
+	}
+	if _, err := db.Exec("ALTER TABLE " + table + " ADD COLUMN " + definition); err != nil {
+		return fmt.Errorf("add %s.%s: %w", table, name, err)
+	}
 	return nil
 }
 
