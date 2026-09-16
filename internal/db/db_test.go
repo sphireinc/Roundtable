@@ -39,8 +39,8 @@ func TestOpenBootstrapsControlPlaneSchema(t *testing.T) {
 	if err := sqlDB.QueryRow("SELECT MAX(version) FROM schema_migrations").Scan(&version); err != nil {
 		t.Fatalf("migration version: %v", err)
 	}
-	if version != 2 {
-		t.Fatalf("migration version = %d, want 2", version)
+	if version != 3 {
+		t.Fatalf("migration version = %d, want 3", version)
 	}
 }
 
