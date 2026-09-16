@@ -1,0 +1,63 @@
+openapi: 3.1.0
+info:
+  title: Roundtable API
+  version: v1
+  description: Local-first governed control-plane API.
+servers:
+  - url: http://127.0.0.1:8080
+paths:
+  /api/v1/health:
+    get:
+      operationId: getHealth
+      summary: Lightweight process health
+      responses:
+        '200':
+          description: Healthy
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/HealthResponse'}
+  /api/v1/status:
+    get:
+      operationId: getStatus
+      summary: Control-plane status
+      responses:
+        '200':
+          description: Current status
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/StatusResponse'}
+components:
+  schemas:
+    HealthResponse:
+      type: object
+      required: [status, version, request_id]
+      properties:
+        status: {type: string, enum: [ok]}
+        version: {type: string}
+        request_id: {type: string}
+    StatusResponse:
+      type: object
+      required: [status, version, api_version, time, request_id]
+      properties:
+        status: {type: string}
+        version: {type: string}
+        api_version: {type: string, enum: [v1]}
+        time: {type: string, format: date-time}
+        request_id: {type: string}
+    Problem:
+      type: object
+      required: [type, title, status, request_id]
+      properties:
+        type: {type: string, format: uri}
+        title: {type: string}
+        status: {type: integer}
+        detail: {type: string}
+        instance: {type: string}
+        request_id: {type: string}
+        code: {type: string}
+  responses:
+    Problem:
+      description: RFC 7807 problem details
+      content:
+        application/problem+json:
+          schema: {$ref: '#/components/schemas/Problem'}
