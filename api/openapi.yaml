@@ -684,6 +684,13 @@ paths:
       description: Run state is distinct from individual agent-session state. All control transitions require a human role and are audited.
       requestBody: {required: false, content: {application/json: {schema: {$ref: '#/components/schemas/RunStartInput'}}}}
       responses: {'200': {description: Run transition, content: {application/json: {schema: {$ref: '#/components/schemas/RunTransition'}}}}, '400': {$ref: '#/components/responses/Problem'}, '403': {$ref: '#/components/responses/Problem'}, '409': {$ref: '#/components/responses/Problem'}}
+  /api/v1/workspaces/{id}/dashboard/summary:
+    parameters: [{name: id, in: path, required: true, schema: {type: string}}]
+    get:
+      operationId: getDashboardSummary
+      summary: Return bounded dashboard metrics and governance status
+      description: The measurement window is the preceding 24 hours. Consensus success rate is approved finalized snapshots divided by all finalized snapshots. Policy pass rate is pass evaluations divided by all evaluations in the window. The response intentionally excludes proposal, claim, and activity lists.
+      responses: {'200': {description: Dashboard summary, content: {application/json: {schema: {$ref: '#/components/schemas/DashboardSummary'}}}}, '404': {$ref: '#/components/responses/Problem'}}
   /api/v1/workspaces/{id}/transactions/{transaction_id}/{action}:
     parameters: [{name: id, in: path, required: true, schema: {type: string}}, {name: transaction_id, in: path, required: true, schema: {type: string}}, {name: action, in: path, required: true, schema: {type: string, enum: [stage, validate, apply, cancel, retry, compensate]}}, {$ref: '#/components/parameters/ActorID'}, {$ref: '#/components/parameters/ActorRole'}, {$ref: '#/components/parameters/IdempotencyKey'}]
     post:
@@ -1556,6 +1563,22 @@ components:
       properties:
         run_id: {type: string}
         state: {type: string}
+    DashboardSummary:
+      type: object
+      required: [workspace_id, generated_at, measurement_window, agents_online, proposal_queue, consensus_success_rate, policy_pass_rate, transaction_manager, mcp_enforcement, memory_oracle, run_state, repository]
+      properties:
+        workspace_id: {type: string}
+        generated_at: {type: string, format: date-time}
+        measurement_window: {type: object, required: [from, to], properties: {from: {type: string, format: date-time}, to: {type: string, format: date-time}}}
+        agents_online: {type: integer, minimum: 0}
+        proposal_queue: {type: object, required: [pending, in_review, approved, rejected], properties: {pending: {type: integer}, in_review: {type: integer}, approved: {type: integer}, rejected: {type: integer}}}
+        consensus_success_rate: {type: number, minimum: 0, maximum: 1}
+        policy_pass_rate: {type: number, minimum: 0, maximum: 1}
+        transaction_manager: {type: string}
+        mcp_enforcement: {type: string}
+        memory_oracle: {type: string}
+        run_state: {type: string}
+        repository: {type: object, additionalProperties: true}
     ContentionResolutionInput:
       type: object
       required: [resolution]
