@@ -658,6 +658,18 @@ paths:
       operationId: getTransaction
       summary: Get one transaction
       responses: {'200': {description: Transaction, content: {application/json: {schema: {$ref: '#/components/schemas/Transaction'}}}}, '404': {$ref: '#/components/responses/Problem'}}
+  /api/v1/workspaces/{id}/transactions/{transaction_id}/phases:
+    parameters: [{name: id, in: path, required: true, schema: {type: string}}, {name: transaction_id, in: path, required: true, schema: {type: string}}, {name: cursor, in: query, schema: {type: string}}, {name: limit, in: query, schema: {type: integer, minimum: 1, maximum: 200, default: 50}}]
+    get:
+      operationId: listTransactionPhases
+      summary: List the ordered transaction phase timeline
+      responses: {'200': {description: Transaction phases, content: {application/json: {schema: {$ref: '#/components/schemas/TransactionPhases'}}}}, '404': {$ref: '#/components/responses/Problem'}}
+  /api/v1/workspaces/{id}/transactions/{transaction_id}/recovery:
+    parameters: [{name: id, in: path, required: true, schema: {type: string}}, {name: transaction_id, in: path, required: true, schema: {type: string}}]
+    get:
+      operationId: getTransactionRecovery
+      summary: Return safe recovery actions computed from transaction state
+      responses: {'200': {description: Recovery actions, content: {application/json: {schema: {$ref: '#/components/schemas/TransactionRecovery'}}}}, '404': {$ref: '#/components/responses/Problem'}}
   /api/v1/workspaces/{id}/transactions/{transaction_id}/{action}:
     parameters: [{name: id, in: path, required: true, schema: {type: string}}, {name: transaction_id, in: path, required: true, schema: {type: string}}, {name: action, in: path, required: true, schema: {type: string, enum: [stage, validate, apply, cancel, retry, compensate]}}, {$ref: '#/components/parameters/ActorID'}, {$ref: '#/components/parameters/ActorRole'}, {$ref: '#/components/parameters/IdempotencyKey'}]
     post:
@@ -1471,6 +1483,40 @@ components:
       properties:
         items: {type: array, items: {$ref: '#/components/schemas/Transaction'}}
         next_cursor: {type: [string, 'null']}
+    TransactionPhase:
+      type: object
+      required: [id, transaction_id, phase, status, actor, inputs, outputs, recovery_state, created_at]
+      properties:
+        id: {type: string}
+        transaction_id: {type: string}
+        phase: {type: string}
+        status: {type: string}
+        actor: {type: string}
+        reason: {type: string}
+        request_id: {type: string}
+        inputs: {type: object, additionalProperties: true}
+        outputs: {type: object, additionalProperties: true}
+        log_ref: {type: string}
+        failure_code: {type: string}
+        recovery_state: {type: string}
+        started_at: {type: string, format: date-time}
+        ended_at: {type: string, format: date-time}
+        created_at: {type: string, format: date-time}
+    TransactionPhases:
+      type: object
+      required: [items]
+      properties:
+        items: {type: array, items: {$ref: '#/components/schemas/TransactionPhase'}}
+        next_cursor: {type: [string, 'null']}
+    TransactionRecovery:
+      type: object
+      required: [transaction_id, status, repository_state, actions]
+      properties:
+        transaction_id: {type: string}
+        status: {type: string}
+        repository_state: {type: string}
+        actions: {type: array, items: {type: string}}
+        blocked_reason: {type: string}
     ContentionResolutionInput:
       type: object
       required: [resolution]

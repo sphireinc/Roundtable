@@ -172,6 +172,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/v1/workspaces/{id}/transactions", s.listTransactionsAPI)
 	mux.HandleFunc("GET /api/v1/workspaces/{id}/transactions/{transaction_id}", s.getTransactionAPI)
 	mux.HandleFunc("POST /api/v1/workspaces/{id}/transactions/{transaction_id}/{action}", s.transitionTransactionAPI)
+	mux.HandleFunc("GET /api/v1/workspaces/{id}/transactions/{transaction_id}/phases", s.listTransactionPhasesAPI)
+	mux.HandleFunc("GET /api/v1/workspaces/{id}/transactions/{transaction_id}/recovery", s.transactionRecoveryAPI)
 	mux.HandleFunc("GET /api/v1/workspaces/{id}/claims", s.listClaimsAPI)
 	mux.HandleFunc("POST /api/v1/workspaces/{id}/claims/internal", s.createClaimAPI)
 	mux.HandleFunc("GET /api/v1/workspaces/{id}/claims/{claim_id}", s.getClaimAPI)
