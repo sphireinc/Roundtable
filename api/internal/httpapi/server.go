@@ -112,6 +112,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/v1/workspaces/{id}/repository", s.repositoryStatus)
 	mux.HandleFunc("POST /api/v1/workspaces/{id}/repository/branch-switch/preflight", s.branchSwitchPreflight)
 	mux.HandleFunc("POST /api/v1/workspaces/{id}/repository/branch-switch", s.branchSwitch)
+	mux.HandleFunc("GET /api/v1/workspaces/{id}/repository/entities", s.repositoryEntities)
+	mux.HandleFunc("GET /api/v1/workspaces/{id}/repository/entities/{entity_id}", s.repositoryEntity)
 	return requestIDs(securityHeaders(jsonDefaults(mux)))
 }
 

@@ -161,6 +161,58 @@ paths:
         '400': {$ref: '#/components/responses/Problem'}
         '403': {$ref: '#/components/responses/Problem'}
         '409': {$ref: '#/components/responses/Problem'}
+  /api/v1/workspaces/{id}/repository/entities:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: {type: string}
+      - name: q
+        in: query
+        schema: {type: string}
+      - name: type
+        in: query
+        schema: {type: string, enum: [file, directory, symbol, schema, endpoint, command, test_suite]}
+      - name: path
+        in: query
+        schema: {type: string}
+      - name: cursor
+        in: query
+        schema: {type: string}
+      - name: limit
+        in: query
+        schema: {type: integer, minimum: 1, maximum: 200, default: 50}
+    get:
+      operationId: listRepositoryEntities
+      summary: Search and paginate the read-only repository entity index
+      responses:
+        '200':
+          description: Repository entities
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/RepositoryEntities'}
+        '400': {$ref: '#/components/responses/Problem'}
+        '404': {$ref: '#/components/responses/Problem'}
+  /api/v1/workspaces/{id}/repository/entities/{entity_id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: {type: string}
+      - name: entity_id
+        in: path
+        required: true
+        schema: {type: string}
+    get:
+      operationId: getRepositoryEntity
+      summary: Get one indexed repository entity and governance context
+      responses:
+        '200':
+          description: Repository entity
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/RepositoryEntity'}
+        '404': {$ref: '#/components/responses/Problem'}
     patch:
       operationId: updateWorkspace
       summary: Update workspace metadata
@@ -348,6 +400,27 @@ components:
         workspace: {$ref: '#/components/schemas/Workspace'}
         before: {$ref: '#/components/schemas/RepositoryStatus'}
         after: {$ref: '#/components/schemas/RepositoryStatus'}
+    RepositoryEntity:
+      type: object
+      required: [id, type, path]
+      properties:
+        id: {type: string}
+        type: {type: string}
+        path: {type: string}
+        name: {type: string}
+        language: {type: string}
+        kind: {type: string}
+        start_line: {type: integer, minimum: 0}
+        end_line: {type: integer, minimum: 0}
+        claim_status: {type: string}
+        related_proposals: {type: array, items: {type: string}}
+        related_entities: {type: array, items: {type: string}}
+    RepositoryEntities:
+      type: object
+      required: [items]
+      properties:
+        items: {type: array, items: {$ref: '#/components/schemas/RepositoryEntity'}}
+        next_cursor: {type: [string, 'null']}
     HealthResponse:
       type: object
       required: [status, version, request_id]
