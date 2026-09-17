@@ -590,6 +590,36 @@ paths:
       summary: Return bounded consensus analytics for a workspace
       description: Success and rejection rates use finalized snapshots (approved or blocked) as the denominator. Abstention rate uses all votes in the window. Time-to-consensus is measured from proposal creation to the finalized snapshot; p50 and p95 use nearest-rank interpolation. Quorum failures count pending snapshots observed in the window. Policy overrides count approved human approvals with override_policy set.
       responses: {'200': {description: Consensus analytics, content: {application/json: {schema: {$ref: '#/components/schemas/ConsensusAnalytics'}}}}, '400': {$ref: '#/components/responses/Problem'}, '404': {$ref: '#/components/responses/Problem'}}
+  /api/v1/workspaces/{id}/policies:
+    parameters: [{name: id, in: path, required: true, schema: {type: string}}, {name: cursor, in: query, schema: {type: string}}, {name: limit, in: query, schema: {type: integer, minimum: 1, maximum: 200, default: 50}}]
+    get:
+      operationId: listPolicies
+      summary: List workspace policy catalog entries
+      responses: {'200': {description: Policies, content: {application/json: {schema: {$ref: '#/components/schemas/Policies'}}}}, '404': {$ref: '#/components/responses/Problem'}}
+    post:
+      operationId: createPolicy
+      summary: Create a disabled draft policy
+      parameters: [{$ref: '#/components/parameters/ActorID'}, {$ref: '#/components/parameters/ActorRole'}, {$ref: '#/components/parameters/IdempotencyKey'}]
+      requestBody: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/PolicyInput'}}}}
+      responses: {'201': {description: Policy, content: {application/json: {schema: {$ref: '#/components/schemas/Policy'}}}}, '400': {$ref: '#/components/responses/Problem'}, '403': {$ref: '#/components/responses/Problem'}, '409': {$ref: '#/components/responses/Problem'}}
+  /api/v1/workspaces/{id}/policies/{policy_id}:
+    parameters: [{name: id, in: path, required: true, schema: {type: string}}, {name: policy_id, in: path, required: true, schema: {type: string}}]
+    get:
+      operationId: getPolicy
+      summary: Get one workspace policy
+      responses: {'200': {description: Policy, content: {application/json: {schema: {$ref: '#/components/schemas/Policy'}}}}, '404': {$ref: '#/components/responses/Problem'}}
+  /api/v1/workspaces/{id}/policies/{policy_id}/revisions:
+    parameters: [{name: id, in: path, required: true, schema: {type: string}}, {name: policy_id, in: path, required: true, schema: {type: string}}, {name: cursor, in: query, schema: {type: string}}, {name: limit, in: query, schema: {type: integer, minimum: 1, maximum: 200, default: 50}}]
+    get:
+      operationId: listPolicyRevisions
+      summary: List immutable policy revisions
+      responses: {'200': {description: Policy revisions, content: {application/json: {schema: {$ref: '#/components/schemas/PolicyRevisions'}}}}, '404': {$ref: '#/components/responses/Problem'}}
+  /api/v1/workspaces/{id}/policies/{policy_id}/{action}:
+    parameters: [{name: id, in: path, required: true, schema: {type: string}}, {name: policy_id, in: path, required: true, schema: {type: string}}, {name: action, in: path, required: true, schema: {type: string, enum: [publish, enable, disable, update-draft, clone]}}, {$ref: '#/components/parameters/ActorID'}, {$ref: '#/components/parameters/ActorRole'}, {$ref: '#/components/parameters/IdempotencyKey'}]
+    post:
+      operationId: transitionPolicy
+      summary: Publish, enable, disable, clone, or draft a policy
+      responses: {'200': {description: Policy and impact, content: {application/json: {schema: {$ref: '#/components/schemas/PolicyTransition'}}}}, '403': {$ref: '#/components/responses/Problem'}, '404': {$ref: '#/components/responses/Problem'}, '409': {$ref: '#/components/responses/Problem'}}
   /api/v1/workspaces/{id}/claims:
     parameters: [{name: id, in: path, required: true, schema: {type: string}}, {name: cursor, in: query, schema: {type: string}}, {name: limit, in: query, schema: {type: integer, minimum: 1, maximum: 200, default: 50}}]
     get:
@@ -1263,6 +1293,73 @@ components:
         rejections: {type: integer, minimum: 0}
         abstentions: {type: integer, minimum: 0}
         vetoes: {type: integer, minimum: 0}
+    Policy:
+      type: object
+      required: [id, workspace_id, name, status, scope, selector, severity, enforcement_mode, human_approval_required, metadata, created_at, updated_at]
+      properties:
+        id: {type: string}
+        workspace_id: {type: string}
+        name: {type: string}
+        status: {type: string, enum: [disabled, active]}
+        current_revision_id: {type: string}
+        scope: {type: string}
+        selector: {type: object, additionalProperties: true}
+        severity: {type: string}
+        enforcement_mode: {type: string}
+        human_approval_required: {type: boolean}
+        metadata: {type: object, additionalProperties: true}
+        created_at: {type: string, format: date-time}
+        updated_at: {type: string, format: date-time}
+    Policies:
+      type: object
+      required: [items]
+      properties:
+        items: {type: array, items: {$ref: '#/components/schemas/Policy'}}
+        next_cursor: {type: [string, 'null']}
+    PolicyInput:
+      type: object
+      required: [name, definition]
+      properties:
+        id: {type: string}
+        name: {type: string}
+        scope: {type: string}
+        selector: {type: object, additionalProperties: true}
+        severity: {type: string}
+        enforcement_mode: {type: string}
+        human_approval_required: {type: boolean}
+        metadata: {type: object, additionalProperties: true}
+        definition: {type: object, additionalProperties: true}
+    PolicyRevision:
+      type: object
+      required: [id, policy_id, version, status, definition, created_by, created_at]
+      properties:
+        id: {type: string}
+        policy_id: {type: string}
+        version: {type: integer, minimum: 1}
+        status: {type: string, enum: [draft, published]}
+        definition: {type: object, additionalProperties: true}
+        created_by: {type: string}
+        created_at: {type: string, format: date-time}
+    PolicyRevisions:
+      type: object
+      required: [items]
+      properties:
+        items: {type: array, items: {$ref: '#/components/schemas/PolicyRevision'}}
+        next_cursor: {type: [string, 'null']}
+    PolicyImpact:
+      type: object
+      required: [active_sessions, active_claims, open_proposals, active_transactions]
+      properties:
+        active_sessions: {type: integer, minimum: 0}
+        active_claims: {type: integer, minimum: 0}
+        open_proposals: {type: integer, minimum: 0}
+        active_transactions: {type: integer, minimum: 0}
+    PolicyTransition:
+      type: object
+      required: [policy, impact]
+      properties:
+        policy: {$ref: '#/components/schemas/Policy'}
+        impact: {$ref: '#/components/schemas/PolicyImpact'}
     ContentionResolutionInput:
       type: object
       required: [resolution]
