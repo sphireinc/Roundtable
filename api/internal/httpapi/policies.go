@@ -223,14 +223,18 @@ func (s *Server) transitionPolicyAPI(w http.ResponseWriter, r *http.Request) {
 	target := p.ID
 	if action == "clone" {
 		target = fmt.Sprintf("policy-%d", time.Now().UnixNano())
-		if _, err = tx.ExecContext(r.Context(), `INSERT INTO policies(id,workspace_id,name,status,current_revision_id,scope,selector_json,severity,enforcement_mode,human_approval_required,metadata_json) SELECT ?,workspace_id,name||' (clone)','disabled',NULL,scope,selector_json,severity,enforcement_mode,human_approval_required,metadata_json FROM policies WHERE id=?`, target, p.ID); err == nil {
+		if _, err = tx.ExecContext(r.Context(), `INSERT INTO policies(id,workspace_id,name,status,current_revision_id,scope,selector_json,severity,enforcement_mode,human_approval_required,metadata_json) SELECT ?,workspace_id,name||' (clone)','disabled',?,scope,selector_json,severity,enforcement_mode,human_approval_required,metadata_json FROM policies WHERE id=?`, target, target+"-r1", p.ID); err == nil {
 			_, err = tx.ExecContext(r.Context(), `INSERT INTO policy_revisions(id,policy_id,version,status,definition_json,created_by) SELECT ?,?,1,'draft',definition_json,? FROM policy_revisions WHERE id=?`, target+"-r1", target, r.Header.Get("X-Actor-ID"), p.CurrentRevisionID)
 		}
 	} else if action == "update-draft" {
 		var next int
 		err = tx.QueryRowContext(r.Context(), `SELECT COALESCE(MAX(version),0)+1 FROM policy_revisions WHERE policy_id=?`, p.ID).Scan(&next)
 		if err == nil {
-			_, err = tx.ExecContext(r.Context(), `INSERT INTO policy_revisions(id,policy_id,version,status,definition_json,created_by) SELECT ?,?,?,'draft',definition_json,? FROM policy_revisions WHERE policy_id=? ORDER BY version DESC LIMIT 1`, fmt.Sprintf("%s-r%d", p.ID, next), p.ID, next, r.Header.Get("X-Actor-ID"), p.ID)
+			revisionID := fmt.Sprintf("%s-r%d", p.ID, next)
+			_, err = tx.ExecContext(r.Context(), `INSERT INTO policy_revisions(id,policy_id,version,status,definition_json,created_by) SELECT ?,?,?,'draft',definition_json,? FROM policy_revisions WHERE policy_id=? ORDER BY version DESC LIMIT 1`, revisionID, p.ID, next, r.Header.Get("X-Actor-ID"), p.ID)
+			if err == nil {
+				_, err = tx.ExecContext(r.Context(), `UPDATE policies SET current_revision_id=?, updated_at=? WHERE id=? AND workspace_id=?`, revisionID, now, p.ID, workspace.ID)
+			}
 		}
 	} else {
 		status := p.Status
