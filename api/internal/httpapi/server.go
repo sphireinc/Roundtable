@@ -147,6 +147,10 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/v1/workspaces/{id}/proposals/internal", s.createInternalProposal)
 	mux.HandleFunc("GET /api/v1/workspaces/{id}/proposals/{proposal_id}", s.getProposalAPI)
 	mux.HandleFunc("POST /api/v1/workspaces/{id}/proposals/{proposal_id}/{action}", s.transitionProposal)
+	mux.HandleFunc("GET /api/v1/workspaces/{id}/proposals/{proposal_id}/patch", s.patchMetadataAPI)
+	mux.HandleFunc("GET /api/v1/workspaces/{id}/proposals/{proposal_id}/patch/files", s.patchFilesAPI)
+	mux.HandleFunc("GET /api/v1/workspaces/{id}/proposals/{proposal_id}/patch/diff", s.patchDiffAPI)
+	mux.HandleFunc("GET /api/v1/workspaces/{id}/proposals/{proposal_id}/patch/symbol-impact", s.patchSymbolsAPI)
 	return requestIDs(securityHeaders(jsonDefaults(mux)))
 }
 

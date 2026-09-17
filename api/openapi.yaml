@@ -534,6 +534,30 @@ paths:
       operationId: transitionProposal
       summary: Transition a proposal through a governed state change
       responses: {'200': {description: Updated proposal, content: {application/json: {schema: {$ref: '#/components/schemas/Proposal'}}}}, '403': {$ref: '#/components/responses/Problem'}, '409': {$ref: '#/components/responses/Problem'}}
+  /api/v1/workspaces/{id}/proposals/{proposal_id}/patch:
+    parameters: [{name: id, in: path, required: true, schema: {type: string}}, {name: proposal_id, in: path, required: true, schema: {type: string}}]
+    get:
+      operationId: getPatchMetadata
+      summary: Get immutable patch metadata and stale-base status
+      responses: {'200': {description: Patch metadata, content: {application/json: {schema: {$ref: '#/components/schemas/PatchMetadata'}}}}, '400': {$ref: '#/components/responses/Problem'}, '404': {$ref: '#/components/responses/Problem'}}
+  /api/v1/workspaces/{id}/proposals/{proposal_id}/patch/files:
+    parameters: [{name: id, in: path, required: true, schema: {type: string}}, {name: proposal_id, in: path, required: true, schema: {type: string}}, {name: cursor, in: query, schema: {type: string}}, {name: limit, in: query, schema: {type: integer, minimum: 1, maximum: 200, default: 50}}]
+    get:
+      operationId: listPatchFiles
+      summary: List files touched by an immutable patch
+      responses: {'200': {description: Patch files, content: {application/json: {schema: {$ref: '#/components/schemas/PatchFiles'}}}}, '400': {$ref: '#/components/responses/Problem'}}
+  /api/v1/workspaces/{id}/proposals/{proposal_id}/patch/diff:
+    parameters: [{name: id, in: path, required: true, schema: {type: string}}, {name: proposal_id, in: path, required: true, schema: {type: string}}, {name: cursor, in: query, schema: {type: string}}, {name: limit, in: query, schema: {type: integer, minimum: 1, maximum: 200, default: 50}}]
+    get:
+      operationId: listPatchDiffChunks
+      summary: List redacted unified diff lines
+      responses: {'200': {description: Diff lines, content: {application/json: {schema: {$ref: '#/components/schemas/PatchDiff'}}}}, '400': {$ref: '#/components/responses/Problem'}}
+  /api/v1/workspaces/{id}/proposals/{proposal_id}/patch/symbol-impact:
+    parameters: [{name: id, in: path, required: true, schema: {type: string}}, {name: proposal_id, in: path, required: true, schema: {type: string}}, {name: cursor, in: query, schema: {type: string}}, {name: limit, in: query, schema: {type: integer, minimum: 1, maximum: 200, default: 50}}]
+    get:
+      operationId: listPatchSymbolImpact
+      summary: List symbols impacted by an immutable patch
+      responses: {'200': {description: Symbol impact, content: {application/json: {schema: {$ref: '#/components/schemas/PatchSymbols'}}}}, '400': {$ref: '#/components/responses/Problem'}}
 components:
   parameters:
     ActorID:
@@ -946,6 +970,58 @@ components:
       required: [items]
       properties:
         items: {type: array, items: {$ref: '#/components/schemas/Proposal'}}
+        next_cursor: {type: [string, 'null']}
+    PatchMetadata:
+      type: object
+      required: [proposal_id, patch_path, current_head, stale_base, file_count, added_lines, removed_lines, binary_files]
+      properties:
+        proposal_id: {type: string}
+        patch_path: {type: string}
+        base_revision: {type: string}
+        current_head: {type: string}
+        stale_base: {type: boolean}
+        file_count: {type: integer, minimum: 0}
+        added_lines: {type: integer, minimum: 0}
+        removed_lines: {type: integer, minimum: 0}
+        binary_files: {type: integer, minimum: 0}
+    PatchFile:
+      type: object
+      required: [path, operation, binary]
+      properties:
+        path: {type: string}
+        old_path: {type: string}
+        new_path: {type: string}
+        operation: {type: string, enum: [create, modify, delete, rename]}
+        binary: {type: boolean}
+        added_lines: {type: integer}
+        removed_lines: {type: integer}
+    PatchFiles:
+      type: object
+      required: [items]
+      properties:
+        items: {type: array, items: {$ref: '#/components/schemas/PatchFile'}}
+        next_cursor: {type: [string, 'null']}
+    PatchDiff:
+      type: object
+      required: [items]
+      properties:
+        items: {type: array, items: {type: string}}
+        next_cursor: {type: [string, 'null']}
+    PatchSymbol:
+      type: object
+      required: [path, resource_id, kind, name, start_line, end_line]
+      properties:
+        path: {type: string}
+        resource_id: {type: string}
+        kind: {type: string}
+        name: {type: string}
+        start_line: {type: integer}
+        end_line: {type: integer}
+    PatchSymbols:
+      type: object
+      required: [items]
+      properties:
+        items: {type: array, items: {$ref: '#/components/schemas/PatchSymbol'}}
         next_cursor: {type: [string, 'null']}
     HealthResponse:
       type: object
