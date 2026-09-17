@@ -1,0 +1,375 @@
+diff --git a/api/internal/httpapi/server.go b/api/internal/httpapi/server.go
+index 97ee95e..bdfc681 100644
+--- a/api/internal/httpapi/server.go
++++ b/api/internal/httpapi/server.go
+@@ -147,6 +147,10 @@ func (s *Server) Handler() http.Handler {
+ 	mux.HandleFunc("POST /api/v1/workspaces/{id}/proposals/internal", s.createInternalProposal)
+ 	mux.HandleFunc("GET /api/v1/workspaces/{id}/proposals/{proposal_id}", s.getProposalAPI)
+ 	mux.HandleFunc("POST /api/v1/workspaces/{id}/proposals/{proposal_id}/{action}", s.transitionProposal)
++	mux.HandleFunc("GET /api/v1/workspaces/{id}/proposals/{proposal_id}/patch", s.patchMetadataAPI)
++	mux.HandleFunc("GET /api/v1/workspaces/{id}/proposals/{proposal_id}/patch/files", s.patchFilesAPI)
++	mux.HandleFunc("GET /api/v1/workspaces/{id}/proposals/{proposal_id}/patch/diff", s.patchDiffAPI)
++	mux.HandleFunc("GET /api/v1/workspaces/{id}/proposals/{proposal_id}/patch/symbol-impact", s.patchSymbolsAPI)
+ 	return requestIDs(securityHeaders(jsonDefaults(mux)))
+ }
+ 
+diff --git a/api/openapi.yaml b/api/openapi.yaml
+index b5fd7ec..0252e40 100644
+--- a/api/openapi.yaml
++++ b/api/openapi.yaml
+@@ -534,6 +534,30 @@ paths:
+       operationId: transitionProposal
+       summary: Transition a proposal through a governed state change
+       responses: {'200': {description: Updated proposal, content: {application/json: {schema: {$ref: '#/components/schemas/Proposal'}}}}, '403': {$ref: '#/components/responses/Problem'}, '409': {$ref: '#/components/responses/Problem'}}
++  /api/v1/workspaces/{id}/proposals/{proposal_id}/patch:
++    parameters: [{name: id, in: path, required: true, schema: {type: string}}, {name: proposal_id, in: path, required: true, schema: {type: string}}]
++    get:
++      operationId: getPatchMetadata
++      summary: Get immutable patch metadata and stale-base status
++      responses: {'200': {description: Patch metadata, content: {application/json: {schema: {$ref: '#/components/schemas/PatchMetadata'}}}}, '400': {$ref: '#/components/responses/Problem'}, '404': {$ref: '#/components/responses/Problem'}}
++  /api/v1/workspaces/{id}/proposals/{proposal_id}/patch/files:
++    parameters: [{name: id, in: path, required: true, schema: {type: string}}, {name: proposal_id, in: path, required: true, schema: {type: string}}, {name: cursor, in: query, schema: {type: string}}, {name: limit, in: query, schema: {type: integer, minimum: 1, maximum: 200, default: 50}}]
++    get:
++      operationId: listPatchFiles
++      summary: List files touched by an immutable patch
++      responses: {'200': {description: Patch files, content: {application/json: {schema: {$ref: '#/components/schemas/PatchFiles'}}}}, '400': {$ref: '#/components/responses/Problem'}}
++  /api/v1/workspaces/{id}/proposals/{proposal_id}/patch/diff:
++    parameters: [{name: id, in: path, required: true, schema: {type: string}}, {name: proposal_id, in: path, required: true, schema: {type: string}}, {name: cursor, in: query, schema: {type: string}}, {name: limit, in: query, schema: {type: integer, minimum: 1, maximum: 200, default: 50}}]
++    get:
++      operationId: listPatchDiffChunks
++      summary: List redacted unified diff lines
++      responses: {'200': {description: Diff lines, content: {application/json: {schema: {$ref: '#/components/schemas/PatchDiff'}}}}, '400': {$ref: '#/components/responses/Problem'}}
++  /api/v1/workspaces/{id}/proposals/{proposal_id}/patch/symbol-impact:
++    parameters: [{name: id, in: path, required: true, schema: {type: string}}, {name: proposal_id, in: path, required: true, schema: {type: string}}, {name: cursor, in: query, schema: {type: string}}, {name: limit, in: query, schema: {type: integer, minimum: 1, maximum: 200, default: 50}}]
++    get:
++      operationId: listPatchSymbolImpact
++      summary: List symbols impacted by an immutable patch
++      responses: {'200': {description: Symbol impact, content: {application/json: {schema: {$ref: '#/components/schemas/PatchSymbols'}}}}, '400': {$ref: '#/components/responses/Problem'}}
+ components:
+   parameters:
+     ActorID:
+@@ -947,6 +971,58 @@ components:
+       properties:
+         items: {type: array, items: {$ref: '#/components/schemas/Proposal'}}
+         next_cursor: {type: [string, 'null']}
++    PatchMetadata:
++      type: object
++      required: [proposal_id, patch_path, current_head, stale_base, file_count, added_lines, removed_lines, binary_files]
++      properties:
++        proposal_id: {type: string}
++        patch_path: {type: string}
++        base_revision: {type: string}
++        current_head: {type: string}
++        stale_base: {type: boolean}
++        file_count: {type: integer, minimum: 0}
++        added_lines: {type: integer, minimum: 0}
++        removed_lines: {type: integer, minimum: 0}
++        binary_files: {type: integer, minimum: 0}
++    PatchFile:
++      type: object
++      required: [path, operation, binary]
++      properties:
++        path: {type: string}
++        old_path: {type: string}
++        new_path: {type: string}
++        operation: {type: string, enum: [create, modify, delete, rename]}
++        binary: {type: boolean}
++        added_lines: {type: integer}
++        removed_lines: {type: integer}
++    PatchFiles:
++      type: object
++      required: [items]
++      properties:
++        items: {type: array, items: {$ref: '#/components/schemas/PatchFile'}}
++        next_cursor: {type: [string, 'null']}
++    PatchDiff:
++      type: object
++      required: [items]
++      properties:
++        items: {type: array, items: {type: string}}
++        next_cursor: {type: [string, 'null']}
++    PatchSymbol:
++      type: object
++      required: [path, resource_id, kind, name, start_line, end_line]
++      properties:
++        path: {type: string}
++        resource_id: {type: string}
++        kind: {type: string}
++        name: {type: string}
++        start_line: {type: integer}
++        end_line: {type: integer}
++    PatchSymbols:
++      type: object
++      required: [items]
++      properties:
++        items: {type: array, items: {$ref: '#/components/schemas/PatchSymbol'}}
++        next_cursor: {type: [string, 'null']}
+     HealthResponse:
+       type: object
+       required: [status, version, request_id]
+diff --git a/api/internal/httpapi/patches.go b/api/internal/httpapi/patches.go
+new file mode 100644
+index 0000000..014c6b2
+--- /dev/null
++++ b/api/internal/httpapi/patches.go
+@@ -0,0 +1,189 @@
++package httpapi
++
++import (
++	"fmt"
++	"net/http"
++	"os"
++	"path/filepath"
++	"strings"
++
++	"roundtable/internal/repo"
++	"roundtable/internal/symbols"
++)
++
++type patchMetadata struct {
++	ProposalID   string `json:"proposal_id"`
++	PatchPath    string `json:"patch_path"`
++	BaseRevision string `json:"base_revision,omitempty"`
++	CurrentHead  string `json:"current_head"`
++	StaleBase    bool   `json:"stale_base"`
++	FileCount    int    `json:"file_count"`
++	AddedLines   int    `json:"added_lines"`
++	RemovedLines int    `json:"removed_lines"`
++	BinaryFiles  int    `json:"binary_files"`
++}
++type patchFile struct {
++	Path         string `json:"path"`
++	OldPath      string `json:"old_path,omitempty"`
++	NewPath      string `json:"new_path,omitempty"`
++	Operation    string `json:"operation"`
++	Binary       bool   `json:"binary"`
++	AddedLines   int    `json:"added_lines"`
++	RemovedLines int    `json:"removed_lines"`
++}
++type patchSymbol struct {
++	Path       string `json:"path"`
++	ResourceID string `json:"resource_id"`
++	Kind       string `json:"kind"`
++	Name       string `json:"name"`
++	StartLine  int    `json:"start_line"`
++	EndLine    int    `json:"end_line"`
++}
++
++func (s *Server) patchMetadataAPI(w http.ResponseWriter, r *http.Request) {
++	workspace, workspaceErr := s.workspace(r)
++	if workspaceErr != nil {
++		writeWorkspaceError(w, r, workspaceErr)
++		return
++	}
++	value, info, _, err := s.loadPatch(r)
++	if err != nil {
++		writePatchError(w, r, err)
++		return
++	}
++	status, _ := inspectRepository(r.Context(), workspace)
++	response := patchMetadata{ProposalID: value.ProposalID, PatchPath: value.PatchPath, BaseRevision: value.BaseRevision, CurrentHead: status.HeadSHA, StaleBase: value.BaseRevision != "" && status.HeadSHA != value.BaseRevision, FileCount: len(info.Files)}
++	for _, file := range info.FileChanges {
++		if file.IsDelete {
++			response.RemovedLines++
++		}
++	}
++	for _, ranges := range info.Changes {
++		response.AddedLines += len(ranges)
++	}
++	writeJSON(w, 200, response)
++}
++
++func (s *Server) patchFilesAPI(w http.ResponseWriter, r *http.Request) {
++	_, info, raw, err := s.loadPatch(r)
++	if err != nil {
++		writePatchError(w, r, err)
++		return
++	}
++	items := make([]patchFile, 0, len(info.FileChanges))
++	for _, change := range info.FileChanges {
++		path := change.NewPath
++		if path == "" {
++			path = change.OldPath
++		}
++		items = append(items, patchFile{Path: path, OldPath: change.OldPath, NewPath: change.NewPath, Operation: patchOperation(change), Binary: isBinaryPatch(raw, path)})
++	}
++	writePage(w, r, items)
++}
++
++func (s *Server) patchDiffAPI(w http.ResponseWriter, r *http.Request) {
++	_, _, raw, err := s.loadPatch(r)
++	if err != nil {
++		writePatchError(w, r, err)
++		return
++	}
++	lines := strings.Split(redactText(raw), "\n")
++	writePage(w, r, lines)
++}
++
++func (s *Server) patchSymbolsAPI(w http.ResponseWriter, r *http.Request) {
++	workspace, err := s.workspace(r)
++	if err != nil {
++		writeWorkspaceError(w, r, err)
++		return
++	}
++	_, info, _, err := s.loadPatch(r)
++	if err != nil {
++		writePatchError(w, r, err)
++		return
++	}
++	indexer := symbols.NewIndexer()
++	items := make([]patchSymbol, 0)
++	for _, file := range info.Files {
++		safe, safeErr := safeWorkspacePath(workspace.RootPath, file)
++		if safeErr != nil {
++			continue
++		}
++		found, indexErr := indexer.IndexPath(safe)
++		if indexErr != nil {
++			continue
++		}
++		for _, symbol := range found {
++			items = append(items, patchSymbol{Path: symbol.Path, ResourceID: symbol.ResourceID, Kind: symbol.Kind, Name: symbol.Name, StartLine: symbol.StartLine, EndLine: symbol.EndLine})
++		}
++	}
++	writePage(w, r, items)
++}
++
++func (s *Server) loadPatch(r *http.Request) (proposalResponse, repo.PatchInfo, string, error) {
++	workspace, err := s.workspace(r)
++	if err != nil {
++		return proposalResponse{}, repo.PatchInfo{}, "", err
++	}
++	proposal, err := s.readProposal(r.Context(), workspace.ID, r.PathValue("proposal_id"))
++	if err != nil {
++		return proposalResponse{}, repo.PatchInfo{}, "", fmt.Errorf("proposal not found: %w", err)
++	}
++	path, err := safeWorkspacePath(workspace.RootPath, proposal.PatchPath)
++	if err != nil {
++		return proposalResponse{}, repo.PatchInfo{}, "", err
++	}
++	data, err := os.ReadFile(path)
++	if err != nil {
++		return proposalResponse{}, repo.PatchInfo{}, "", err
++	}
++	info, err := repo.ParseTouchedFiles(string(data))
++	if err != nil {
++		return proposalResponse{}, repo.PatchInfo{}, "", err
++	}
++	return proposal, info, string(data), nil
++}
++func safeWorkspacePath(root, relative string) (string, error) {
++	if strings.TrimSpace(relative) == "" || filepath.IsAbs(relative) {
++		return "", fmt.Errorf("invalid repository-relative path")
++	}
++	cleaned := filepath.Clean(filepath.FromSlash(relative))
++	if cleaned == "." || cleaned == ".." || strings.HasPrefix(cleaned, ".."+string(filepath.Separator)) {
++		return "", fmt.Errorf("path escapes workspace root")
++	}
++	full, err := filepath.Abs(filepath.Join(root, cleaned))
++	if err != nil {
++		return "", err
++	}
++	base, err := filepath.Abs(root)
++	if err != nil {
++		return "", err
++	}
++	if full != base && !strings.HasPrefix(full, base+string(filepath.Separator)) {
++		return "", fmt.Errorf("path escapes workspace root")
++	}
++	return full, nil
++}
++func patchOperation(change repo.FileChange) string {
++	if change.IsRename {
++		return "rename"
++	}
++	if change.IsNew {
++		return "create"
++	}
++	if change.IsDelete {
++		return "delete"
++	}
++	return "modify"
++}
++func isBinaryPatch(raw, path string) bool {
++	marker := "Binary files "
++	return strings.Contains(raw, marker+"a/"+path) || strings.Contains(raw, marker+"b/"+path)
++}
++func writePatchError(w http.ResponseWriter, r *http.Request, err error) {
++	if strings.Contains(strings.ToLower(err.Error()), "proposal not found") {
++		WriteProblem(w, r, 404, "proposal_not_found", "Proposal not found", err.Error())
++		return
++	}
++	WriteProblem(w, r, 400, "patch_unavailable", "Patch unavailable", err.Error())
++}
+diff --git a/api/internal/httpapi/patches_test.go b/api/internal/httpapi/patches_test.go
+new file mode 100644
+index 0000000..9513999
+--- /dev/null
++++ b/api/internal/httpapi/patches_test.go
+@@ -0,0 +1,65 @@
++package httpapi
++
++import (
++	"net/http"
++	"net/http/httptest"
++	"os"
++	"path/filepath"
++	"testing"
++
++	"roundtable/internal/db"
++)
++
++func TestPatchInspectionEndpointsAndPathBoundary(t *testing.T) {
++	root := t.TempDir()
++	if err := os.WriteFile(filepath.Join(root, "main.go"), []byte("package main\nfunc Changed() {}\n"), 0o644); err != nil {
++		t.Fatal(err)
++	}
++	patch := "diff --git a/main.go b/main.go\n--- a/main.go\n+++ b/main.go\n@@ -1,1 +1,2 @@\n package main\n+func Changed() {}\n"
++	if err := os.MkdirAll(filepath.Join(root, ".roundtable", "patches"), 0o755); err != nil {
++		t.Fatal(err)
++	}
++	if err := os.WriteFile(filepath.Join(root, ".roundtable", "patches", "P-1.diff"), []byte(patch), 0o600); err != nil {
++		t.Fatal(err)
++	}
++	sqlDB, err := db.Open(filepath.Join(root, "state.db"))
++	if err != nil {
++		t.Fatal(err)
++	}
++	defer sqlDB.Close()
++	store := db.NewStore(sqlDB, nil)
++	if err := store.UpsertWorkspace(t.Context(), db.Workspace{ID: "ws-patch", DisplayName: "Patch", RootPath: root, Status: "active", Revision: 1}); err != nil {
++		t.Fatal(err)
++	}
++	if err := store.UpsertProposal(t.Context(), db.Proposal{ID: "P-1", Title: "Patch", SummaryMD: "summary", PatchPath: ".roundtable/patches/P-1.diff", Status: "pending", Risk: "normal"}); err != nil {
++		t.Fatal(err)
++	}
++	if _, err := store.DB().Exec(`UPDATE proposals SET workspace_id = 'ws-patch', base_revision = 'not-the-head' WHERE id = 'P-1'`); err != nil {
++		t.Fatal(err)
++	}
++	server := NewServer(Config{Store: store})
++	get := func(path string) *httptest.ResponseRecorder {
++		req := httptest.NewRequest(http.MethodGet, path, nil)
++		res := httptest.NewRecorder()
++		server.Handler().ServeHTTP(res, req)
++		return res
++	}
++	if res := get("/api/v1/workspaces/ws-patch/proposals/P-1/patch"); res.Code != http.StatusOK || !contains(res.Body.String(), `"file_count":1`) || !contains(res.Body.String(), `"stale_base":true`) {
++		t.Fatalf("metadata = %d %s", res.Code, res.Body.String())
++	}
++	if res := get("/api/v1/workspaces/ws-patch/proposals/P-1/patch/files?limit=1"); res.Code != http.StatusOK || !contains(res.Body.String(), "main.go") {
++		t.Fatalf("files = %d %s", res.Code, res.Body.String())
++	}
++	if res := get("/api/v1/workspaces/ws-patch/proposals/P-1/patch/diff"); res.Code != http.StatusOK || !contains(res.Body.String(), "func Changed") {
++		t.Fatalf("diff = %d %s", res.Code, res.Body.String())
++	}
++	if res := get("/api/v1/workspaces/ws-patch/proposals/P-1/patch/symbol-impact"); res.Code != http.StatusOK || !contains(res.Body.String(), "Changed") {
++		t.Fatalf("symbols = %d %s", res.Code, res.Body.String())
++	}
++	if _, err := store.DB().Exec(`UPDATE proposals SET patch_path = '../outside.diff' WHERE id = 'P-1'`); err != nil {
++		t.Fatal(err)
++	}
++	if res := get("/api/v1/workspaces/ws-patch/proposals/P-1/patch"); res.Code != http.StatusBadRequest || !contains(res.Body.String(), "path escapes workspace") {
++		t.Fatalf("traversal = %d %s", res.Code, res.Body.String())
++	}
++}
