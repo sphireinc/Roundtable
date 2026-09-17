@@ -1,0 +1,453 @@
+diff --git a/api/internal/httpapi/server.go b/api/internal/httpapi/server.go
+index 98ce7e2..15032d5 100644
+--- a/api/internal/httpapi/server.go
++++ b/api/internal/httpapi/server.go
+@@ -152,6 +152,11 @@ func (s *Server) Handler() http.Handler {
+ 	mux.HandleFunc("GET /api/v1/workspaces/{id}/proposals/{proposal_id}/patch/diff", s.patchDiffAPI)
+ 	mux.HandleFunc("GET /api/v1/workspaces/{id}/proposals/{proposal_id}/patch/symbol-impact", s.patchSymbolsAPI)
+ 	mux.HandleFunc("POST /api/v1/workspaces/{id}/proposals/{proposal_id}/validation", s.validateProposalAPI)
++	mux.HandleFunc("GET /api/v1/workspaces/{id}/claims", s.listClaimsAPI)
++	mux.HandleFunc("POST /api/v1/workspaces/{id}/claims/internal", s.createClaimAPI)
++	mux.HandleFunc("GET /api/v1/workspaces/{id}/claims/{claim_id}", s.getClaimAPI)
++	mux.HandleFunc("POST /api/v1/workspaces/{id}/claims/{claim_id}/{action}", s.transitionClaimAPI)
++	mux.HandleFunc("GET /api/v1/workspaces/{id}/claims/contentions", s.listClaimContentions)
+ 	return requestIDs(securityHeaders(jsonDefaults(mux)))
+ }
+ 
+diff --git a/api/openapi.yaml b/api/openapi.yaml
+index 8d87db9..284302c 100644
+--- a/api/openapi.yaml
++++ b/api/openapi.yaml
+@@ -565,6 +565,39 @@ paths:
+       summary: Rerun safe proposal validation stages without repository mutation
+       requestBody: {required: false, content: {application/json: {schema: {$ref: '#/components/schemas/ValidationInput'}}}}
+       responses: {'202': {description: Validation run, content: {application/json: {schema: {$ref: '#/components/schemas/ValidationRun'}}}}, '400': {$ref: '#/components/responses/Problem'}, '403': {$ref: '#/components/responses/Problem'}, '404': {$ref: '#/components/responses/Problem'}}
++  /api/v1/workspaces/{id}/claims:
++    parameters: [{name: id, in: path, required: true, schema: {type: string}}, {name: cursor, in: query, schema: {type: string}}, {name: limit, in: query, schema: {type: integer, minimum: 1, maximum: 200, default: 50}}]
++    get:
++      operationId: listClaims
++      summary: List workspace resource claims
++      responses: {'200': {description: Claims, content: {application/json: {schema: {$ref: '#/components/schemas/Claims'}}}}, '404': {$ref: '#/components/responses/Problem'}}
++  /api/v1/workspaces/{id}/claims/internal:
++    parameters: [{name: id, in: path, required: true, schema: {type: string}}, {$ref: '#/components/parameters/IdempotencyKey'}]
++    post:
++      operationId: createInternalClaim
++      summary: Acquire a claim through the orchestrator boundary
++      parameters: [{name: X-Roundtable-Orchestrator, in: header, required: true, schema: {type: string, enum: ['true']}}]
++      requestBody: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/ClaimInput'}}}}
++      responses: {'201': {description: Created, content: {application/json: {schema: {$ref: '#/components/schemas/Claim'}}}}, '400': {$ref: '#/components/responses/Problem'}, '403': {$ref: '#/components/responses/Problem'}, '409': {$ref: '#/components/responses/Problem'}}
++  /api/v1/workspaces/{id}/claims/{claim_id}:
++    parameters: [{name: id, in: path, required: true, schema: {type: string}}, {name: claim_id, in: path, required: true, schema: {type: string}}]
++    get:
++      operationId: getClaim
++      summary: Get one workspace resource claim
++      responses: {'200': {description: Claim, content: {application/json: {schema: {$ref: '#/components/schemas/Claim'}}}}, '404': {$ref: '#/components/responses/Problem'}}
++  /api/v1/workspaces/{id}/claims/{claim_id}/{action}:
++    parameters: [{name: id, in: path, required: true, schema: {type: string}}, {name: claim_id, in: path, required: true, schema: {type: string}}, {name: action, in: path, required: true, schema: {type: string, enum: [extend, release, force-release]}}, {$ref: '#/components/parameters/ActorID'}, {$ref: '#/components/parameters/ActorRole'}, {$ref: '#/components/parameters/IdempotencyKey'}]
++    post:
++      operationId: transitionClaim
++      summary: Extend or release a claim
++      requestBody: {required: false, content: {application/json: {schema: {$ref: '#/components/schemas/ClaimExtendInput'}}}}
++      responses: {'200': {description: Updated claim, content: {application/json: {schema: {$ref: '#/components/schemas/Claim'}}}}, '400': {$ref: '#/components/responses/Problem'}, '403': {$ref: '#/components/responses/Problem'}, '409': {$ref: '#/components/responses/Problem'}}
++  /api/v1/workspaces/{id}/claims/contentions:
++    parameters: [{name: id, in: path, required: true, schema: {type: string}}, {name: resource_id, in: query, schema: {type: string}}, {name: cursor, in: query, schema: {type: string}}, {name: limit, in: query, schema: {type: integer, minimum: 1, maximum: 200, default: 50}}]
++    get:
++      operationId: listClaimContentions
++      summary: List active claims that may contend for a resource
++      responses: {'200': {description: Claim contentions, content: {application/json: {schema: {$ref: '#/components/schemas/Contentions'}}}}, '404': {$ref: '#/components/responses/Problem'}}
+ components:
+   parameters:
+     ActorID:
+@@ -1047,6 +1080,67 @@ components:
+         stages: {type: object, additionalProperties: true}
+         commands: {type: object, additionalProperties: {type: string}}
+         output: {type: string}
++    ClaimInput:
++      type: object
++      required: [agent_id, task_id, resource_type, mode]
++      properties:
++        claim_id: {type: string}
++        agent_id: {type: string}
++        session_id: {type: string}
++        task_id: {type: string}
++        resource_id: {type: string}
++        resource_type: {type: string, enum: [file, directory, symbol, command, schema, endpoint, test_suite, custom]}
++        path: {type: string}
++        symbol: {type: string}
++        mode: {type: string, enum: [exclusive, shared, advisory, execution]}
++        run_id: {type: string}
++        base_hash: {type: string}
++        ttl_seconds: {type: integer, minimum: 1}
++        rationale: {type: string}
++    ClaimExtendInput:
++      type: object
++      properties:
++        ttl_seconds: {type: integer, minimum: 1}
++    Claim:
++      type: object
++      required: [id, workspace_id, agent_id, task_id, resource_id, resource_type, mode, state, acquired_at, lease_expires_at]
++      properties:
++        id: {type: string}
++        workspace_id: {type: string}
++        agent_id: {type: string}
++        session_id: {type: string}
++        task_id: {type: string}
++        resource_id: {type: string}
++        resource_type: {type: string}
++        path: {type: string}
++        symbol: {type: string}
++        mode: {type: string}
++        base_hash: {type: string}
++        state: {type: string, enum: [active, released, revoked, suspended, expired]}
++        rationale: {type: string}
++        acquired_at: {type: string, format: date-time}
++        lease_expires_at: {type: string, format: date-time}
++    Claims:
++      type: object
++      required: [items]
++      properties:
++        items: {type: array, items: {$ref: '#/components/schemas/Claim'}}
++        next_cursor: {type: [string, 'null']}
++    Contention:
++      type: object
++      required: [claim_id, resource_id, agent_id, state, reason]
++      properties:
++        claim_id: {type: string}
++        resource_id: {type: string}
++        agent_id: {type: string}
++        state: {type: string}
++        reason: {type: string}
++    Contentions:
++      type: object
++      required: [items]
++      properties:
++        items: {type: array, items: {$ref: '#/components/schemas/Contention'}}
++        next_cursor: {type: [string, 'null']}
+     HealthResponse:
+       type: object
+       required: [status, version, request_id]
+diff --git a/internal/claims/service.go b/internal/claims/service.go
+index 0b2e536..96d4a1b 100644
+--- a/internal/claims/service.go
++++ b/internal/claims/service.go
+@@ -147,6 +147,29 @@ func (s *Service) Release(ctx context.Context, runID, claimID, actorID, reason s
+ 	return s.transition(ctx, runID, claimID, actorID, "released", "claim.released", reason)
+ }
+ 
++func (s *Service) Extend(ctx context.Context, runID, claimID, actorID string, ttl time.Duration) (db.Claim, error) {
++	claim, err := s.store.GetClaim(ctx, claimID)
++	if err != nil {
++		return db.Claim{}, err
++	}
++	if claim.Status != "active" {
++		return db.Claim{}, fmt.Errorf("claim %s is not active", claimID)
++	}
++	if ttl <= 0 {
++		ttl = 15 * time.Minute
++	}
++	claim.ExpiresAt = time.Now().UTC().Add(ttl).Format(time.RFC3339)
++	claim.HeartbeatAt = time.Now().UTC().Format(time.RFC3339)
++	if err := s.store.UpsertClaim(ctx, claim); err != nil {
++		return db.Claim{}, err
++	}
++	saved, err := s.store.GetClaim(ctx, claimID)
++	if err != nil {
++		return db.Claim{}, err
++	}
++	return saved, s.appendEvent(ctx, runID, "claim.extended", actorID, saved.TaskID, map[string]any{"claim_id": saved.ID, "expires_at": saved.ExpiresAt})
++}
++
+ func (s *Service) Revoke(ctx context.Context, runID, claimID, actorID, reason string) (db.Claim, error) {
+ 	return s.transition(ctx, runID, claimID, actorID, "revoked", "claim.revoked", reason)
+ }
+diff --git a/api/internal/httpapi/claims.go b/api/internal/httpapi/claims.go
+new file mode 100644
+index 0000000..da6a73f
+--- /dev/null
++++ b/api/internal/httpapi/claims.go
+@@ -0,0 +1,203 @@
++package httpapi
++
++import (
++	"context"
++	"database/sql"
++	"net/http"
++	"strings"
++	"time"
++
++	claimsvc "roundtable/internal/claims"
++	"roundtable/internal/db"
++)
++
++type claimInput struct {
++	ClaimID      string `json:"claim_id"`
++	AgentID      string `json:"agent_id"`
++	SessionID    string `json:"session_id"`
++	TaskID       string `json:"task_id"`
++	ResourceID   string `json:"resource_id"`
++	ResourceType string `json:"resource_type"`
++	Path         string `json:"path"`
++	Symbol       string `json:"symbol"`
++	Mode         string `json:"mode"`
++	RunID        string `json:"run_id"`
++	BaseHash     string `json:"base_hash"`
++	TTLSeconds   int    `json:"ttl_seconds"`
++	Rationale    string `json:"rationale"`
++}
++type claimResponse struct {
++	ID             string `json:"id"`
++	WorkspaceID    string `json:"workspace_id"`
++	AgentID        string `json:"agent_id"`
++	SessionID      string `json:"session_id,omitempty"`
++	TaskID         string `json:"task_id"`
++	ResourceID     string `json:"resource_id"`
++	ResourceType   string `json:"resource_type"`
++	Path           string `json:"path,omitempty"`
++	Symbol         string `json:"symbol,omitempty"`
++	Mode           string `json:"mode"`
++	BaseHash       string `json:"base_hash,omitempty"`
++	State          string `json:"state"`
++	AcquiredAt     string `json:"acquired_at"`
++	LeaseExpiresAt string `json:"lease_expires_at"`
++	Rationale      string `json:"rationale,omitempty"`
++}
++
++func (s *Server) listClaimsAPI(w http.ResponseWriter, r *http.Request) {
++	workspace, err := s.workspace(r)
++	if err != nil {
++		writeWorkspaceError(w, r, err)
++		return
++	}
++	claims, err := s.config.Store.ListClaims(r.Context())
++	if err != nil {
++		WriteProblem(w, r, 500, "claim_list_failed", "Unable to list claims", err.Error())
++		return
++	}
++	items := make([]claimResponse, 0)
++	for _, claim := range claims {
++		if !claimWorkspace(s.config.Store.DB(), r.Context(), claim.ID, workspace.ID) {
++			continue
++		}
++		items = append(items, s.toClaimResponse(r.Context(), workspace.ID, claim))
++	}
++	writePage(w, r, items)
++}
++func (s *Server) getClaimAPI(w http.ResponseWriter, r *http.Request) {
++	workspace, err := s.workspace(r)
++	if err != nil {
++		writeWorkspaceError(w, r, err)
++		return
++	}
++	claim, err := s.config.Store.GetClaim(r.Context(), r.PathValue("claim_id"))
++	if err != nil || !claimWorkspace(s.config.Store.DB(), r.Context(), claim.ID, workspace.ID) {
++		WriteProblem(w, r, 404, "claim_not_found", "Claim not found", "claim does not belong to this workspace")
++		return
++	}
++	writeJSON(w, 200, s.toClaimResponse(r.Context(), workspace.ID, claim))
++}
++func (s *Server) createClaimAPI(w http.ResponseWriter, r *http.Request) {
++	if r.Header.Get("X-Roundtable-Orchestrator") != "true" {
++		WriteProblem(w, r, 403, "orchestrator_only", "Orchestrator authorization required", "Claims are created by the orchestrator or MCP path")
++		return
++	}
++	if strings.TrimSpace(r.Header.Get("Idempotency-Key")) == "" {
++		WriteProblem(w, r, 400, "idempotency_key_required", "Idempotency key required", "Claim creation requires Idempotency-Key")
++		return
++	}
++	workspace, err := s.workspace(r)
++	if err != nil {
++		writeWorkspaceError(w, r, err)
++		return
++	}
++	var input claimInput
++	if err := decodeJSON(r, &input); err != nil {
++		WriteProblem(w, r, 400, "invalid_claim", "Invalid claim request", err.Error())
++		return
++	}
++	input.AgentID, input.TaskID, input.ResourceType, input.Path, input.Mode = strings.TrimSpace(input.AgentID), strings.TrimSpace(input.TaskID), strings.TrimSpace(input.ResourceType), strings.TrimSpace(input.Path), strings.TrimSpace(input.Mode)
++	if input.AgentID == "" || input.TaskID == "" || input.ResourceType == "" || input.Mode == "" {
++		WriteProblem(w, r, 400, "invalid_claim", "Invalid claim request", "agent_id, task_id, resource_type, and mode are required")
++		return
++	}
++	if input.Path != "" {
++		if _, err := safeWorkspacePath(workspace.RootPath, input.Path); err != nil {
++			WriteProblem(w, r, 400, "invalid_claim_path", "Invalid claim path", err.Error())
++			return
++		}
++	}
++	service := claimsvc.NewService(s.config.Store)
++	claim, err := service.Create(r.Context(), claimsvc.CreateRequest{ID: input.ClaimID, RunID: input.RunID, AgentID: input.AgentID, TaskID: input.TaskID, ResourceID: input.ResourceID, ResourceType: input.ResourceType, ResourcePath: input.Path, SymbolName: input.Symbol, ClaimType: input.Mode, BaseHash: input.BaseHash, TTL: time.Duration(input.TTLSeconds) * time.Second, RationaleMD: redactText(input.Rationale)})
++	if err != nil {
++		status := 409
++		if strings.Contains(err.Error(), "required") || strings.Contains(err.Error(), "invalid") {
++			status = 400
++		}
++		WriteProblem(w, r, status, "claim_conflict", "Claim could not be acquired", err.Error())
++		return
++	}
++	if _, err := s.config.Store.DB().ExecContext(r.Context(), `UPDATE claims SET workspace_id = ? WHERE id = ?`, workspace.ID, claim.ID); err != nil {
++		WriteProblem(w, r, 500, "claim_persist_failed", "Claim workspace binding failed", err.Error())
++		return
++	}
++	writeJSON(w, 201, s.toClaimResponse(r.Context(), workspace.ID, claim))
++}
++func (s *Server) transitionClaimAPI(w http.ResponseWriter, r *http.Request) {
++	workspace, err := s.workspace(r)
++	if err != nil {
++		writeWorkspaceError(w, r, err)
++		return
++	}
++	claim, err := s.config.Store.GetClaim(r.Context(), r.PathValue("claim_id"))
++	if err != nil || !claimWorkspace(s.config.Store.DB(), r.Context(), claim.ID, workspace.ID) {
++		WriteProblem(w, r, 404, "claim_not_found", "Claim not found", "claim does not belong to this workspace")
++		return
++	}
++	actor := r.Header.Get("X-Actor-ID")
++	owner := actor != "" && actor == claim.AgentID
++	action := r.PathValue("action")
++	if !owner && !humanAuthorized(r) {
++		WriteProblem(w, r, 403, "forbidden", "Claim owner or human authorization required", "Only the owner may release or extend a claim")
++		return
++	}
++	if strings.TrimSpace(r.Header.Get("Idempotency-Key")) == "" {
++		WriteProblem(w, r, 400, "idempotency_key_required", "Idempotency key required", "Claim transitions require Idempotency-Key")
++		return
++	}
++	service := claimsvc.NewService(s.config.Store)
++	var updated db.Claim
++	if action == "extend" {
++		var body struct {
++			TTLSeconds int `json:"ttl_seconds"`
++		}
++		_ = decodeJSON(r, &body)
++		updated, err = service.Extend(r.Context(), claim.TaskID, claim.ID, actor, time.Duration(body.TTLSeconds)*time.Second)
++	} else if action == "release" || action == "force-release" {
++		reason := r.URL.Query().Get("reason")
++		if action == "force-release" && strings.TrimSpace(reason) == "" {
++			WriteProblem(w, r, 400, "reason_required", "Reason required", "force release requires a reason")
++			return
++		}
++		updated, err = service.Release(r.Context(), claim.TaskID, claim.ID, actor, redactText(reason))
++	} else {
++		WriteProblem(w, r, 400, "invalid_claim_transition", "Invalid claim transition", action)
++		return
++	}
++	if err != nil {
++		WriteProblem(w, r, 409, "claim_transition_conflict", "Claim transition failed", err.Error())
++		return
++	}
++	if !owner {
++		_, _ = s.config.Store.DB().ExecContext(r.Context(), `INSERT INTO audit_events (workspace_id, actor_id, action, entity_type, entity_id, request_id, reason, payload_json) VALUES (?, ?, ?, 'claim', ?, ?, ?, ?)`, workspace.ID, actor, "claim."+action, updated.ID, requestID(r.Context()), r.URL.Query().Get("reason"), `{"forced":true}`)
++	}
++	writeJSON(w, 200, s.toClaimResponse(r.Context(), workspace.ID, updated))
++}
++func (s *Server) listClaimContentions(w http.ResponseWriter, r *http.Request) {
++	workspace, err := s.workspace(r)
++	if err != nil {
++		writeWorkspaceError(w, r, err)
++		return
++	}
++	resourceID := r.URL.Query().Get("resource_id")
++	claims, err := s.config.Store.ListClaims(r.Context())
++	if err != nil {
++		WriteProblem(w, r, 500, "contention_list_failed", "Unable to list contentions", err.Error())
++		return
++	}
++	items := make([]map[string]any, 0)
++	for _, claim := range claims {
++		if claim.Status == "active" && claimWorkspace(s.config.Store.DB(), r.Context(), claim.ID, workspace.ID) && (resourceID == "" || claim.ResourceID == resourceID) {
++			items = append(items, map[string]any{"claim_id": claim.ID, "resource_id": claim.ResourceID, "agent_id": claim.AgentID, "state": claim.Status, "reason": "active claim may contend with a requested resource"})
++		}
++	}
++	writePage(w, r, items)
++}
++func claimWorkspace(sqlDB *sql.DB, ctx context.Context, claimID, workspaceID string) bool {
++	var value string
++	return sqlDB.QueryRowContext(ctx, `SELECT COALESCE(workspace_id,'') FROM claims WHERE id = ?`, claimID).Scan(&value) == nil && value == workspaceID
++}
++func (s *Server) toClaimResponse(ctx context.Context, workspaceID string, claim db.Claim) claimResponse {
++	resource, _ := s.config.Store.GetResource(ctx, claim.ResourceID)
++	return claimResponse{ID: claim.ID, WorkspaceID: workspaceID, AgentID: claim.AgentID, TaskID: claim.TaskID, ResourceID: claim.ResourceID, ResourceType: resource.Type, Path: resource.Path, Symbol: resource.Symbol, Mode: claim.ClaimType, BaseHash: claim.BaseHash, State: claim.Status, AcquiredAt: claim.CreatedAt, LeaseExpiresAt: claim.ExpiresAt, Rationale: redactText(claim.RationaleMD)}
++}
+diff --git a/api/internal/httpapi/claims_test.go b/api/internal/httpapi/claims_test.go
+new file mode 100644
+index 0000000..985a4c5
+--- /dev/null
++++ b/api/internal/httpapi/claims_test.go
+@@ -0,0 +1,76 @@
++package httpapi
++
++import (
++	"bytes"
++	"encoding/json"
++	"net/http"
++	"net/http/httptest"
++	"os"
++	"path/filepath"
++	"testing"
++
++	"roundtable/internal/db"
++)
++
++func TestClaimsAPIConflictOwnershipAndForceRelease(t *testing.T) {
++	root := t.TempDir()
++	if err := os.WriteFile(filepath.Join(root, "file.txt"), []byte("claim me"), 0o644); err != nil {
++		t.Fatal(err)
++	}
++	sqlDB, err := db.Open(filepath.Join(root, "state.db"))
++	if err != nil {
++		t.Fatal(err)
++	}
++	defer sqlDB.Close()
++	store := db.NewStore(sqlDB, nil)
++	if err := store.UpsertWorkspace(t.Context(), db.Workspace{ID: "ws-claims", DisplayName: "Claims", RootPath: root, Status: "active", Revision: 1}); err != nil {
++		t.Fatal(err)
++	}
++	if err := store.UpsertAgent(t.Context(), db.Agent{ID: "agent-claims", Name: "Agent", Role: "implementer", Adapter: "codex", IsEnabled: true}); err != nil {
++		t.Fatal(err)
++	}
++	server := NewServer(Config{Store: store})
++	req := httptest.NewRequest(http.MethodPost, "/api/v1/workspaces/ws-claims/claims/internal", bytes.NewBufferString(`{"agent_id":"agent-claims","task_id":"task-claims","resource_type":"file","path":"file.txt","mode":"exclusive","run_id":"run-claims"}`))
++	req.Header.Set("X-Roundtable-Orchestrator", "true")
++	req.Header.Set("Idempotency-Key", "claim-1")
++	res := httptest.NewRecorder()
++	server.Handler().ServeHTTP(res, req)
++	if res.Code != http.StatusCreated {
++		t.Fatalf("create = %d %s", res.Code, res.Body.String())
++	}
++	if res := func() *httptest.ResponseRecorder {
++		req := httptest.NewRequest(http.MethodPost, "/api/v1/workspaces/ws-claims/claims/internal", bytes.NewBufferString(`{"agent_id":"agent-claims","task_id":"task-2","resource_type":"file","path":"file.txt","mode":"exclusive"}`))
++		req.Header.Set("X-Roundtable-Orchestrator", "true")
++		req.Header.Set("Idempotency-Key", "claim-2")
++		out := httptest.NewRecorder()
++		server.Handler().ServeHTTP(out, req)
++		return out
++	}(); res.Code != http.StatusConflict || !contains(res.Body.String(), "claim_conflict") {
++		t.Fatalf("conflict = %d %s", res.Code, res.Body.String())
++	}
++	var created claimResponse
++	if err := decodeResponse(res, &created); err != nil {
++		t.Fatal(err)
++	}
++	req = httptest.NewRequest(http.MethodPost, "/api/v1/workspaces/ws-claims/claims/"+created.ID+"/extend", bytes.NewBufferString(`{"ttl_seconds":120}`))
++	req.Header.Set("X-Actor-ID", "agent-claims")
++	req.Header.Set("Idempotency-Key", "extend")
++	res = httptest.NewRecorder()
++	server.Handler().ServeHTTP(res, req)
++	if res.Code != http.StatusOK {
++		t.Fatalf("extend = %d %s", res.Code, res.Body.String())
++	}
++	req = httptest.NewRequest(http.MethodPost, "/api/v1/workspaces/ws-claims/claims/"+created.ID+"/force-release?reason=cleanup", nil)
++	req.Header.Set("X-Actor-ID", "human")
++	req.Header.Set("X-Actor-Role", "human")
++	req.Header.Set("Idempotency-Key", "release")
++	res = httptest.NewRecorder()
++	server.Handler().ServeHTTP(res, req)
++	if res.Code != http.StatusOK || !contains(res.Body.String(), `"state":"released"`) {
++		t.Fatalf("release = %d %s", res.Code, res.Body.String())
++	}
++}
++
++func decodeResponse(res *httptest.ResponseRecorder, target any) error {
++	return json.Unmarshal(res.Body.Bytes(), target)
++}
