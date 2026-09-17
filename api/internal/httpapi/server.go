@@ -155,6 +155,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/v1/workspaces/{id}/proposals/{proposal_id}/votes", s.listVotesAPI)
 	mux.HandleFunc("POST /api/v1/workspaces/{id}/proposals/{proposal_id}/votes", s.castVoteAPI)
 	mux.HandleFunc("GET /api/v1/workspaces/{id}/proposals/{proposal_id}/consensus", s.getConsensusAPI)
+	mux.HandleFunc("GET /api/v1/workspaces/{id}/analytics/consensus", s.consensusAnalyticsAPI)
 	mux.HandleFunc("GET /api/v1/workspaces/{id}/claims", s.listClaimsAPI)
 	mux.HandleFunc("POST /api/v1/workspaces/{id}/claims/internal", s.createClaimAPI)
 	mux.HandleFunc("GET /api/v1/workspaces/{id}/claims/{claim_id}", s.getClaimAPI)
