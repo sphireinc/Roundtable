@@ -100,6 +100,36 @@ func TestBranchSwitchRequiresHumanRoleAndIdempotencyKey(t *testing.T) {
 	}
 }
 
+func TestRepositoryEntitiesRejectTraversalAndExposeSymbols(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "sample.go"), []byte("package sample\n\nfunc Build() {}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	sqlDB, err := db.Open(filepath.Join(t.TempDir(), "roundtable.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer sqlDB.Close()
+	if err := db.NewStore(sqlDB, nil).UpsertWorkspace(t.Context(), db.Workspace{ID: "ws-entities", DisplayName: "Entities", RootPath: root, Status: "active", Revision: 1}); err != nil {
+		t.Fatal(err)
+	}
+	server := NewServer(Config{Store: db.NewStore(sqlDB, nil), AllowedWorkspaceRoots: []string{root}})
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/workspaces/ws-entities/repository/entities?type=symbol&q=build", nil)
+	res := httptest.NewRecorder()
+	server.Handler().ServeHTTP(res, req)
+	if res.Code != http.StatusOK || !bytes.Contains(res.Body.Bytes(), []byte(`"name":"Build"`)) {
+		t.Fatalf("entities = %d %s", res.Code, res.Body.String())
+	}
+
+	req = httptest.NewRequest(http.MethodGet, "/api/v1/workspaces/ws-entities/repository/entities?path=../secret", nil)
+	res = httptest.NewRecorder()
+	server.Handler().ServeHTTP(res, req)
+	if res.Code != http.StatusBadRequest || !bytes.Contains(res.Body.Bytes(), []byte(`invalid_repository_path`)) {
+		t.Fatalf("traversal = %d %s", res.Code, res.Body.String())
+	}
+}
+
 func runGit(t *testing.T, root string, args ...string) {
 	t.Helper()
 	command := exec.Command("git", append([]string{"-C", root}, args...)...)
