@@ -89,6 +89,11 @@ func (s *Service) Create(ctx context.Context, req CreateRequest) (db.Claim, erro
 		return db.Claim{}, err
 	}
 	if len(conflicts) > 0 {
+		for _, conflict := range conflicts {
+			if err := s.recordContention(ctx, req, resource, conflict); err != nil {
+				return db.Claim{}, err
+			}
+		}
 		return db.Claim{}, fmt.Errorf("%w: %s", ErrClaimConflict, conflicts[0].Reason)
 	}
 
@@ -122,6 +127,12 @@ func (s *Service) Create(ctx context.Context, req CreateRequest) (db.Claim, erro
 		"path":         resource.Path,
 	})
 	return saved, nil
+}
+
+func (s *Service) recordContention(ctx context.Context, req CreateRequest, requested db.Resource, conflict Conflict) error {
+	id := fmt.Sprintf("contention-%d", time.Now().UnixNano())
+	_, err := s.store.DB().ExecContext(ctx, `INSERT INTO claim_contentions (id, resource_id, claimant_id, challenged_claim_id, status, reason, requested_resource_id, requested_agent_id, requested_task_id, requested_mode, requested_path) VALUES (?, ?, ?, ?, 'open', ?, ?, ?, ?, ?, ?)`, id, requested.ID, conflict.Claim.ID, conflict.Claim.ID, conflict.Reason, requested.ID, req.AgentID, req.TaskID, req.ClaimType, req.ResourcePath)
+	return err
 }
 
 func (s *Service) populateResourceSpan(resource *db.Resource) error {

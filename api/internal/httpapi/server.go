@@ -156,7 +156,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/v1/workspaces/{id}/claims/internal", s.createClaimAPI)
 	mux.HandleFunc("GET /api/v1/workspaces/{id}/claims/{claim_id}", s.getClaimAPI)
 	mux.HandleFunc("POST /api/v1/workspaces/{id}/claims/{claim_id}/{action}", s.transitionClaimAPI)
-	mux.HandleFunc("GET /api/v1/workspaces/{id}/claims/contentions", s.listClaimContentions)
+	mux.HandleFunc("GET /api/v1/workspaces/{id}/claims/contentions", s.listContentionsAPI)
+	mux.HandleFunc("POST /api/v1/workspaces/{id}/claims/contentions/{contention_id}/resolve", s.resolveContentionAPI)
 	return requestIDs(securityHeaders(jsonDefaults(mux)))
 }
 

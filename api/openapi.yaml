@@ -596,8 +596,15 @@ paths:
     parameters: [{name: id, in: path, required: true, schema: {type: string}}, {name: resource_id, in: query, schema: {type: string}}, {name: cursor, in: query, schema: {type: string}}, {name: limit, in: query, schema: {type: integer, minimum: 1, maximum: 200, default: 50}}]
     get:
       operationId: listClaimContentions
-      summary: List active claims that may contend for a resource
+      summary: List persisted claim contention records
       responses: {'200': {description: Claim contentions, content: {application/json: {schema: {$ref: '#/components/schemas/Contentions'}}}}, '404': {$ref: '#/components/responses/Problem'}}
+  /api/v1/workspaces/{id}/claims/contentions/{contention_id}/resolve:
+    parameters: [{name: id, in: path, required: true, schema: {type: string}}, {name: contention_id, in: path, required: true, schema: {type: string}}, {$ref: '#/components/parameters/ActorID'}, {$ref: '#/components/parameters/ActorRole'}, {$ref: '#/components/parameters/IdempotencyKey'}]
+    post:
+      operationId: resolveClaimContention
+      summary: Resolve a claim contention with human authorization
+      requestBody: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/ContentionResolutionInput'}}}}
+      responses: {'200': {description: Resolved contention, content: {application/json: {schema: {$ref: '#/components/schemas/ContentionResolution'}}}}, '400': {$ref: '#/components/responses/Problem'}, '403': {$ref: '#/components/responses/Problem'}, '404': {$ref: '#/components/responses/Problem'}, '409': {$ref: '#/components/responses/Problem'}}
 components:
   parameters:
     ActorID:
@@ -1128,19 +1135,42 @@ components:
         next_cursor: {type: [string, 'null']}
     Contention:
       type: object
-      required: [claim_id, resource_id, agent_id, state, reason]
+      required: [id, workspace_id, resource_id, requested_resource_id, requested_agent_id, requested_task_id, requested_mode, current_owner_claim_id, current_owner_agent_id, state, reason, acquired_at, lease_expires_at, allowed_resolutions]
       properties:
-        claim_id: {type: string}
+        id: {type: string}
+        workspace_id: {type: string}
         resource_id: {type: string}
-        agent_id: {type: string}
+        requested_resource_id: {type: string}
+        requested_agent_id: {type: string}
+        requested_task_id: {type: string}
+        requested_mode: {type: string}
+        requested_path: {type: string}
+        current_owner_claim_id: {type: string}
+        current_owner_agent_id: {type: string}
         state: {type: string}
         reason: {type: string}
+        acquired_at: {type: string, format: date-time}
+        lease_expires_at: {type: string, format: date-time}
+        allowed_resolutions: {type: array, items: {type: string}}
     Contentions:
       type: object
       required: [items]
       properties:
         items: {type: array, items: {$ref: '#/components/schemas/Contention'}}
         next_cursor: {type: [string, 'null']}
+    ContentionResolutionInput:
+      type: object
+      required: [resolution]
+      properties:
+        resolution: {type: string, enum: [keep_owner, transfer, split, narrow, extend_lease, reject_contender]}
+        reason: {type: string}
+    ContentionResolution:
+      type: object
+      required: [contention_id, state, resolution]
+      properties:
+        contention_id: {type: string}
+        state: {type: string, enum: [resolved]}
+        resolution: {type: string}
     HealthResponse:
       type: object
       required: [status, version, request_id]
