@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"time"
 
 	"roundtable/internal/events"
 )
@@ -399,6 +400,42 @@ func (s *Store) ListAgents(ctx context.Context) ([]Agent, error) {
 		out = append(out, agent)
 	}
 	return out, rows.Err()
+}
+
+func (s *Store) SetAgentEnabled(ctx context.Context, workspaceID, agentID string, enabled bool, actorID, requestID string) (Agent, error) {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return Agent{}, fmt.Errorf("begin agent state change: %w", err)
+	}
+	defer tx.Rollback()
+	value := 0
+	state := "disabled"
+	if enabled {
+		value = 1
+		state = "idle"
+	}
+	result, err := tx.ExecContext(ctx, `UPDATE agents SET is_enabled = ?, status = ? WHERE id = ?`, value, state, agentID)
+	if err != nil {
+		return Agent{}, fmt.Errorf("set agent enabled: %w", err)
+	}
+	if affected, _ := result.RowsAffected(); affected == 0 {
+		return Agent{}, fmt.Errorf("agent %s not found", agentID)
+	}
+	payload, err := json.Marshal(map[string]any{"agent_id": agentID, "enabled": enabled})
+	if err != nil {
+		return Agent{}, fmt.Errorf("marshal agent state audit: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, `INSERT INTO audit_events (workspace_id, actor_id, action, entity_type, entity_id, request_id, payload_json) VALUES (?, ?, 'agent.state_changed', 'agent', ?, ?, ?)`, workspaceID, actorID, agentID, nullIfEmpty(requestID), string(payload)); err != nil {
+		return Agent{}, fmt.Errorf("audit agent state: %w", err)
+	}
+	eventID := fmt.Sprintf("agent:%s:%d:state-changed", agentID, time.Now().UnixNano())
+	if _, err := tx.ExecContext(ctx, `INSERT INTO event_outbox (workspace_id, event_id, event_type, entity_type, entity_id, payload_json) VALUES (?, ?, 'agent.state_changed', 'agent', ?, ?)`, workspaceID, eventID, agentID, string(payload)); err != nil {
+		return Agent{}, fmt.Errorf("outbox agent state: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return Agent{}, fmt.Errorf("commit agent state: %w", err)
+	}
+	return s.GetAgent(ctx, agentID)
 }
 
 func (s *Store) UpsertAgentSession(ctx context.Context, session AgentSession) error {
