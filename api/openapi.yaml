@@ -646,6 +646,25 @@ paths:
       description: Reject and request-changes require a non-empty reason. An override requires both an approval that permits overrides and the explicit X-Override-Permission header.
       requestBody: {required: false, content: {application/json: {schema: {$ref: '#/components/schemas/ApprovalDecisionInput'}}}}
       responses: {'200': {description: Decided approval, content: {application/json: {schema: {$ref: '#/components/schemas/Approval'}}}}, '400': {$ref: '#/components/responses/Problem'}, '403': {$ref: '#/components/responses/Problem'}, '404': {$ref: '#/components/responses/Problem'}, '409': {$ref: '#/components/responses/Problem'}}
+  /api/v1/workspaces/{id}/transactions:
+    parameters: [{name: id, in: path, required: true, schema: {type: string}}, {name: cursor, in: query, schema: {type: string}}, {name: limit, in: query, schema: {type: integer, minimum: 1, maximum: 200, default: 50}}]
+    get:
+      operationId: listTransactions
+      summary: List workspace transactions
+      responses: {'200': {description: Transactions, content: {application/json: {schema: {$ref: '#/components/schemas/Transactions'}}}}, '404': {$ref: '#/components/responses/Problem'}}
+  /api/v1/workspaces/{id}/transactions/{transaction_id}:
+    parameters: [{name: id, in: path, required: true, schema: {type: string}}, {name: transaction_id, in: path, required: true, schema: {type: string}}]
+    get:
+      operationId: getTransaction
+      summary: Get one transaction
+      responses: {'200': {description: Transaction, content: {application/json: {schema: {$ref: '#/components/schemas/Transaction'}}}}, '404': {$ref: '#/components/responses/Problem'}}
+  /api/v1/workspaces/{id}/transactions/{transaction_id}/{action}:
+    parameters: [{name: id, in: path, required: true, schema: {type: string}}, {name: transaction_id, in: path, required: true, schema: {type: string}}, {name: action, in: path, required: true, schema: {type: string, enum: [stage, validate, apply, cancel, retry, compensate]}}, {$ref: '#/components/parameters/ActorID'}, {$ref: '#/components/parameters/ActorRole'}, {$ref: '#/components/parameters/IdempotencyKey'}]
+    post:
+      operationId: transitionTransaction
+      summary: Control a transaction through the transaction manager
+      description: All mutations require a human role. Apply additionally requires the internal orchestrator header and is the only route that invokes repository mutation; agents and browser clients cannot write the repository directly.
+      responses: {'200': {description: Transaction operation result, content: {application/json: {schema: {$ref: '#/components/schemas/Transaction'}}}}, '400': {$ref: '#/components/responses/Problem'}, '403': {$ref: '#/components/responses/Problem'}, '404': {$ref: '#/components/responses/Problem'}, '409': {$ref: '#/components/responses/Problem'}}
   /api/v1/workspaces/{id}/claims:
     parameters: [{name: id, in: path, required: true, schema: {type: string}}, {name: cursor, in: query, schema: {type: string}}, {name: limit, in: query, schema: {type: integer, minimum: 1, maximum: 200, default: 50}}]
     get:
@@ -1431,6 +1450,27 @@ components:
         reason: {type: string}
         decision_metadata: {type: object, additionalProperties: true}
         override: {type: boolean}
+    Transaction:
+      type: object
+      required: [id, workspace_id, proposal_id, run_id, before_git_hash, status, applied_by, metadata]
+      properties:
+        id: {type: string}
+        workspace_id: {type: string}
+        proposal_id: {type: string}
+        run_id: {type: string}
+        before_git_hash: {type: string}
+        after_git_hash: {type: string}
+        status: {type: string, enum: [pending, staged, running, applied, cancelled, failed]}
+        applied_by: {type: string}
+        applied_at: {type: string, format: date-time}
+        rollback_patch_path: {type: string}
+        metadata: {type: object, additionalProperties: true}
+    Transactions:
+      type: object
+      required: [items]
+      properties:
+        items: {type: array, items: {$ref: '#/components/schemas/Transaction'}}
+        next_cursor: {type: [string, 'null']}
     ContentionResolutionInput:
       type: object
       required: [resolution]
