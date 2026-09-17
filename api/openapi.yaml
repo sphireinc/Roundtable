@@ -558,6 +558,13 @@ paths:
       operationId: listPatchSymbolImpact
       summary: List symbols impacted by an immutable patch
       responses: {'200': {description: Symbol impact, content: {application/json: {schema: {$ref: '#/components/schemas/PatchSymbols'}}}}, '400': {$ref: '#/components/responses/Problem'}}
+  /api/v1/workspaces/{id}/proposals/{proposal_id}/validation:
+    parameters: [{name: id, in: path, required: true, schema: {type: string}}, {name: proposal_id, in: path, required: true, schema: {type: string}}, {$ref: '#/components/parameters/ActorID'}, {$ref: '#/components/parameters/ActorRole'}, {$ref: '#/components/parameters/IdempotencyKey'}]
+    post:
+      operationId: rerunProposalValidation
+      summary: Rerun safe proposal validation stages without repository mutation
+      requestBody: {required: false, content: {application/json: {schema: {$ref: '#/components/schemas/ValidationInput'}}}}
+      responses: {'202': {description: Validation run, content: {application/json: {schema: {$ref: '#/components/schemas/ValidationRun'}}}}, '400': {$ref: '#/components/responses/Problem'}, '403': {$ref: '#/components/responses/Problem'}, '404': {$ref: '#/components/responses/Problem'}}
 components:
   parameters:
     ActorID:
@@ -1023,6 +1030,23 @@ components:
       properties:
         items: {type: array, items: {$ref: '#/components/schemas/PatchSymbol'}}
         next_cursor: {type: [string, 'null']}
+    ValidationInput:
+      type: object
+      additionalProperties: false
+      properties:
+        stages: {type: array, items: {type: string, enum: [patch_parse, apply_dry_run, static_checks, tests, policy, stale_base]}}
+    ValidationRun:
+      type: object
+      required: [run_id, proposal_id, status, started_at, completed_at, stages, commands]
+      properties:
+        run_id: {type: string}
+        proposal_id: {type: string}
+        status: {type: string, enum: [passed, failed]}
+        started_at: {type: string, format: date-time}
+        completed_at: {type: string, format: date-time}
+        stages: {type: object, additionalProperties: true}
+        commands: {type: object, additionalProperties: {type: string}}
+        output: {type: string}
     HealthResponse:
       type: object
       required: [status, version, request_id]
