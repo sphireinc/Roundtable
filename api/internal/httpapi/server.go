@@ -133,6 +133,14 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/v1/workspaces/{id}/sessions/{session_id}/proposals", s.sessionProposals)
 	mux.HandleFunc("GET /api/v1/workspaces/{id}/sessions/{session_id}/metrics", s.sessionMetrics)
 	mux.HandleFunc("GET /api/v1/workspaces/{id}/sessions/{session_id}/environment", s.sessionEnvironment)
+	mux.HandleFunc("GET /api/v1/workspaces/{id}/deliberations", s.listDeliberations)
+	mux.HandleFunc("POST /api/v1/workspaces/{id}/deliberations", s.createDeliberation)
+	mux.HandleFunc("GET /api/v1/workspaces/{id}/deliberations/{deliberation_id}", s.getDeliberation)
+	mux.HandleFunc("POST /api/v1/workspaces/{id}/deliberations/{deliberation_id}/start", s.transitionDeliberation)
+	mux.HandleFunc("POST /api/v1/workspaces/{id}/deliberations/{deliberation_id}/pause", s.transitionDeliberation)
+	mux.HandleFunc("POST /api/v1/workspaces/{id}/deliberations/{deliberation_id}/resume", s.transitionDeliberation)
+	mux.HandleFunc("POST /api/v1/workspaces/{id}/deliberations/{deliberation_id}/terminate", s.transitionDeliberation)
+	mux.HandleFunc("POST /api/v1/workspaces/{id}/deliberations/{deliberation_id}/messages", s.addDeliberationMessage)
 	return requestIDs(securityHeaders(jsonDefaults(mux)))
 }
 

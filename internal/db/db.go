@@ -269,6 +269,11 @@ func ensureWorkspaceHardening(db *sql.DB) error {
 			return err
 		}
 	}
+	for _, column := range []string{"metadata_json TEXT", "moderator_id TEXT"} {
+		if err := addColumnIfMissing(db, "deliberations", column); err != nil {
+			return err
+		}
+	}
 	for _, index := range []string{
 		"CREATE INDEX IF NOT EXISTS idx_workspace_sessions_status ON agent_sessions(workspace_id, status)",
 		"CREATE INDEX IF NOT EXISTS idx_workspace_claims_status ON claims(workspace_id, status)",
@@ -371,6 +376,36 @@ CREATE TABLE IF NOT EXISTS deliberations (
     ended_at TEXT,
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE TABLE IF NOT EXISTS deliberation_participants (
+    deliberation_id TEXT NOT NULL REFERENCES deliberations(id),
+    agent_id TEXT NOT NULL,
+    role TEXT NOT NULL DEFAULT 'participant',
+    status TEXT NOT NULL DEFAULT 'active',
+    joined_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (deliberation_id, agent_id)
+);
+CREATE TABLE IF NOT EXISTS deliberation_rounds (
+    id TEXT PRIMARY KEY,
+    deliberation_id TEXT NOT NULL REFERENCES deliberations(id),
+    number INTEGER NOT NULL,
+    status TEXT NOT NULL DEFAULT 'open',
+    started_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    ended_at TEXT,
+    UNIQUE(deliberation_id, number)
+);
+CREATE TABLE IF NOT EXISTS deliberation_conflicts (
+    id TEXT PRIMARY KEY,
+    deliberation_id TEXT NOT NULL REFERENCES deliberations(id),
+    summary TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'open',
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE TABLE IF NOT EXISTS deliberation_links (
+    deliberation_id TEXT NOT NULL REFERENCES deliberations(id),
+    entity_type TEXT NOT NULL,
+    entity_id TEXT NOT NULL,
+    PRIMARY KEY (deliberation_id, entity_type, entity_id)
 );
 CREATE TABLE IF NOT EXISTS deliberation_messages (
     id TEXT PRIMARY KEY,
@@ -515,6 +550,9 @@ CREATE TABLE IF NOT EXISTS event_outbox (
 );
 CREATE INDEX IF NOT EXISTS idx_deliberations_workspace_status ON deliberations(workspace_id, status, updated_at DESC);
 CREATE INDEX IF NOT EXISTS idx_deliberation_messages_timeline ON deliberation_messages(deliberation_id, sequence);
+CREATE INDEX IF NOT EXISTS idx_deliberation_participants_agent ON deliberation_participants(agent_id, status);
+CREATE INDEX IF NOT EXISTS idx_deliberation_rounds_timeline ON deliberation_rounds(deliberation_id, number);
+CREATE INDEX IF NOT EXISTS idx_deliberation_conflicts_status ON deliberation_conflicts(deliberation_id, status);
 CREATE INDEX IF NOT EXISTS idx_proposal_files_proposal ON proposal_files(proposal_id, path);
 CREATE INDEX IF NOT EXISTS idx_contentions_resource_status ON claim_contentions(resource_id, status, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_consensus_proposal_created ON consensus_snapshots(proposal_id, created_at DESC);
