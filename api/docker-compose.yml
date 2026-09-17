@@ -1,0 +1,13 @@
+services:
+  api:
+    build:
+      context: ..
+      dockerfile: api/Dockerfile
+    environment:
+      ROUNDTABLE_API_VERSION: ${ROUNDTABLE_API_VERSION:-dev}
+    ports:
+      - "${ROUNDTABLE_API_PORT:-8080}:8080"
+    volumes:
+      - ../.roundtable:/app/.roundtable
+      - ..:/workspace:ro
+    restart: unless-stopped
