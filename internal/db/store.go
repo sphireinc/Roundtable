@@ -874,26 +874,32 @@ func (s *Store) ListProposalResources(ctx context.Context, proposalID string) ([
 }
 
 func (s *Store) UpsertVote(ctx context.Context, vote Vote) error {
+	if vote.PolicyWeight <= 0 {
+		vote.PolicyWeight = 1
+	}
 	_, err := s.db.ExecContext(ctx, `
-		INSERT INTO votes (id, proposal_id, agent_id, vote, confidence, reason_md)
-		VALUES (?, ?, ?, ?, ?, ?)
+		INSERT INTO votes (id, proposal_id, agent_id, session_id, vote, confidence, reason_md, policy_weight, policy_version)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(id) DO UPDATE SET
 			proposal_id = excluded.proposal_id,
 			agent_id = excluded.agent_id,
+			session_id = excluded.session_id,
 			vote = excluded.vote,
 			confidence = excluded.confidence,
-			reason_md = excluded.reason_md
-	`, vote.ID, vote.ProposalID, vote.AgentID, vote.Vote, zeroFloatToNull(vote.Confidence), nullIfEmpty(vote.ReasonMD))
+			reason_md = excluded.reason_md,
+			policy_weight = excluded.policy_weight,
+			policy_version = excluded.policy_version
+	`, vote.ID, vote.ProposalID, vote.AgentID, nullIfEmpty(vote.SessionID), vote.Vote, zeroFloatToNull(vote.Confidence), nullIfEmpty(vote.ReasonMD), vote.PolicyWeight, nullIfEmpty(vote.PolicyVersion))
 	return wrapErr("upsert vote", err)
 }
 
 func (s *Store) GetVote(ctx context.Context, id string) (Vote, error) {
 	row := s.db.QueryRowContext(ctx, `
-		SELECT id, proposal_id, agent_id, vote, COALESCE(confidence, 0), COALESCE(reason_md, ''), created_at
+		SELECT id, proposal_id, agent_id, COALESCE(session_id, ''), vote, COALESCE(confidence, 0), COALESCE(reason_md, ''), COALESCE(policy_weight, 1), COALESCE(policy_version, ''), created_at
 		FROM votes WHERE id = ?
 	`, id)
 	var v Vote
-	if err := row.Scan(&v.ID, &v.ProposalID, &v.AgentID, &v.Vote, &v.Confidence, &v.ReasonMD, &v.CreatedAt); err != nil {
+	if err := row.Scan(&v.ID, &v.ProposalID, &v.AgentID, &v.SessionID, &v.Vote, &v.Confidence, &v.ReasonMD, &v.PolicyWeight, &v.PolicyVersion, &v.CreatedAt); err != nil {
 		return Vote{}, fmt.Errorf("get vote %s: %w", id, err)
 	}
 	return v, nil
@@ -901,7 +907,7 @@ func (s *Store) GetVote(ctx context.Context, id string) (Vote, error) {
 
 func (s *Store) ListVotes(ctx context.Context, proposalID string) ([]Vote, error) {
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT id, proposal_id, agent_id, vote, COALESCE(confidence, 0), COALESCE(reason_md, ''), created_at
+		SELECT id, proposal_id, agent_id, COALESCE(session_id, ''), vote, COALESCE(confidence, 0), COALESCE(reason_md, ''), COALESCE(policy_weight, 1), COALESCE(policy_version, ''), created_at
 		FROM votes WHERE (? = '' OR proposal_id = ?)
 		ORDER BY created_at, id
 	`, proposalID, proposalID)
@@ -912,7 +918,7 @@ func (s *Store) ListVotes(ctx context.Context, proposalID string) ([]Vote, error
 	var out []Vote
 	for rows.Next() {
 		var v Vote
-		if err := rows.Scan(&v.ID, &v.ProposalID, &v.AgentID, &v.Vote, &v.Confidence, &v.ReasonMD, &v.CreatedAt); err != nil {
+		if err := rows.Scan(&v.ID, &v.ProposalID, &v.AgentID, &v.SessionID, &v.Vote, &v.Confidence, &v.ReasonMD, &v.PolicyWeight, &v.PolicyVersion, &v.CreatedAt); err != nil {
 			return nil, fmt.Errorf("scan vote: %w", err)
 		}
 		out = append(out, v)

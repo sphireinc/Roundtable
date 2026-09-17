@@ -284,6 +284,11 @@ func ensureWorkspaceHardening(db *sql.DB) error {
 			return err
 		}
 	}
+	for _, column := range []string{"session_id TEXT", "policy_weight INTEGER NOT NULL DEFAULT 1", "policy_version TEXT"} {
+		if err := addColumnIfMissing(db, "votes", column); err != nil {
+			return err
+		}
+	}
 	for _, index := range []string{
 		"CREATE INDEX IF NOT EXISTS idx_workspace_sessions_status ON agent_sessions(workspace_id, status)",
 		"CREATE INDEX IF NOT EXISTS idx_workspace_claims_status ON claims(workspace_id, status)",

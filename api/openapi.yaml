@@ -565,6 +565,24 @@ paths:
       summary: Rerun safe proposal validation stages without repository mutation
       requestBody: {required: false, content: {application/json: {schema: {$ref: '#/components/schemas/ValidationInput'}}}}
       responses: {'202': {description: Validation run, content: {application/json: {schema: {$ref: '#/components/schemas/ValidationRun'}}}}, '400': {$ref: '#/components/responses/Problem'}, '403': {$ref: '#/components/responses/Problem'}, '404': {$ref: '#/components/responses/Problem'}}
+  /api/v1/workspaces/{id}/proposals/{proposal_id}/votes:
+    parameters: [{name: id, in: path, required: true, schema: {type: string}}, {name: proposal_id, in: path, required: true, schema: {type: string}}]
+    get:
+      operationId: listProposalVotes
+      summary: List authoritative votes for a proposal
+      responses: {'200': {description: Votes, content: {application/json: {schema: {$ref: '#/components/schemas/Votes'}}}}, '404': {$ref: '#/components/responses/Problem'}}
+    post:
+      operationId: castProposalVote
+      summary: Record a vote through an authorized boundary
+      parameters: [{$ref: '#/components/parameters/ActorID'}, {$ref: '#/components/parameters/IdempotencyKey'}, {name: X-Roundtable-Orchestrator, in: header, required: false, schema: {type: string, enum: ['true']}}]
+      requestBody: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/VoteInput'}}}}
+      responses: {'201': {description: Vote and recalculated consensus, content: {application/json: {schema: {$ref: '#/components/schemas/VoteResult'}}}}, '400': {$ref: '#/components/responses/Problem'}, '403': {$ref: '#/components/responses/Problem'}, '404': {$ref: '#/components/responses/Problem'}, '409': {$ref: '#/components/responses/Problem'}}
+  /api/v1/workspaces/{id}/proposals/{proposal_id}/consensus:
+    parameters: [{name: id, in: path, required: true, schema: {type: string}}, {name: proposal_id, in: path, required: true, schema: {type: string}}]
+    get:
+      operationId: getProposalConsensus
+      summary: Calculate authoritative policy-weighted consensus
+      responses: {'200': {description: Consensus calculation, content: {application/json: {schema: {$ref: '#/components/schemas/Consensus'}}}}, '404': {$ref: '#/components/responses/Problem'}}
   /api/v1/workspaces/{id}/claims:
     parameters: [{name: id, in: path, required: true, schema: {type: string}}, {name: cursor, in: query, schema: {type: string}}, {name: limit, in: query, schema: {type: integer, minimum: 1, maximum: 200, default: 50}}]
     get:
@@ -1158,6 +1176,58 @@ components:
       properties:
         items: {type: array, items: {$ref: '#/components/schemas/Contention'}}
         next_cursor: {type: [string, 'null']}
+    Vote:
+      type: object
+      required: [id, proposal_id, agent_id, decision, policy_weight, policy_version, created_at]
+      properties:
+        id: {type: string}
+        proposal_id: {type: string}
+        agent_id: {type: string}
+        session_id: {type: string}
+        decision: {type: string, enum: [approve, reject, abstain, veto]}
+        policy_weight: {type: integer, minimum: 1}
+        policy_version: {type: string}
+        rationale: {type: string}
+        confidence: {type: number, minimum: 0, maximum: 1}
+        created_at: {type: string, format: date-time}
+    Votes:
+      type: object
+      required: [items]
+      properties:
+        items: {type: array, items: {$ref: '#/components/schemas/Vote'}}
+        next_cursor: {type: [string, 'null']}
+    VoteInput:
+      type: object
+      required: [agent_id, decision, rationale]
+      properties:
+        id: {type: string}
+        agent_id: {type: string}
+        session_id: {type: string}
+        decision: {type: string, enum: [approve, reject, abstain, veto]}
+        rationale: {type: string}
+        confidence: {type: number, minimum: 0, maximum: 1}
+    VoteResult:
+      type: object
+      required: [vote, consensus]
+      properties:
+        vote: {$ref: '#/components/schemas/Vote'}
+        consensus: {$ref: '#/components/schemas/Consensus'}
+    Consensus:
+      type: object
+      required: [proposal_id, outcome, approve_weight, reject_weight, abstain_weight, veto_weight, quorum, threshold, votes_cast, policy_version, explanation, calculated_at]
+      properties:
+        proposal_id: {type: string}
+        outcome: {type: string, enum: [pending, approved, blocked]}
+        approve_weight: {type: integer, minimum: 0}
+        reject_weight: {type: integer, minimum: 0}
+        abstain_weight: {type: integer, minimum: 0}
+        veto_weight: {type: integer, minimum: 0}
+        quorum: {type: integer, minimum: 1}
+        threshold: {type: integer, minimum: 1}
+        votes_cast: {type: integer, minimum: 0}
+        policy_version: {type: string}
+        explanation: {type: string}
+        calculated_at: {type: string, format: date-time}
     ContentionResolutionInput:
       type: object
       required: [resolution]
