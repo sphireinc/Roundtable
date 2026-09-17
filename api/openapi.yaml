@@ -620,6 +620,32 @@ paths:
       operationId: transitionPolicy
       summary: Publish, enable, disable, clone, or draft a policy
       responses: {'200': {description: Policy and impact, content: {application/json: {schema: {$ref: '#/components/schemas/PolicyTransition'}}}}, '403': {$ref: '#/components/responses/Problem'}, '404': {$ref: '#/components/responses/Problem'}, '409': {$ref: '#/components/responses/Problem'}}
+  /api/v1/workspaces/{id}/approvals:
+    parameters: [{name: id, in: path, required: true, schema: {type: string}}, {name: cursor, in: query, schema: {type: string}}, {name: limit, in: query, schema: {type: integer, minimum: 1, maximum: 200, default: 50}}]
+    get:
+      operationId: listHumanApprovals
+      summary: List the workspace human approval queue
+      responses: {'200': {description: Approval queue, content: {application/json: {schema: {$ref: '#/components/schemas/Approvals'}}}}, '404': {$ref: '#/components/responses/Problem'}}
+    post:
+      operationId: requestHumanApproval
+      summary: Request a human approval through the orchestrator boundary
+      parameters: [{$ref: '#/components/parameters/ActorID'}, {$ref: '#/components/parameters/IdempotencyKey'}, {name: X-Roundtable-Orchestrator, in: header, required: false, schema: {type: string, enum: ['true']}}]
+      requestBody: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/ApprovalInput'}}}}
+      responses: {'201': {description: Approval, content: {application/json: {schema: {$ref: '#/components/schemas/Approval'}}}}, '400': {$ref: '#/components/responses/Problem'}, '403': {$ref: '#/components/responses/Problem'}, '404': {$ref: '#/components/responses/Problem'}, '409': {$ref: '#/components/responses/Problem'}}
+  /api/v1/workspaces/{id}/approvals/{approval_id}:
+    parameters: [{name: id, in: path, required: true, schema: {type: string}}, {name: approval_id, in: path, required: true, schema: {type: string}}]
+    get:
+      operationId: getHumanApproval
+      summary: Get one approval request
+      responses: {'200': {description: Approval, content: {application/json: {schema: {$ref: '#/components/schemas/Approval'}}}}, '404': {$ref: '#/components/responses/Problem'}}
+  /api/v1/workspaces/{id}/approvals/{approval_id}/{action}:
+    parameters: [{name: id, in: path, required: true, schema: {type: string}}, {name: approval_id, in: path, required: true, schema: {type: string}}, {name: action, in: path, required: true, schema: {type: string, enum: [approve, reject, request-changes, defer]}}, {$ref: '#/components/parameters/ActorID'}, {$ref: '#/components/parameters/ActorRole'}, {$ref: '#/components/parameters/IdempotencyKey'}]
+    post:
+      operationId: decideHumanApproval
+      summary: Decide an approval request as an authorized human
+      description: Reject and request-changes require a non-empty reason. An override requires both an approval that permits overrides and the explicit X-Override-Permission header.
+      requestBody: {required: false, content: {application/json: {schema: {$ref: '#/components/schemas/ApprovalDecisionInput'}}}}
+      responses: {'200': {description: Decided approval, content: {application/json: {schema: {$ref: '#/components/schemas/Approval'}}}}, '400': {$ref: '#/components/responses/Problem'}, '403': {$ref: '#/components/responses/Problem'}, '404': {$ref: '#/components/responses/Problem'}, '409': {$ref: '#/components/responses/Problem'}}
   /api/v1/workspaces/{id}/claims:
     parameters: [{name: id, in: path, required: true, schema: {type: string}}, {name: cursor, in: query, schema: {type: string}}, {name: limit, in: query, schema: {type: integer, minimum: 1, maximum: 200, default: 50}}]
     get:
@@ -1360,6 +1386,51 @@ components:
       properties:
         policy: {$ref: '#/components/schemas/Policy'}
         impact: {$ref: '#/components/schemas/PolicyImpact'}
+    Approval:
+      type: object
+      required: [id, workspace_id, subject, reason, risk, status, required_role, decision_metadata, requested_by, override_policy, created_at, updated_at]
+      properties:
+        id: {type: string}
+        workspace_id: {type: string}
+        proposal_id: {type: string}
+        task_id: {type: string}
+        subject: {type: string}
+        reason: {type: string}
+        risk: {type: string}
+        status: {type: string, enum: [requested, approved, rejected, changes_requested, deferred]}
+        required_role: {type: string}
+        decision: {type: string}
+        decision_metadata: {type: object, additionalProperties: true}
+        requested_by: {type: string}
+        decided_by: {type: string}
+        override_policy: {type: boolean}
+        created_at: {type: string, format: date-time}
+        updated_at: {type: string, format: date-time}
+    Approvals:
+      type: object
+      required: [items]
+      properties:
+        items: {type: array, items: {$ref: '#/components/schemas/Approval'}}
+        next_cursor: {type: [string, 'null']}
+    ApprovalInput:
+      type: object
+      required: [subject, reason]
+      properties:
+        id: {type: string}
+        proposal_id: {type: string}
+        task_id: {type: string}
+        subject: {type: string}
+        reason: {type: string}
+        risk: {type: string}
+        required_role: {type: string}
+        decision_metadata: {type: object, additionalProperties: true}
+        override_policy: {type: boolean}
+    ApprovalDecisionInput:
+      type: object
+      properties:
+        reason: {type: string}
+        decision_metadata: {type: object, additionalProperties: true}
+        override: {type: boolean}
     ContentionResolutionInput:
       type: object
       required: [resolution]
