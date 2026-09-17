@@ -151,13 +151,16 @@ type ProposalResource struct {
 }
 
 type Vote struct {
-	ID         string
-	ProposalID string
-	AgentID    string
-	Vote       string
-	Confidence float64
-	ReasonMD   string
-	CreatedAt  string
+	ID            string
+	ProposalID    string
+	AgentID       string
+	SessionID     string
+	Vote          string
+	Confidence    float64
+	ReasonMD      string
+	PolicyWeight  int
+	PolicyVersion string
+	CreatedAt     string
 }
 
 type Decision struct {
