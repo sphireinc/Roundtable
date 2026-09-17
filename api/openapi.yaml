@@ -705,6 +705,13 @@ paths:
       summary: Connect to the authenticated live workspace event stream
       description: The server sends a hello control message followed by stable JSON event envelopes. A bounded 64-message subscriber buffer applies drop-on-overflow backpressure so slow clients never block governance writes. Clients should reconnect with last_event_id; when the retained history cannot satisfy replay, the server sends resync_required.
       responses: {'101': {description: WebSocket connection established}, '400': {$ref: '#/components/responses/Problem'}, '401': {$ref: '#/components/responses/Problem'}, '404': {$ref: '#/components/responses/Problem'}}
+  /api/v1/workspaces/{id}/events/snapshot:
+    parameters: [{name: id, in: path, required: true, schema: {type: string}}]
+    get:
+      operationId: getWorkspaceEventSnapshot
+      summary: Return bounded current state for deterministic event resynchronization
+      description: Returns the current event sequence, workspace state, bounded domain counts, version markers, and the resume/retention contract. Clients use this after a sequence gap, restart, retention truncation, or prolonged sleep, then refetch only domains whose markers changed; the endpoint never returns unbounded event history.
+      responses: {'200': {description: Resynchronization snapshot, content: {application/json: {schema: {$ref: '#/components/schemas/EventSnapshot'}}}}, '404': {$ref: '#/components/responses/Problem'}}
   /api/v1/workspaces/{id}/transactions/{transaction_id}/{action}:
     parameters: [{name: id, in: path, required: true, schema: {type: string}}, {name: transaction_id, in: path, required: true, schema: {type: string}}, {name: action, in: path, required: true, schema: {type: string, enum: [stage, validate, apply, cancel, retry, compensate]}}, {$ref: '#/components/parameters/ActorID'}, {$ref: '#/components/parameters/ActorRole'}, {$ref: '#/components/parameters/IdempotencyKey'}]
     post:
@@ -1636,6 +1643,22 @@ components:
         current_sequence: {type: integer, format: int64}
         resumable: {type: boolean}
         reason: {type: string}
+    EventVersionMarker:
+      type: object
+      required: [count]
+      properties:
+        count: {type: integer, minimum: 0}
+        latest_at: {type: string, format: date-time}
+    EventSnapshot:
+      type: object
+      required: [workspace_id, sequence, generated_at, retention, version_markers, snapshot]
+      properties:
+        workspace_id: {type: string}
+        sequence: {type: integer, format: int64, minimum: 0}
+        generated_at: {type: string, format: date-time}
+        retention: {type: object, required: [mode, resume_by, max_replay_events, resync_endpoint], properties: {mode: {type: string}, resume_by: {type: string}, max_replay_events: {type: integer, minimum: 1}, resync_endpoint: {type: string}}}
+        version_markers: {type: object, additionalProperties: {$ref: '#/components/schemas/EventVersionMarker'}}
+        snapshot: {type: object, required: [workspace, counts, run_state], properties: {workspace: {$ref: '#/components/schemas/Workspace'}, counts: {type: object, additionalProperties: {type: integer, minimum: 0}}, run_state: {type: string}}}
     ContentionResolutionInput:
       type: object
       required: [resolution]
