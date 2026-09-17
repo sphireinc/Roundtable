@@ -93,6 +93,43 @@ paths:
             application/json:
               schema: {$ref: '#/components/schemas/Workspace'}
         '404': {$ref: '#/components/responses/Problem'}
+    patch:
+      operationId: updateWorkspace
+      summary: Update workspace metadata
+      parameters:
+        - {$ref: '#/components/parameters/ActorID'}
+        - {$ref: '#/components/parameters/IfMatch'}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/WorkspacePatch'}
+      responses:
+        '200':
+          description: Updated workspace
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Workspace'}
+        '403': {$ref: '#/components/responses/Problem'}
+        '404': {$ref: '#/components/responses/Problem'}
+    delete:
+      operationId: detachWorkspace
+      summary: Detach metadata without deleting the repository
+      parameters:
+        - {$ref: '#/components/parameters/ActorID'}
+      responses:
+        '200':
+          description: Detached workspace and impact report
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [workspace, impact]
+                properties:
+                  workspace: {$ref: '#/components/schemas/Workspace'}
+                  impact: {$ref: '#/components/schemas/WorkspaceImpact'}
+        '403': {$ref: '#/components/responses/Problem'}
+        '404': {$ref: '#/components/responses/Problem'}
   /api/v1/workspaces/{id}/repository:
     parameters:
       - name: id
@@ -307,43 +344,82 @@ paths:
               schema: {$ref: '#/components/schemas/DiagnosticRun'}
         '403': {$ref: '#/components/responses/Problem'}
         '404': {$ref: '#/components/responses/Problem'}
-    patch:
-      operationId: updateWorkspace
-      summary: Update workspace metadata
+  /api/v1/workspaces/{id}/sessions:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: {type: string}
+    get:
+      operationId: listSessions
+      summary: List sessions for a workspace
+      responses:
+        '200': {description: Sessions, content: {application/json: {schema: {$ref: '#/components/schemas/Sessions'}}}}
+    post:
+      operationId: createSession
+      summary: Create and start a governed agent session
       parameters:
         - {$ref: '#/components/parameters/ActorID'}
-        - {$ref: '#/components/parameters/IfMatch'}
+        - {$ref: '#/components/parameters/ActorRole'}
+        - {$ref: '#/components/parameters/IdempotencyKey'}
       requestBody:
         required: true
-        content:
-          application/json:
-            schema: {$ref: '#/components/schemas/WorkspacePatch'}
+        content: {application/json: {schema: {$ref: '#/components/schemas/SessionInput'}}}
       responses:
-        '200':
-          description: Updated workspace
-          content:
-            application/json:
-              schema: {$ref: '#/components/schemas/Workspace'}
+        '201': {description: Session started, content: {application/json: {schema: {$ref: '#/components/schemas/Session'}}}}
         '403': {$ref: '#/components/responses/Problem'}
-        '404': {$ref: '#/components/responses/Problem'}
-    delete:
-      operationId: detachWorkspace
-      summary: Detach metadata without deleting the repository
+  /api/v1/workspaces/{id}/sessions/{session_id}:
+    get:
+      operationId: getSession
+      summary: Get a session
       parameters:
-        - {$ref: '#/components/parameters/ActorID'}
+        - {name: id, in: path, required: true, schema: {type: string}}
+        - {name: session_id, in: path, required: true, schema: {type: string}}
       responses:
-        '200':
-          description: Detached workspace and impact report
-          content:
-            application/json:
-              schema:
-                type: object
-                required: [workspace, impact]
-                properties:
-                  workspace: {$ref: '#/components/schemas/Workspace'}
-                  impact: {$ref: '#/components/schemas/WorkspaceImpact'}
-        '403': {$ref: '#/components/responses/Problem'}
+        '200': {description: Session, content: {application/json: {schema: {$ref: '#/components/schemas/Session'}}}}
         '404': {$ref: '#/components/responses/Problem'}
+  /api/v1/workspaces/{id}/sessions/{session_id}/pause:
+    parameters:
+      - {name: id, in: path, required: true, schema: {type: string}}
+      - {name: session_id, in: path, required: true, schema: {type: string}}
+      - {$ref: '#/components/parameters/ActorID'}
+      - {$ref: '#/components/parameters/ActorRole'}
+    post: {operationId: pauseSession, summary: Pause a session, responses: {'200': {description: Paused, content: {application/json: {schema: {$ref: '#/components/schemas/Session'}}}}, '403': {$ref: '#/components/responses/Problem'}, '409': {$ref: '#/components/responses/Problem'}}}
+  /api/v1/workspaces/{id}/sessions/{session_id}/resume:
+    parameters:
+      - {name: id, in: path, required: true, schema: {type: string}}
+      - {name: session_id, in: path, required: true, schema: {type: string}}
+      - {$ref: '#/components/parameters/ActorID'}
+      - {$ref: '#/components/parameters/ActorRole'}
+      - {$ref: '#/components/parameters/IdempotencyKey'}
+    post: {operationId: resumeSession, summary: Resume a compatible session, responses: {'200': {description: Resuming, content: {application/json: {schema: {$ref: '#/components/schemas/Session'}}}}, '403': {$ref: '#/components/responses/Problem'}, '409': {$ref: '#/components/responses/Problem'}}}
+  /api/v1/workspaces/{id}/sessions/{session_id}/stop:
+    parameters:
+      - {name: id, in: path, required: true, schema: {type: string}}
+      - {name: session_id, in: path, required: true, schema: {type: string}}
+      - {$ref: '#/components/parameters/ActorID'}
+      - {$ref: '#/components/parameters/ActorRole'}
+    post: {operationId: stopSession, summary: Gracefully stop a session, responses: {'200': {description: Stopped, content: {application/json: {schema: {$ref: '#/components/schemas/Session'}}}}, '403': {$ref: '#/components/responses/Problem'}, '409': {$ref: '#/components/responses/Problem'}}}
+  /api/v1/workspaces/{id}/sessions/{session_id}/terminate:
+    parameters:
+      - {name: id, in: path, required: true, schema: {type: string}}
+      - {name: session_id, in: path, required: true, schema: {type: string}}
+      - {$ref: '#/components/parameters/ActorID'}
+      - {$ref: '#/components/parameters/ActorRole'}
+      - {$ref: '#/components/parameters/IdempotencyKey'}
+    post:
+      operationId: terminateSession
+      summary: Terminate a session with impact confirmation
+      requestBody:
+        required: false
+        content: {application/json: {schema: {$ref: '#/components/schemas/SessionTerminationInput'}}}
+      responses: {'200': {description: Terminated, content: {application/json: {schema: {$ref: '#/components/schemas/Session'}}}}, '403': {$ref: '#/components/responses/Problem'}, '409': {$ref: '#/components/responses/Problem'}}
+  /api/v1/workspaces/{id}/sessions/{session_id}/heartbeat:
+    parameters:
+      - {name: id, in: path, required: true, schema: {type: string}}
+      - {name: session_id, in: path, required: true, schema: {type: string}}
+      - {name: status, in: query, schema: {type: string, enum: [starting, active, running, paused, resuming]}}
+    post: {operationId: heartbeatSession, summary: Report session heartbeat, responses: {'200': {description: Heartbeat accepted, content: {application/json: {schema: {$ref: '#/components/schemas/Session'}}}}, '409': {$ref: '#/components/responses/Problem'}}}
 components:
   parameters:
     ActorID:
@@ -552,6 +628,44 @@ components:
         stdout: {type: string}
         stderr: {type: string}
         remediation_hints: {type: array, items: {type: string}}
+    SessionInput:
+      type: object
+      required: [agent_id, run_id, adapter]
+      additionalProperties: false
+      properties:
+        agent_id: {type: string}
+        run_id: {type: string}
+        adapter: {type: string}
+        provider: {type: string}
+        model: {type: string}
+        external_session_id: {type: string}
+    Session:
+      type: object
+      required: [id, agent_id, run_id, adapter, status, started_at]
+      properties:
+        id: {type: string}
+        agent_id: {type: string}
+        run_id: {type: string}
+        adapter: {type: string}
+        provider: {type: string}
+        model: {type: string}
+        external_session_id: {type: string}
+        resume_command_template: {type: string}
+        status: {type: string, enum: [starting, active, running, paused, resuming, stopped, terminated]}
+        started_at: {type: string, format: date-time}
+        last_seen_at: {type: string, format: date-time}
+        ended_at: {type: string, format: date-time}
+    Sessions:
+      type: object
+      required: [items]
+      properties:
+        items: {type: array, items: {$ref: '#/components/schemas/Session'}}
+        next_cursor: {type: [string, 'null']}
+    SessionTerminationInput:
+      type: object
+      additionalProperties: false
+      properties:
+        impact_details: {type: string}
     HealthResponse:
       type: object
       required: [status, version, request_id]

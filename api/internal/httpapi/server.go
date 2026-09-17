@@ -119,6 +119,14 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/v1/workspaces/{id}/agents/{agent_id}/enable", func(w http.ResponseWriter, r *http.Request) { s.setAgentEnabled(w, r, true) })
 	mux.HandleFunc("POST /api/v1/workspaces/{id}/agents/{agent_id}/disable", func(w http.ResponseWriter, r *http.Request) { s.setAgentEnabled(w, r, false) })
 	mux.HandleFunc("POST /api/v1/workspaces/{id}/agents/{agent_id}/diagnostics", s.agentDiagnostics)
+	mux.HandleFunc("GET /api/v1/workspaces/{id}/sessions", s.listSessions)
+	mux.HandleFunc("POST /api/v1/workspaces/{id}/sessions", s.createSession)
+	mux.HandleFunc("GET /api/v1/workspaces/{id}/sessions/{session_id}", s.getSession)
+	mux.HandleFunc("POST /api/v1/workspaces/{id}/sessions/{session_id}/heartbeat", s.heartbeatSession)
+	mux.HandleFunc("POST /api/v1/workspaces/{id}/sessions/{session_id}/pause", s.pauseSession)
+	mux.HandleFunc("POST /api/v1/workspaces/{id}/sessions/{session_id}/resume", s.resumeSession)
+	mux.HandleFunc("POST /api/v1/workspaces/{id}/sessions/{session_id}/stop", s.stopSession)
+	mux.HandleFunc("POST /api/v1/workspaces/{id}/sessions/{session_id}/terminate", s.terminateSession)
 	return requestIDs(securityHeaders(jsonDefaults(mux)))
 }
 
