@@ -583,6 +583,13 @@ paths:
       operationId: getProposalConsensus
       summary: Calculate authoritative policy-weighted consensus
       responses: {'200': {description: Consensus calculation, content: {application/json: {schema: {$ref: '#/components/schemas/Consensus'}}}}, '404': {$ref: '#/components/responses/Problem'}}
+  /api/v1/workspaces/{id}/analytics/consensus:
+    parameters: [{name: id, in: path, required: true, schema: {type: string}}, {name: from, in: query, description: Inclusive UTC RFC3339Nano start; defaults to 24 hours before now., schema: {type: string, format: date-time}}, {name: to, in: query, description: Exclusive UTC RFC3339Nano end; defaults to now. The range must be positive and no longer than 31 days., schema: {type: string, format: date-time}}]
+    get:
+      operationId: getConsensusAnalytics
+      summary: Return bounded consensus analytics for a workspace
+      description: Success and rejection rates use finalized snapshots (approved or blocked) as the denominator. Abstention rate uses all votes in the window. Time-to-consensus is measured from proposal creation to the finalized snapshot; p50 and p95 use nearest-rank interpolation. Quorum failures count pending snapshots observed in the window. Policy overrides count approved human approvals with override_policy set.
+      responses: {'200': {description: Consensus analytics, content: {application/json: {schema: {$ref: '#/components/schemas/ConsensusAnalytics'}}}}, '400': {$ref: '#/components/responses/Problem'}, '404': {$ref: '#/components/responses/Problem'}}
   /api/v1/workspaces/{id}/claims:
     parameters: [{name: id, in: path, required: true, schema: {type: string}}, {name: cursor, in: query, schema: {type: string}}, {name: limit, in: query, schema: {type: integer, minimum: 1, maximum: 200, default: 50}}]
     get:
@@ -1228,6 +1235,34 @@ components:
         policy_version: {type: string}
         explanation: {type: string}
         calculated_at: {type: string, format: date-time}
+    ConsensusAnalytics:
+      type: object
+      required: [window, generated_at, proposal_count, consensus_count, success_rate, rejection_rate, abstention_rate, mean_time_to_consensus_seconds, p50_time_to_consensus_seconds, p95_time_to_consensus_seconds, policy_overrides, human_interventions, quorum_failures, agent_participation]
+      properties:
+        window: {type: object, required: [from, to], properties: {from: {type: string, format: date-time}, to: {type: string, format: date-time}}}
+        generated_at: {type: string, format: date-time}
+        proposal_count: {type: integer, minimum: 0}
+        consensus_count: {type: integer, minimum: 0}
+        success_rate: {type: number, minimum: 0, maximum: 1}
+        rejection_rate: {type: number, minimum: 0, maximum: 1}
+        abstention_rate: {type: number, minimum: 0, maximum: 1}
+        mean_time_to_consensus_seconds: {type: number, minimum: 0}
+        p50_time_to_consensus_seconds: {type: number, minimum: 0}
+        p95_time_to_consensus_seconds: {type: number, minimum: 0}
+        policy_overrides: {type: integer, minimum: 0}
+        human_interventions: {type: integer, minimum: 0}
+        quorum_failures: {type: integer, minimum: 0}
+        agent_participation: {type: array, items: {$ref: '#/components/schemas/AgentParticipation'}}
+    AgentParticipation:
+      type: object
+      required: [agent_id, votes, approvals, rejections, abstentions, vetoes]
+      properties:
+        agent_id: {type: string}
+        votes: {type: integer, minimum: 0}
+        approvals: {type: integer, minimum: 0}
+        rejections: {type: integer, minimum: 0}
+        abstentions: {type: integer, minimum: 0}
+        vetoes: {type: integer, minimum: 0}
     ContentionResolutionInput:
       type: object
       required: [resolution]
