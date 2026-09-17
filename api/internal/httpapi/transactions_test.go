@@ -51,6 +51,18 @@ func TestTransactionAPIRejectsDirectAgentControlAndAuditsHumanTransition(t *test
 	if audits != 1 {
 		t.Fatalf("audits=%d", audits)
 	}
+	req = httptest.NewRequest(http.MethodGet, "/api/v1/workspaces/ws-tx/transactions/TX-test/phases", nil)
+	res = httptest.NewRecorder()
+	server.Handler().ServeHTTP(res, req)
+	if res.Code != http.StatusOK || !contains(res.Body.String(), `"phase":"cancel"`) {
+		t.Fatalf("phases=%d %s", res.Code, res.Body.String())
+	}
+	req = httptest.NewRequest(http.MethodGet, "/api/v1/workspaces/ws-tx/transactions/TX-test/recovery", nil)
+	res = httptest.NewRecorder()
+	server.Handler().ServeHTTP(res, req)
+	if res.Code != http.StatusOK || !contains(res.Body.String(), `"compensate"`) {
+		t.Fatalf("recovery=%d %s", res.Code, res.Body.String())
+	}
 	req = httptest.NewRequest(http.MethodPost, "/api/v1/workspaces/ws-tx/transactions/TX-test/compensate", nil)
 	req.Header.Set("X-Actor-ID", "human")
 	req.Header.Set("X-Actor-Role", "human")
