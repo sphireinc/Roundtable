@@ -698,6 +698,13 @@ paths:
       summary: List normalized workspace activity events
       description: Each item contains a stable event type, normalized category/entity linkage, concise display title, and redacted metadata; clients do not parse log strings. Results are cursor-paginated.
       responses: {'200': {description: Activity feed, content: {application/json: {schema: {$ref: '#/components/schemas/ActivityFeed'}}}}, '404': {$ref: '#/components/responses/Problem'}}
+  /api/v1/workspaces/{id}/events/ws:
+    parameters: [{name: id, in: path, required: true, schema: {type: string}}, {name: last_event_id, in: query, description: Resume cursor from the last event received., schema: {type: integer, format: int64, minimum: 0}}, {name: actor_id, in: query, description: Authenticated actor identity for clients unable to set headers., schema: {type: string}}]
+    get:
+      operationId: connectWorkspaceEvents
+      summary: Connect to the authenticated live workspace event stream
+      description: The server sends a hello control message followed by stable JSON event envelopes. A bounded 64-message subscriber buffer applies drop-on-overflow backpressure so slow clients never block governance writes. Clients should reconnect with last_event_id; when the retained history cannot satisfy replay, the server sends resync_required.
+      responses: {'101': {description: WebSocket connection established}, '400': {$ref: '#/components/responses/Problem'}, '401': {$ref: '#/components/responses/Problem'}, '404': {$ref: '#/components/responses/Problem'}}
   /api/v1/workspaces/{id}/transactions/{transaction_id}/{action}:
     parameters: [{name: id, in: path, required: true, schema: {type: string}}, {name: transaction_id, in: path, required: true, schema: {type: string}}, {name: action, in: path, required: true, schema: {type: string, enum: [stage, validate, apply, cancel, retry, compensate]}}, {$ref: '#/components/parameters/ActorID'}, {$ref: '#/components/parameters/ActorRole'}, {$ref: '#/components/parameters/IdempotencyKey'}]
     post:
@@ -1606,6 +1613,29 @@ components:
       properties:
         items: {type: array, items: {$ref: '#/components/schemas/ActivityItem'}}
         next_cursor: {type: [string, 'null']}
+    LiveEventEnvelope:
+      type: object
+      required: [event_id, workspace_id, sequence, type, occurred_at, payload]
+      properties:
+        event_id: {type: integer, format: int64}
+        workspace_id: {type: string}
+        sequence: {type: integer, format: int64}
+        type: {type: string}
+        occurred_at: {type: string, format: date-time}
+        actor: {type: string}
+        entity_type: {type: string}
+        entity_id: {type: string}
+        payload: {type: object, additionalProperties: true}
+    LiveEventControl:
+      type: object
+      required: [kind, workspace_id]
+      properties:
+        kind: {type: string, enum: [hello, ping, resync_required]}
+        schema_version: {type: string}
+        workspace_id: {type: string}
+        current_sequence: {type: integer, format: int64}
+        resumable: {type: boolean}
+        reason: {type: string}
     ContentionResolutionInput:
       type: object
       required: [resolution]
