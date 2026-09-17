@@ -141,6 +141,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/v1/workspaces/{id}/deliberations/{deliberation_id}/resume", s.transitionDeliberation)
 	mux.HandleFunc("POST /api/v1/workspaces/{id}/deliberations/{deliberation_id}/terminate", s.transitionDeliberation)
 	mux.HandleFunc("POST /api/v1/workspaces/{id}/deliberations/{deliberation_id}/messages", s.addDeliberationMessage)
+	mux.HandleFunc("GET /api/v1/workspaces/{id}/deliberations/{deliberation_id}/transcript", s.listTranscript)
+	mux.HandleFunc("GET /api/v1/workspaces/{id}/deliberations/{deliberation_id}/transcript/{entry_id}", s.getTranscriptEntry)
 	return requestIDs(securityHeaders(jsonDefaults(mux)))
 }
 
