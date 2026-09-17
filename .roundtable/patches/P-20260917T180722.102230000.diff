@@ -1,0 +1,417 @@
+diff --git a/api/internal/httpapi/server.go b/api/internal/httpapi/server.go
+index e62aded..97ee95e 100644
+--- a/api/internal/httpapi/server.go
++++ b/api/internal/httpapi/server.go
+@@ -143,6 +143,10 @@ func (s *Server) Handler() http.Handler {
+ 	mux.HandleFunc("POST /api/v1/workspaces/{id}/deliberations/{deliberation_id}/messages", s.addDeliberationMessage)
+ 	mux.HandleFunc("GET /api/v1/workspaces/{id}/deliberations/{deliberation_id}/transcript", s.listTranscript)
+ 	mux.HandleFunc("GET /api/v1/workspaces/{id}/deliberations/{deliberation_id}/transcript/{entry_id}", s.getTranscriptEntry)
++	mux.HandleFunc("GET /api/v1/workspaces/{id}/proposals", s.listProposalsAPI)
++	mux.HandleFunc("POST /api/v1/workspaces/{id}/proposals/internal", s.createInternalProposal)
++	mux.HandleFunc("GET /api/v1/workspaces/{id}/proposals/{proposal_id}", s.getProposalAPI)
++	mux.HandleFunc("POST /api/v1/workspaces/{id}/proposals/{proposal_id}/{action}", s.transitionProposal)
+ 	return requestIDs(securityHeaders(jsonDefaults(mux)))
+ }
+ 
+diff --git a/api/openapi.yaml b/api/openapi.yaml
+index 28b69ab..b5fd7ec 100644
+--- a/api/openapi.yaml
++++ b/api/openapi.yaml
+@@ -508,6 +508,32 @@ paths:
+       operationId: getDeliberationTranscriptEntry
+       summary: Deep-link to one transcript entry
+       responses: {'200': {description: Transcript entry, content: {application/json: {schema: {$ref: '#/components/schemas/TranscriptEntry'}}}}, '404': {$ref: '#/components/responses/Problem'}}
++  /api/v1/workspaces/{id}/proposals:
++    parameters: [{name: id, in: path, required: true, schema: {type: string}}, {name: cursor, in: query, schema: {type: string}}, {name: limit, in: query, schema: {type: integer, minimum: 1, maximum: 200, default: 50}}]
++    get:
++      operationId: listProposals
++      summary: List workspace-scoped proposals
++      responses: {'200': {description: Proposals, content: {application/json: {schema: {$ref: '#/components/schemas/Proposals'}}}}, '404': {$ref: '#/components/responses/Problem'}}
++  /api/v1/workspaces/{id}/proposals/internal:
++    parameters: [{name: id, in: path, required: true, schema: {type: string}}, {$ref: '#/components/parameters/IdempotencyKey'}]
++    post:
++      operationId: createInternalProposal
++      summary: Create a proposal through the orchestrator boundary
++      parameters: [{name: X-Roundtable-Orchestrator, in: header, required: true, schema: {type: string, enum: ['true']}}]
++      requestBody: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/ProposalInput'}}}}
++      responses: {'201': {description: Created, content: {application/json: {schema: {$ref: '#/components/schemas/Proposal'}}}}, '400': {$ref: '#/components/responses/Problem'}, '403': {$ref: '#/components/responses/Problem'}, '409': {$ref: '#/components/responses/Problem'}}
++  /api/v1/workspaces/{id}/proposals/{proposal_id}:
++    parameters: [{name: id, in: path, required: true, schema: {type: string}}, {name: proposal_id, in: path, required: true, schema: {type: string}}]
++    get:
++      operationId: getProposal
++      summary: Get a workspace-scoped proposal
++      responses: {'200': {description: Proposal, content: {application/json: {schema: {$ref: '#/components/schemas/Proposal'}}}}, '404': {$ref: '#/components/responses/Problem'}}
++  /api/v1/workspaces/{id}/proposals/{proposal_id}/{action}:
++    parameters: [{name: id, in: path, required: true, schema: {type: string}}, {name: proposal_id, in: path, required: true, schema: {type: string}}, {name: action, in: path, required: true, schema: {type: string, enum: [request-review, reject, withdraw]}}, {$ref: '#/components/parameters/ActorID'}, {$ref: '#/components/parameters/ActorRole'}, {$ref: '#/components/parameters/IdempotencyKey'}]
++    post:
++      operationId: transitionProposal
++      summary: Transition a proposal through a governed state change
++      responses: {'200': {description: Updated proposal, content: {application/json: {schema: {$ref: '#/components/schemas/Proposal'}}}}, '403': {$ref: '#/components/responses/Problem'}, '409': {$ref: '#/components/responses/Problem'}}
+ components:
+   parameters:
+     ActorID:
+@@ -881,6 +907,46 @@ components:
+       properties:
+         items: {type: array, items: {$ref: '#/components/schemas/TranscriptEntry'}}
+         next_cursor: {type: [string, 'null']}
++    ProposalInput:
++      type: object
++      required: [title, summary, patch_path]
++      additionalProperties: false
++      properties:
++        proposal_id: {type: string}
++        deliberation_id: {type: string}
++        proposer_session_id: {type: string}
++        title: {type: string}
++        summary: {type: string}
++        patch_path: {type: string}
++        base_revision: {type: string}
++        risk: {type: string, enum: [normal, high]}
++        resource_ids: {type: array, items: {type: string}}
++    Proposal:
++      type: object
++      required: [proposal_id, workspace_id, title, summary, patch_path, state, vote_state, policy_state, approval_state, transaction_state, risk, created_at, updated_at]
++      properties:
++        proposal_id: {type: string}
++        workspace_id: {type: string}
++        deliberation_id: {type: string}
++        proposer_session_id: {type: string}
++        title: {type: string}
++        summary: {type: string}
++        patch_path: {type: string}
++        base_revision: {type: string}
++        state: {type: string, enum: [pending, in_review, accepted, rejected, withdrawn]}
++        vote_state: {type: string}
++        policy_state: {type: string}
++        approval_state: {type: string}
++        transaction_state: {type: string}
++        risk: {type: string}
++        created_at: {type: string, format: date-time}
++        updated_at: {type: string, format: date-time}
++    Proposals:
++      type: object
++      required: [items]
++      properties:
++        items: {type: array, items: {$ref: '#/components/schemas/Proposal'}}
++        next_cursor: {type: [string, 'null']}
+     HealthResponse:
+       type: object
+       required: [status, version, request_id]
+diff --git a/internal/db/db.go b/internal/db/db.go
+index 8ef7e20..bce97cb 100644
+--- a/internal/db/db.go
++++ b/internal/db/db.go
+@@ -274,6 +274,11 @@ func ensureWorkspaceHardening(db *sql.DB) error {
+ 			return err
+ 		}
+ 	}
++	for _, column := range []string{"deliberation_id TEXT", "proposer_session_id TEXT", "base_revision TEXT", "vote_state TEXT NOT NULL DEFAULT 'pending'", "policy_state TEXT NOT NULL DEFAULT 'pending'", "approval_state TEXT NOT NULL DEFAULT 'pending'", "transaction_state TEXT NOT NULL DEFAULT 'not_started'", "updated_at TEXT"} {
++		if err := addColumnIfMissing(db, "proposals", column); err != nil {
++			return err
++		}
++	}
+ 	for _, index := range []string{
+ 		"CREATE INDEX IF NOT EXISTS idx_workspace_sessions_status ON agent_sessions(workspace_id, status)",
+ 		"CREATE INDEX IF NOT EXISTS idx_workspace_claims_status ON claims(workspace_id, status)",
+diff --git a/api/internal/httpapi/proposals.go b/api/internal/httpapi/proposals.go
+new file mode 100644
+index 0000000..5107e92
+--- /dev/null
++++ b/api/internal/httpapi/proposals.go
+@@ -0,0 +1,225 @@
++package httpapi
++
++import (
++	"context"
++	"database/sql"
++	"encoding/json"
++	"fmt"
++	"net/http"
++	"strings"
++	"time"
++
++	"roundtable/internal/db"
++)
++
++type proposalResponse struct {
++	ProposalID        string `json:"proposal_id"`
++	WorkspaceID       string `json:"workspace_id"`
++	DeliberationID    string `json:"deliberation_id,omitempty"`
++	ProposerSessionID string `json:"proposer_session_id,omitempty"`
++	Title             string `json:"title"`
++	Summary           string `json:"summary"`
++	PatchPath         string `json:"patch_path"`
++	BaseRevision      string `json:"base_revision,omitempty"`
++	State             string `json:"state"`
++	VoteState         string `json:"vote_state"`
++	PolicyState       string `json:"policy_state"`
++	ApprovalState     string `json:"approval_state"`
++	TransactionState  string `json:"transaction_state"`
++	Risk              string `json:"risk"`
++	CreatedAt         string `json:"created_at"`
++	UpdatedAt         string `json:"updated_at"`
++}
++type proposalInput struct {
++	ProposalID        string   `json:"proposal_id"`
++	DeliberationID    string   `json:"deliberation_id"`
++	ProposerSessionID string   `json:"proposer_session_id"`
++	Title             string   `json:"title"`
++	Summary           string   `json:"summary"`
++	PatchPath         string   `json:"patch_path"`
++	BaseRevision      string   `json:"base_revision"`
++	Risk              string   `json:"risk"`
++	ResourceIDs       []string `json:"resource_ids"`
++}
++
++func (s *Server) listProposalsAPI(w http.ResponseWriter, r *http.Request) {
++	workspace, err := s.workspace(r)
++	if err != nil {
++		writeWorkspaceError(w, r, err)
++		return
++	}
++	rows, err := s.config.Store.DB().QueryContext(r.Context(), `SELECT id FROM proposals WHERE workspace_id = ? ORDER BY created_at, id`, workspace.ID)
++	if err != nil {
++		WriteProblem(w, r, 500, "proposal_list_failed", "Unable to list proposals", err.Error())
++		return
++	}
++	defer rows.Close()
++	items := make([]proposalResponse, 0)
++	for rows.Next() {
++		var id string
++		if err := rows.Scan(&id); err != nil {
++			WriteProblem(w, r, 500, "proposal_list_failed", "Unable to list proposals", err.Error())
++			return
++		}
++		value, err := s.readProposal(r.Context(), workspace.ID, id)
++		if err == nil {
++			items = append(items, value)
++		}
++	}
++	if err := rows.Err(); err != nil {
++		WriteProblem(w, r, 500, "proposal_list_failed", "Unable to list proposals", err.Error())
++		return
++	}
++	writePage(w, r, items)
++}
++
++func (s *Server) getProposalAPI(w http.ResponseWriter, r *http.Request) {
++	workspace, err := s.workspace(r)
++	if err != nil {
++		writeWorkspaceError(w, r, err)
++		return
++	}
++	value, err := s.readProposal(r.Context(), workspace.ID, r.PathValue("proposal_id"))
++	if err != nil {
++		WriteProblem(w, r, 404, "proposal_not_found", "Proposal not found", err.Error())
++		return
++	}
++	writeJSON(w, 200, value)
++}
++
++func (s *Server) createInternalProposal(w http.ResponseWriter, r *http.Request) {
++	if r.Header.Get("X-Roundtable-Orchestrator") != "true" {
++		WriteProblem(w, r, 403, "orchestrator_only", "Orchestrator authorization required", "Browser clients cannot create proposals directly")
++		return
++	}
++	if strings.TrimSpace(r.Header.Get("Idempotency-Key")) == "" {
++		WriteProblem(w, r, 400, "idempotency_key_required", "Idempotency key required", "Proposal creation requires Idempotency-Key")
++		return
++	}
++	workspace, err := s.workspace(r)
++	if err != nil {
++		writeWorkspaceError(w, r, err)
++		return
++	}
++	var input proposalInput
++	if err := decodeJSON(r, &input); err != nil {
++		WriteProblem(w, r, 400, "invalid_proposal", "Invalid proposal request", err.Error())
++		return
++	}
++	input.Title, input.Summary, input.PatchPath = strings.TrimSpace(input.Title), redactText(input.Summary), strings.TrimSpace(input.PatchPath)
++	if input.Title == "" || input.Summary == "" || input.PatchPath == "" {
++		WriteProblem(w, r, 400, "invalid_proposal", "Invalid proposal request", "title, summary, and patch_path are required")
++		return
++	}
++	if strings.Contains(input.PatchPath, "..") || strings.HasPrefix(input.PatchPath, "/") {
++		WriteProblem(w, r, 400, "invalid_patch_path", "Invalid patch path", "patch_path must be repository-relative")
++		return
++	}
++	id := input.ProposalID
++	if id == "" {
++		id = fmt.Sprintf("proposal-%d", time.Now().UnixNano())
++	}
++	now := time.Now().UTC().Format(time.RFC3339Nano)
++	if input.Risk == "" {
++		input.Risk = "normal"
++	}
++	tx, err := s.config.Store.DB().BeginTx(r.Context(), nil)
++	if err != nil {
++		WriteProblem(w, r, 500, "proposal_create_failed", "Unable to create proposal", err.Error())
++		return
++	}
++	defer tx.Rollback()
++	_, err = tx.ExecContext(r.Context(), `INSERT INTO proposals (id, task_id, agent_id, title, summary_md, patch_path, status, risk, workspace_id, deliberation_id, proposer_session_id, base_revision, vote_state, policy_state, approval_state, transaction_state, updated_at) VALUES (?, '', '', ?, ?, ?, 'pending', ?, ?, ?, ?, ?, 'pending', 'pending', 'pending', 'not_started', ?)`, id, input.Title, input.Summary, input.PatchPath, input.Risk, workspace.ID, input.DeliberationID, input.ProposerSessionID, input.BaseRevision, now)
++	if err == nil {
++		for _, resourceID := range input.ResourceIDs {
++			_, err = tx.ExecContext(r.Context(), `INSERT INTO proposal_resources (proposal_id, resource_id) VALUES (?, ?)`, id, resourceID)
++			if err != nil {
++				break
++			}
++		}
++	}
++	if err == nil {
++		payload, _ := json.Marshal(map[string]string{"state": "pending", "patch_path": input.PatchPath})
++		err = insertProposalAudit(r.Context(), tx, workspace.ID, r.Header.Get("X-Actor-ID"), id, requestID(r.Context()), "proposal.created", payload)
++	}
++	if err != nil {
++		WriteProblem(w, r, 409, "proposal_create_conflict", "Proposal could not be created", err.Error())
++		return
++	}
++	if err = tx.Commit(); err != nil {
++		WriteProblem(w, r, 409, "proposal_create_conflict", "Proposal could not be created", err.Error())
++		return
++	}
++	value, _ := s.readProposal(r.Context(), workspace.ID, id)
++	_, _ = s.config.Store.AppendEvent(r.Context(), db.Event{RunID: id, Type: "proposal.created", ActorID: r.Header.Get("X-Actor-ID"), PayloadJSON: fmt.Sprintf(`{"proposal_id":%q,"request_id":%q}`, id, requestID(r.Context()))})
++	writeJSON(w, 201, value)
++}
++
++func (s *Server) transitionProposal(w http.ResponseWriter, r *http.Request) {
++	if !humanAuthorized(r) {
++		WriteProblem(w, r, 403, "forbidden", "Human authorization required", "Set X-Actor-ID and X-Actor-Role to a human role")
++		return
++	}
++	if strings.TrimSpace(r.Header.Get("Idempotency-Key")) == "" {
++		WriteProblem(w, r, 400, "idempotency_key_required", "Idempotency key required", "Proposal transitions require Idempotency-Key")
++		return
++	}
++	workspace, err := s.workspace(r)
++	if err != nil {
++		writeWorkspaceError(w, r, err)
++		return
++	}
++	value, err := s.readProposal(r.Context(), workspace.ID, r.PathValue("proposal_id"))
++	if err != nil {
++		WriteProblem(w, r, 404, "proposal_not_found", "Proposal not found", err.Error())
++		return
++	}
++	action := r.PathValue("action")
++	target, ok := map[string]string{"request-review": "in_review", "reject": "rejected", "withdraw": "withdrawn"}[action]
++	if !ok {
++		WriteProblem(w, r, 400, "invalid_proposal_transition", "Invalid proposal transition", action)
++		return
++	}
++	allowed := map[string]map[string]bool{"request-review": {"pending": true}, "reject": {"pending": true, "in_review": true}, "withdraw": {"pending": true, "in_review": true}}
++	if !allowed[action][value.State] {
++		WriteProblem(w, r, 409, "illegal_proposal_transition", "Illegal proposal transition", value.State+" cannot transition to "+target)
++		return
++	}
++	now := time.Now().UTC().Format(time.RFC3339Nano)
++	tx, err := s.config.Store.DB().BeginTx(r.Context(), nil)
++	if err != nil {
++		WriteProblem(w, r, 500, "proposal_transition_failed", "Unable to transition proposal", err.Error())
++		return
++	}
++	defer tx.Rollback()
++	_, err = tx.ExecContext(r.Context(), `UPDATE proposals SET status = ?, updated_at = ? WHERE id = ? AND workspace_id = ? AND status = ?`, target, now, value.ProposalID, workspace.ID, value.State)
++	if err == nil {
++		payload, _ := json.Marshal(map[string]string{"before": value.State, "after": target})
++		err = insertProposalAudit(r.Context(), tx, workspace.ID, r.Header.Get("X-Actor-ID"), value.ProposalID, requestID(r.Context()), "proposal."+strings.ReplaceAll(action, "-", "_"), payload)
++	}
++	if err != nil {
++		WriteProblem(w, r, 409, "proposal_transition_conflict", "Proposal transition failed", err.Error())
++		return
++	}
++	if err = tx.Commit(); err != nil {
++		WriteProblem(w, r, 409, "proposal_transition_conflict", "Proposal transition failed", err.Error())
++		return
++	}
++	value, _ = s.readProposal(r.Context(), workspace.ID, value.ProposalID)
++	_, _ = s.config.Store.AppendEvent(r.Context(), db.Event{RunID: value.ProposalID, Type: "proposal." + action, ActorID: r.Header.Get("X-Actor-ID"), PayloadJSON: fmt.Sprintf(`{"proposal_id":%q,"state":%q}`, value.ProposalID, value.State)})
++	writeJSON(w, 200, value)
++}
++
++func (s *Server) readProposal(ctx context.Context, workspaceID, id string) (proposalResponse, error) {
++	row := s.config.Store.DB().QueryRowContext(ctx, `SELECT id, workspace_id, COALESCE(deliberation_id,''), COALESCE(proposer_session_id,''), title, summary_md, patch_path, COALESCE(base_revision,''), status, COALESCE(vote_state,'pending'), COALESCE(policy_state,'pending'), COALESCE(approval_state,'pending'), COALESCE(transaction_state,'not_started'), risk, created_at, COALESCE(updated_at, created_at) FROM proposals WHERE id = ? AND workspace_id = ?`, id, workspaceID)
++	var value proposalResponse
++	if err := row.Scan(&value.ProposalID, &value.WorkspaceID, &value.DeliberationID, &value.ProposerSessionID, &value.Title, &value.Summary, &value.PatchPath, &value.BaseRevision, &value.State, &value.VoteState, &value.PolicyState, &value.ApprovalState, &value.TransactionState, &value.Risk, &value.CreatedAt, &value.UpdatedAt); err != nil {
++		return value, err
++	}
++	value.Title, value.Summary, value.PatchPath = redactText(value.Title), redactText(value.Summary), redactText(value.PatchPath)
++	return value, nil
++}
++func insertProposalAudit(ctx context.Context, tx *sql.Tx, workspaceID, actor, entity, request, action string, payload []byte) error {
++	_, err := tx.ExecContext(ctx, `INSERT INTO audit_events (workspace_id, actor_id, action, entity_type, entity_id, request_id, payload_json) VALUES (?, ?, ?, 'proposal', ?, ?, ?)`, workspaceID, actor, action, entity, nullString(request), string(payload))
++	return err
++}
+diff --git a/api/internal/httpapi/proposals_test.go b/api/internal/httpapi/proposals_test.go
+new file mode 100644
+index 0000000..dea2ada
+--- /dev/null
++++ b/api/internal/httpapi/proposals_test.go
+@@ -0,0 +1,65 @@
++package httpapi
++
++import (
++	"bytes"
++	"net/http"
++	"net/http/httptest"
++	"path/filepath"
++	"testing"
++
++	"roundtable/internal/db"
++)
++
++func TestProposalAPIOrchestratorCreationAndGovernedTransitions(t *testing.T) {
++	sqlDB, err := db.Open(filepath.Join(t.TempDir(), "roundtable.db"))
++	if err != nil {
++		t.Fatal(err)
++	}
++	defer sqlDB.Close()
++	store := db.NewStore(sqlDB, nil)
++	if err := store.UpsertWorkspace(t.Context(), db.Workspace{ID: "ws-proposal", DisplayName: "Proposal", RootPath: t.TempDir(), Status: "active", Revision: 1}); err != nil {
++		t.Fatal(err)
++	}
++	server := NewServer(Config{Store: store})
++	req := httptest.NewRequest(http.MethodPost, "/api/v1/workspaces/ws-proposal/proposals/internal", bytes.NewBufferString(`{"title":"Safe proposal","summary":"summary","patch_path":".roundtable/patches/P.diff","base_revision":"abc"}`))
++	req.Header.Set("Idempotency-Key", "create-1")
++	res := httptest.NewRecorder()
++	server.Handler().ServeHTTP(res, req)
++	if res.Code != http.StatusForbidden {
++		t.Fatalf("unauthorized create = %d", res.Code)
++	}
++	req = httptest.NewRequest(http.MethodPost, "/api/v1/workspaces/ws-proposal/proposals/internal", bytes.NewBufferString(`{"proposal_id":"P-test","title":"Safe proposal","summary":"summary token=hidden","patch_path":".roundtable/patches/P.diff","base_revision":"abc"}`))
++	req.Header.Set("X-Roundtable-Orchestrator", "true")
++	req.Header.Set("X-Actor-ID", "orchestrator")
++	req.Header.Set("Idempotency-Key", "create-1")
++	res = httptest.NewRecorder()
++	server.Handler().ServeHTTP(res, req)
++	if res.Code != http.StatusCreated || contains(res.Body.String(), "hidden") {
++		t.Fatalf("create = %d %s", res.Code, res.Body.String())
++	}
++	post := func(action string) *httptest.ResponseRecorder {
++		req := httptest.NewRequest(http.MethodPost, "/api/v1/workspaces/ws-proposal/proposals/P-test/"+action, nil)
++		req.Header.Set("X-Actor-ID", "human")
++		req.Header.Set("X-Actor-Role", "human")
++		req.Header.Set("Idempotency-Key", action)
++		res := httptest.NewRecorder()
++		server.Handler().ServeHTTP(res, req)
++		return res
++	}
++	if res := post("request-review"); res.Code != http.StatusOK || !contains(res.Body.String(), `"state":"in_review"`) {
++		t.Fatalf("review = %d %s", res.Code, res.Body.String())
++	}
++	if res := post("request-review"); res.Code != http.StatusConflict || !contains(res.Body.String(), "illegal_proposal_transition") {
++		t.Fatalf("illegal = %d %s", res.Code, res.Body.String())
++	}
++	if res := post("reject"); res.Code != http.StatusOK || !contains(res.Body.String(), `"state":"rejected"`) {
++		t.Fatalf("reject = %d %s", res.Code, res.Body.String())
++	}
++	var audits int
++	if err := sqlDB.QueryRow("SELECT COUNT(*) FROM audit_events WHERE entity_type = 'proposal'").Scan(&audits); err != nil {
++		t.Fatal(err)
++	}
++	if audits < 3 {
++		t.Fatalf("audits = %d", audits)
++	}
++}

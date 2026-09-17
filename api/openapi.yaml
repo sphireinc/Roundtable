@@ -508,6 +508,32 @@ paths:
       operationId: getDeliberationTranscriptEntry
       summary: Deep-link to one transcript entry
       responses: {'200': {description: Transcript entry, content: {application/json: {schema: {$ref: '#/components/schemas/TranscriptEntry'}}}}, '404': {$ref: '#/components/responses/Problem'}}
+  /api/v1/workspaces/{id}/proposals:
+    parameters: [{name: id, in: path, required: true, schema: {type: string}}, {name: cursor, in: query, schema: {type: string}}, {name: limit, in: query, schema: {type: integer, minimum: 1, maximum: 200, default: 50}}]
+    get:
+      operationId: listProposals
+      summary: List workspace-scoped proposals
+      responses: {'200': {description: Proposals, content: {application/json: {schema: {$ref: '#/components/schemas/Proposals'}}}}, '404': {$ref: '#/components/responses/Problem'}}
+  /api/v1/workspaces/{id}/proposals/internal:
+    parameters: [{name: id, in: path, required: true, schema: {type: string}}, {$ref: '#/components/parameters/IdempotencyKey'}]
+    post:
+      operationId: createInternalProposal
+      summary: Create a proposal through the orchestrator boundary
+      parameters: [{name: X-Roundtable-Orchestrator, in: header, required: true, schema: {type: string, enum: ['true']}}]
+      requestBody: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/ProposalInput'}}}}
+      responses: {'201': {description: Created, content: {application/json: {schema: {$ref: '#/components/schemas/Proposal'}}}}, '400': {$ref: '#/components/responses/Problem'}, '403': {$ref: '#/components/responses/Problem'}, '409': {$ref: '#/components/responses/Problem'}}
+  /api/v1/workspaces/{id}/proposals/{proposal_id}:
+    parameters: [{name: id, in: path, required: true, schema: {type: string}}, {name: proposal_id, in: path, required: true, schema: {type: string}}]
+    get:
+      operationId: getProposal
+      summary: Get a workspace-scoped proposal
+      responses: {'200': {description: Proposal, content: {application/json: {schema: {$ref: '#/components/schemas/Proposal'}}}}, '404': {$ref: '#/components/responses/Problem'}}
+  /api/v1/workspaces/{id}/proposals/{proposal_id}/{action}:
+    parameters: [{name: id, in: path, required: true, schema: {type: string}}, {name: proposal_id, in: path, required: true, schema: {type: string}}, {name: action, in: path, required: true, schema: {type: string, enum: [request-review, reject, withdraw]}}, {$ref: '#/components/parameters/ActorID'}, {$ref: '#/components/parameters/ActorRole'}, {$ref: '#/components/parameters/IdempotencyKey'}]
+    post:
+      operationId: transitionProposal
+      summary: Transition a proposal through a governed state change
+      responses: {'200': {description: Updated proposal, content: {application/json: {schema: {$ref: '#/components/schemas/Proposal'}}}}, '403': {$ref: '#/components/responses/Problem'}, '409': {$ref: '#/components/responses/Problem'}}
 components:
   parameters:
     ActorID:
@@ -880,6 +906,46 @@ components:
       required: [items]
       properties:
         items: {type: array, items: {$ref: '#/components/schemas/TranscriptEntry'}}
+        next_cursor: {type: [string, 'null']}
+    ProposalInput:
+      type: object
+      required: [title, summary, patch_path]
+      additionalProperties: false
+      properties:
+        proposal_id: {type: string}
+        deliberation_id: {type: string}
+        proposer_session_id: {type: string}
+        title: {type: string}
+        summary: {type: string}
+        patch_path: {type: string}
+        base_revision: {type: string}
+        risk: {type: string, enum: [normal, high]}
+        resource_ids: {type: array, items: {type: string}}
+    Proposal:
+      type: object
+      required: [proposal_id, workspace_id, title, summary, patch_path, state, vote_state, policy_state, approval_state, transaction_state, risk, created_at, updated_at]
+      properties:
+        proposal_id: {type: string}
+        workspace_id: {type: string}
+        deliberation_id: {type: string}
+        proposer_session_id: {type: string}
+        title: {type: string}
+        summary: {type: string}
+        patch_path: {type: string}
+        base_revision: {type: string}
+        state: {type: string, enum: [pending, in_review, accepted, rejected, withdrawn]}
+        vote_state: {type: string}
+        policy_state: {type: string}
+        approval_state: {type: string}
+        transaction_state: {type: string}
+        risk: {type: string}
+        created_at: {type: string, format: date-time}
+        updated_at: {type: string, format: date-time}
+    Proposals:
+      type: object
+      required: [items]
+      properties:
+        items: {type: array, items: {$ref: '#/components/schemas/Proposal'}}
         next_cursor: {type: [string, 'null']}
     HealthResponse:
       type: object
