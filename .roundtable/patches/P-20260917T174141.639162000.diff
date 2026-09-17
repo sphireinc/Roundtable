@@ -1,0 +1,654 @@
+diff --git a/api/internal/httpapi/server.go b/api/internal/httpapi/server.go
+index 734ff3c..541c90e 100644
+--- a/api/internal/httpapi/server.go
++++ b/api/internal/httpapi/server.go
+@@ -119,6 +119,14 @@ func (s *Server) Handler() http.Handler {
+ 	mux.HandleFunc("POST /api/v1/workspaces/{id}/agents/{agent_id}/enable", func(w http.ResponseWriter, r *http.Request) { s.setAgentEnabled(w, r, true) })
+ 	mux.HandleFunc("POST /api/v1/workspaces/{id}/agents/{agent_id}/disable", func(w http.ResponseWriter, r *http.Request) { s.setAgentEnabled(w, r, false) })
+ 	mux.HandleFunc("POST /api/v1/workspaces/{id}/agents/{agent_id}/diagnostics", s.agentDiagnostics)
++	mux.HandleFunc("GET /api/v1/workspaces/{id}/sessions", s.listSessions)
++	mux.HandleFunc("POST /api/v1/workspaces/{id}/sessions", s.createSession)
++	mux.HandleFunc("GET /api/v1/workspaces/{id}/sessions/{session_id}", s.getSession)
++	mux.HandleFunc("POST /api/v1/workspaces/{id}/sessions/{session_id}/heartbeat", s.heartbeatSession)
++	mux.HandleFunc("POST /api/v1/workspaces/{id}/sessions/{session_id}/pause", s.pauseSession)
++	mux.HandleFunc("POST /api/v1/workspaces/{id}/sessions/{session_id}/resume", s.resumeSession)
++	mux.HandleFunc("POST /api/v1/workspaces/{id}/sessions/{session_id}/stop", s.stopSession)
++	mux.HandleFunc("POST /api/v1/workspaces/{id}/sessions/{session_id}/terminate", s.terminateSession)
+ 	return requestIDs(securityHeaders(jsonDefaults(mux)))
+ }
+ 
+diff --git a/api/openapi.yaml b/api/openapi.yaml
+index 720d279..c8a2479 100644
+--- a/api/openapi.yaml
++++ b/api/openapi.yaml
+@@ -93,6 +93,43 @@ paths:
+             application/json:
+               schema: {$ref: '#/components/schemas/Workspace'}
+         '404': {$ref: '#/components/responses/Problem'}
++    patch:
++      operationId: updateWorkspace
++      summary: Update workspace metadata
++      parameters:
++        - {$ref: '#/components/parameters/ActorID'}
++        - {$ref: '#/components/parameters/IfMatch'}
++      requestBody:
++        required: true
++        content:
++          application/json:
++            schema: {$ref: '#/components/schemas/WorkspacePatch'}
++      responses:
++        '200':
++          description: Updated workspace
++          content:
++            application/json:
++              schema: {$ref: '#/components/schemas/Workspace'}
++        '403': {$ref: '#/components/responses/Problem'}
++        '404': {$ref: '#/components/responses/Problem'}
++    delete:
++      operationId: detachWorkspace
++      summary: Detach metadata without deleting the repository
++      parameters:
++        - {$ref: '#/components/parameters/ActorID'}
++      responses:
++        '200':
++          description: Detached workspace and impact report
++          content:
++            application/json:
++              schema:
++                type: object
++                required: [workspace, impact]
++                properties:
++                  workspace: {$ref: '#/components/schemas/Workspace'}
++                  impact: {$ref: '#/components/schemas/WorkspaceImpact'}
++        '403': {$ref: '#/components/responses/Problem'}
++        '404': {$ref: '#/components/responses/Problem'}
+   /api/v1/workspaces/{id}/repository:
+     parameters:
+       - name: id
+@@ -307,43 +344,82 @@ paths:
+               schema: {$ref: '#/components/schemas/DiagnosticRun'}
+         '403': {$ref: '#/components/responses/Problem'}
+         '404': {$ref: '#/components/responses/Problem'}
+-    patch:
+-      operationId: updateWorkspace
+-      summary: Update workspace metadata
++  /api/v1/workspaces/{id}/sessions:
++    parameters:
++      - name: id
++        in: path
++        required: true
++        schema: {type: string}
++    get:
++      operationId: listSessions
++      summary: List sessions for a workspace
++      responses:
++        '200': {description: Sessions, content: {application/json: {schema: {$ref: '#/components/schemas/Sessions'}}}}
++    post:
++      operationId: createSession
++      summary: Create and start a governed agent session
+       parameters:
+         - {$ref: '#/components/parameters/ActorID'}
+-        - {$ref: '#/components/parameters/IfMatch'}
++        - {$ref: '#/components/parameters/ActorRole'}
++        - {$ref: '#/components/parameters/IdempotencyKey'}
+       requestBody:
+         required: true
+-        content:
+-          application/json:
+-            schema: {$ref: '#/components/schemas/WorkspacePatch'}
++        content: {application/json: {schema: {$ref: '#/components/schemas/SessionInput'}}}
+       responses:
+-        '200':
+-          description: Updated workspace
+-          content:
+-            application/json:
+-              schema: {$ref: '#/components/schemas/Workspace'}
++        '201': {description: Session started, content: {application/json: {schema: {$ref: '#/components/schemas/Session'}}}}
+         '403': {$ref: '#/components/responses/Problem'}
+-        '404': {$ref: '#/components/responses/Problem'}
+-    delete:
+-      operationId: detachWorkspace
+-      summary: Detach metadata without deleting the repository
++  /api/v1/workspaces/{id}/sessions/{session_id}:
++    get:
++      operationId: getSession
++      summary: Get a session
+       parameters:
+-        - {$ref: '#/components/parameters/ActorID'}
++        - {name: id, in: path, required: true, schema: {type: string}}
++        - {name: session_id, in: path, required: true, schema: {type: string}}
+       responses:
+-        '200':
+-          description: Detached workspace and impact report
+-          content:
+-            application/json:
+-              schema:
+-                type: object
+-                required: [workspace, impact]
+-                properties:
+-                  workspace: {$ref: '#/components/schemas/Workspace'}
+-                  impact: {$ref: '#/components/schemas/WorkspaceImpact'}
+-        '403': {$ref: '#/components/responses/Problem'}
++        '200': {description: Session, content: {application/json: {schema: {$ref: '#/components/schemas/Session'}}}}
+         '404': {$ref: '#/components/responses/Problem'}
++  /api/v1/workspaces/{id}/sessions/{session_id}/pause:
++    parameters:
++      - {name: id, in: path, required: true, schema: {type: string}}
++      - {name: session_id, in: path, required: true, schema: {type: string}}
++      - {$ref: '#/components/parameters/ActorID'}
++      - {$ref: '#/components/parameters/ActorRole'}
++    post: {operationId: pauseSession, summary: Pause a session, responses: {'200': {description: Paused, content: {application/json: {schema: {$ref: '#/components/schemas/Session'}}}}, '403': {$ref: '#/components/responses/Problem'}, '409': {$ref: '#/components/responses/Problem'}}}
++  /api/v1/workspaces/{id}/sessions/{session_id}/resume:
++    parameters:
++      - {name: id, in: path, required: true, schema: {type: string}}
++      - {name: session_id, in: path, required: true, schema: {type: string}}
++      - {$ref: '#/components/parameters/ActorID'}
++      - {$ref: '#/components/parameters/ActorRole'}
++      - {$ref: '#/components/parameters/IdempotencyKey'}
++    post: {operationId: resumeSession, summary: Resume a compatible session, responses: {'200': {description: Resuming, content: {application/json: {schema: {$ref: '#/components/schemas/Session'}}}}, '403': {$ref: '#/components/responses/Problem'}, '409': {$ref: '#/components/responses/Problem'}}}
++  /api/v1/workspaces/{id}/sessions/{session_id}/stop:
++    parameters:
++      - {name: id, in: path, required: true, schema: {type: string}}
++      - {name: session_id, in: path, required: true, schema: {type: string}}
++      - {$ref: '#/components/parameters/ActorID'}
++      - {$ref: '#/components/parameters/ActorRole'}
++    post: {operationId: stopSession, summary: Gracefully stop a session, responses: {'200': {description: Stopped, content: {application/json: {schema: {$ref: '#/components/schemas/Session'}}}}, '403': {$ref: '#/components/responses/Problem'}, '409': {$ref: '#/components/responses/Problem'}}}
++  /api/v1/workspaces/{id}/sessions/{session_id}/terminate:
++    parameters:
++      - {name: id, in: path, required: true, schema: {type: string}}
++      - {name: session_id, in: path, required: true, schema: {type: string}}
++      - {$ref: '#/components/parameters/ActorID'}
++      - {$ref: '#/components/parameters/ActorRole'}
++      - {$ref: '#/components/parameters/IdempotencyKey'}
++    post:
++      operationId: terminateSession
++      summary: Terminate a session with impact confirmation
++      requestBody:
++        required: false
++        content: {application/json: {schema: {$ref: '#/components/schemas/SessionTerminationInput'}}}
++      responses: {'200': {description: Terminated, content: {application/json: {schema: {$ref: '#/components/schemas/Session'}}}}, '403': {$ref: '#/components/responses/Problem'}, '409': {$ref: '#/components/responses/Problem'}}
++  /api/v1/workspaces/{id}/sessions/{session_id}/heartbeat:
++    parameters:
++      - {name: id, in: path, required: true, schema: {type: string}}
++      - {name: session_id, in: path, required: true, schema: {type: string}}
++      - {name: status, in: query, schema: {type: string, enum: [starting, active, running, paused, resuming]}}
++    post: {operationId: heartbeatSession, summary: Report session heartbeat, responses: {'200': {description: Heartbeat accepted, content: {application/json: {schema: {$ref: '#/components/schemas/Session'}}}}, '409': {$ref: '#/components/responses/Problem'}}}
+ components:
+   parameters:
+     ActorID:
+@@ -552,6 +628,44 @@ components:
+         stdout: {type: string}
+         stderr: {type: string}
+         remediation_hints: {type: array, items: {type: string}}
++    SessionInput:
++      type: object
++      required: [agent_id, run_id, adapter]
++      additionalProperties: false
++      properties:
++        agent_id: {type: string}
++        run_id: {type: string}
++        adapter: {type: string}
++        provider: {type: string}
++        model: {type: string}
++        external_session_id: {type: string}
++    Session:
++      type: object
++      required: [id, agent_id, run_id, adapter, status, started_at]
++      properties:
++        id: {type: string}
++        agent_id: {type: string}
++        run_id: {type: string}
++        adapter: {type: string}
++        provider: {type: string}
++        model: {type: string}
++        external_session_id: {type: string}
++        resume_command_template: {type: string}
++        status: {type: string, enum: [starting, active, running, paused, resuming, stopped, terminated]}
++        started_at: {type: string, format: date-time}
++        last_seen_at: {type: string, format: date-time}
++        ended_at: {type: string, format: date-time}
++    Sessions:
++      type: object
++      required: [items]
++      properties:
++        items: {type: array, items: {$ref: '#/components/schemas/Session'}}
++        next_cursor: {type: [string, 'null']}
++    SessionTerminationInput:
++      type: object
++      additionalProperties: false
++      properties:
++        impact_details: {type: string}
+     HealthResponse:
+       type: object
+       required: [status, version, request_id]
+diff --git a/api/internal/httpapi/sessions.go b/api/internal/httpapi/sessions.go
+new file mode 100644
+index 0000000..60faffa
+--- /dev/null
++++ b/api/internal/httpapi/sessions.go
+@@ -0,0 +1,333 @@
++package httpapi
++
++import (
++	"context"
++	"encoding/json"
++	"errors"
++	"fmt"
++	"net/http"
++	"strconv"
++	"strings"
++	"time"
++
++	"roundtable/internal/db"
++)
++
++type sessionInput struct {
++	AgentID           string `json:"agent_id"`
++	RunID             string `json:"run_id"`
++	Adapter           string `json:"adapter"`
++	Provider          string `json:"provider"`
++	Model             string `json:"model"`
++	ExternalSessionID string `json:"external_session_id"`
++}
++
++type sessionResponse struct {
++	ID                    string `json:"id"`
++	AgentID               string `json:"agent_id"`
++	RunID                 string `json:"run_id"`
++	Adapter               string `json:"adapter"`
++	Provider              string `json:"provider,omitempty"`
++	Model                 string `json:"model,omitempty"`
++	ExternalSessionID     string `json:"external_session_id,omitempty"`
++	ResumeCommandTemplate string `json:"resume_command_template,omitempty"`
++	Status                string `json:"status"`
++	StartedAt             string `json:"started_at"`
++	LastSeenAt            string `json:"last_seen_at,omitempty"`
++	EndedAt               string `json:"ended_at,omitempty"`
++}
++
++func (s *Server) listSessions(w http.ResponseWriter, r *http.Request) {
++	workspace, err := s.workspace(r)
++	if err != nil {
++		writeWorkspaceError(w, r, err)
++		return
++	}
++	sessions, err := s.config.Store.ListAgentSessions(r.Context())
++	if err != nil {
++		WriteProblem(w, r, 500, "session_list_failed", "Unable to list sessions", err.Error())
++		return
++	}
++	items := make([]sessionResponse, 0, len(sessions))
++	for _, session := range sessions {
++		if !sessionBelongsToWorkspace(session, workspace.ID) {
++			continue
++		}
++		items = append(items, toSessionResponse(session))
++	}
++	returnPaginatedSessions(w, r, items)
++}
++
++func (s *Server) getSession(w http.ResponseWriter, r *http.Request) {
++	workspace, err := s.workspace(r)
++	if err != nil {
++		writeWorkspaceError(w, r, err)
++		return
++	}
++	session, err := s.config.Store.GetAgentSession(r.Context(), r.PathValue("session_id"))
++	if err != nil || !sessionBelongsToWorkspace(session, workspace.ID) {
++		WriteProblem(w, r, 404, "session_not_found", "Session not found", "session does not belong to this workspace")
++		return
++	}
++	writeJSON(w, 200, toSessionResponse(session))
++}
++
++func (s *Server) createSession(w http.ResponseWriter, r *http.Request) {
++	if !humanAuthorized(r) {
++		WriteProblem(w, r, 403, "forbidden", "Human authorization required", "Set X-Actor-ID and X-Actor-Role to a human role")
++		return
++	}
++	if strings.TrimSpace(r.Header.Get("Idempotency-Key")) == "" {
++		WriteProblem(w, r, 400, "idempotency_key_required", "Idempotency key required", "Session creation requires Idempotency-Key")
++		return
++	}
++	workspace, err := s.workspace(r)
++	if err != nil {
++		writeWorkspaceError(w, r, err)
++		return
++	}
++	var input sessionInput
++	if err := decodeJSON(r, &input); err != nil {
++		WriteProblem(w, r, 400, "invalid_session", "Invalid session request", err.Error())
++		return
++	}
++	input.AgentID, input.RunID, input.Adapter = strings.TrimSpace(input.AgentID), strings.TrimSpace(input.RunID), strings.TrimSpace(input.Adapter)
++	if input.AgentID == "" || input.RunID == "" || input.Adapter == "" {
++		WriteProblem(w, r, 400, "invalid_session", "Invalid session request", "agent_id, run_id, and adapter are required")
++		return
++	}
++	if _, err := s.config.Store.GetAgent(r.Context(), input.AgentID); err != nil {
++		WriteProblem(w, r, 404, "agent_not_found", "Agent not found", err.Error())
++		return
++	}
++	now := time.Now().UTC().Format(time.RFC3339Nano)
++	id := fmt.Sprintf("session-%d", time.Now().UnixNano())
++	metadata, _ := json.Marshal(map[string]string{"workspace_id": workspace.ID, "branch": workspace.DefaultBranch})
++	session := db.AgentSession{ID: id, AgentID: input.AgentID, RunID: input.RunID, Adapter: input.Adapter, Provider: input.Provider, Model: input.Model, ExternalSessionID: input.ExternalSessionID, ExternalResumeCommand: input.Adapter + " resume {{external_session_id}}", WorkingDirectory: workspace.RootPath, Status: "starting", StartedAt: now, LastSeenAt: now, MetadataJSON: string(metadata)}
++	if err := s.config.Store.UpsertAgentSession(r.Context(), session); err != nil {
++		WriteProblem(w, r, 409, "session_create_conflict", "Session could not be created", err.Error())
++		return
++	}
++	saved, _ := s.config.Store.GetAgentSession(r.Context(), id)
++	s.appendSessionEvent(r.Context(), saved, "started", r.Header.Get("X-Actor-ID"), requestID(r.Context()))
++	writeJSON(w, 201, toSessionResponse(saved))
++}
++
++func (s *Server) heartbeatSession(w http.ResponseWriter, r *http.Request) {
++	s.transitionSession(w, r, "heartbeat", "")
++}
++func (s *Server) pauseSession(w http.ResponseWriter, r *http.Request) {
++	s.transitionSession(w, r, "paused", "paused")
++}
++func (s *Server) stopSession(w http.ResponseWriter, r *http.Request) {
++	s.transitionSession(w, r, "stopped", "stopped")
++}
++
++func (s *Server) resumeSession(w http.ResponseWriter, r *http.Request) {
++	if !humanAuthorized(r) {
++		WriteProblem(w, r, 403, "forbidden", "Human authorization required", "Set X-Actor-ID and X-Actor-Role to a human role")
++		return
++	}
++	if strings.TrimSpace(r.Header.Get("Idempotency-Key")) == "" {
++		WriteProblem(w, r, 400, "idempotency_key_required", "Idempotency key required", "Session resume requires Idempotency-Key")
++		return
++	}
++	workspace, err := s.workspace(r)
++	if err != nil {
++		writeWorkspaceError(w, r, err)
++		return
++	}
++	session, err := s.sessionForWorkspace(r, workspace)
++	if err != nil {
++		WriteProblem(w, r, 404, "session_not_found", "Session not found", err.Error())
++		return
++	}
++	if session.Status != "paused" && session.Status != "stopped" {
++		WriteProblem(w, r, 409, "illegal_session_transition", "Session cannot be resumed", "only paused or stopped sessions can be resumed")
++		return
++	}
++	if branch := sessionBranch(session); branch != "" {
++		status, statusErr := inspectRepository(r.Context(), workspace)
++		if statusErr == nil && status.Branch != branch {
++			WriteProblem(w, r, 409, "session_branch_conflict", "Session branch is incompatible", "workspace branch changed since session start")
++			return
++		}
++	}
++	agent, err := s.config.Store.GetAgent(r.Context(), session.AgentID)
++	if err != nil || !agent.IsEnabled {
++		WriteProblem(w, r, 409, "agent_unavailable", "Agent is unavailable", "the session agent is disabled or missing")
++		return
++	}
++	session.Status = "resuming"
++	session.LastSeenAt = time.Now().UTC().Format(time.RFC3339Nano)
++	if err := s.config.Store.UpsertAgentSession(r.Context(), session); err != nil {
++		WriteProblem(w, r, 409, "session_resume_conflict", "Session could not be resumed", err.Error())
++		return
++	}
++	s.appendSessionEvent(r.Context(), session, "resuming", r.Header.Get("X-Actor-ID"), requestID(r.Context()))
++	writeJSON(w, 200, toSessionResponse(session))
++}
++
++func (s *Server) terminateSession(w http.ResponseWriter, r *http.Request) {
++	if !humanAuthorized(r) {
++		WriteProblem(w, r, 403, "forbidden", "Human authorization required", "Set X-Actor-ID and X-Actor-Role to a human role")
++		return
++	}
++	if strings.TrimSpace(r.Header.Get("Idempotency-Key")) == "" {
++		WriteProblem(w, r, 400, "idempotency_key_required", "Idempotency key required", "Session termination requires Idempotency-Key")
++		return
++	}
++	workspace, err := s.workspace(r)
++	if err != nil {
++		writeWorkspaceError(w, r, err)
++		return
++	}
++	session, err := s.sessionForWorkspace(r, workspace)
++	if err != nil {
++		WriteProblem(w, r, 404, "session_not_found", "Session not found", err.Error())
++		return
++	}
++	var body struct {
++		ImpactDetails string `json:"impact_details"`
++	}
++	if r.Body != nil {
++		_ = decodeJSON(r, &body)
++	}
++	var claims int
++	if err := s.config.Store.DB().QueryRowContext(r.Context(), "SELECT COUNT(*) FROM claims WHERE agent_id = ? AND status = 'active'", session.AgentID).Scan(&claims); err != nil {
++		WriteProblem(w, r, 500, "session_impact_failed", "Unable to determine session impact", err.Error())
++		return
++	}
++	if claims > 0 && strings.TrimSpace(body.ImpactDetails) == "" {
++		WriteProblem(w, r, 409, "termination_impact_required", "Termination impact is required", "provide impact_details while active claims exist")
++		return
++	}
++	if !isActiveSessionState(session.Status) {
++		WriteProblem(w, r, 409, "illegal_session_transition", "Session cannot be terminated", "session is already terminal")
++		return
++	}
++	session.Status = "terminated"
++	session.EndedAt = time.Now().UTC().Format(time.RFC3339Nano)
++	session.LastSeenAt = session.EndedAt
++	if err := s.config.Store.UpsertAgentSession(r.Context(), session); err != nil {
++		WriteProblem(w, r, 409, "session_terminate_conflict", "Session could not be terminated", err.Error())
++		return
++	}
++	s.appendSessionEvent(r.Context(), session, "terminated", r.Header.Get("X-Actor-ID"), requestID(r.Context()))
++	writeJSON(w, 200, toSessionResponse(session))
++}
++
++func (s *Server) transitionSession(w http.ResponseWriter, r *http.Request, event, target string) {
++	if event != "heartbeat" && !humanAuthorized(r) {
++		WriteProblem(w, r, 403, "forbidden", "Human authorization required", "Set X-Actor-ID and X-Actor-Role to a human role")
++		return
++	}
++	workspace, err := s.workspace(r)
++	if err != nil {
++		writeWorkspaceError(w, r, err)
++		return
++	}
++	session, err := s.sessionForWorkspace(r, workspace)
++	if err != nil {
++		WriteProblem(w, r, 404, "session_not_found", "Session not found", err.Error())
++		return
++	}
++	if event == "heartbeat" {
++		if !isActiveSessionState(session.Status) {
++			WriteProblem(w, r, 409, "illegal_session_transition", "Session is not active", "terminal sessions cannot heartbeat")
++			return
++		}
++		if value := r.URL.Query().Get("status"); value != "" {
++			target = value
++		}
++		if target != "" && !isHeartbeatSessionState(target) {
++			WriteProblem(w, r, 400, "invalid_session_status", "Invalid session status", "heartbeat status must be starting, active, running, paused, or resuming")
++			return
++		}
++		session.LastSeenAt = time.Now().UTC().Format(time.RFC3339Nano)
++		if target != "" {
++			session.Status = target
++		}
++	} else {
++		if !isActiveSessionState(session.Status) || (target == "paused" && session.Status == "paused") {
++			WriteProblem(w, r, 409, "illegal_session_transition", "Illegal session transition", "session state does not permit this transition")
++			return
++		}
++		session.Status = target
++		if target == "stopped" {
++			session.EndedAt = time.Now().UTC().Format(time.RFC3339Nano)
++		}
++		session.LastSeenAt = time.Now().UTC().Format(time.RFC3339Nano)
++	}
++	if err := s.config.Store.UpsertAgentSession(r.Context(), session); err != nil {
++		WriteProblem(w, r, 409, "session_transition_conflict", "Session transition failed", err.Error())
++		return
++	}
++	s.appendSessionEvent(r.Context(), session, event, r.Header.Get("X-Actor-ID"), requestID(r.Context()))
++	writeJSON(w, 200, toSessionResponse(session))
++}
++
++func (s *Server) sessionForWorkspace(r *http.Request, workspace db.Workspace) (db.AgentSession, error) {
++	session, err := s.config.Store.GetAgentSession(r.Context(), r.PathValue("session_id"))
++	if err != nil {
++		return db.AgentSession{}, err
++	}
++	if !sessionBelongsToWorkspace(session, workspace.ID) {
++		return db.AgentSession{}, errors.New("session does not belong to workspace")
++	}
++	return session, nil
++}
++func sessionBelongsToWorkspace(session db.AgentSession, workspaceID string) bool {
++	var metadata map[string]any
++	return json.Unmarshal([]byte(session.MetadataJSON), &metadata) == nil && metadata["workspace_id"] == workspaceID
++}
++func sessionBranch(session db.AgentSession) string {
++	var metadata map[string]any
++	if json.Unmarshal([]byte(session.MetadataJSON), &metadata) != nil {
++		return ""
++	}
++	branch, _ := metadata["branch"].(string)
++	return strings.TrimSpace(branch)
++}
++func isActiveSessionState(status string) bool {
++	return status == "starting" || status == "active" || status == "running" || status == "paused" || status == "resuming"
++}
++func isHeartbeatSessionState(status string) bool {
++	return isActiveSessionState(status)
++}
++func toSessionResponse(session db.AgentSession) sessionResponse {
++	return sessionResponse{ID: session.ID, AgentID: session.AgentID, RunID: session.RunID, Adapter: session.Adapter, Provider: session.Provider, Model: session.Model, ExternalSessionID: session.ExternalSessionID, ResumeCommandTemplate: session.Adapter + " resume <external_session_id>", Status: session.Status, StartedAt: session.StartedAt, LastSeenAt: session.LastSeenAt, EndedAt: session.EndedAt}
++}
++func (s *Server) appendSessionEvent(ctx context.Context, session db.AgentSession, event, actor, requestID string) {
++	payload, _ := json.Marshal(map[string]any{"session_id": session.ID, "status": session.Status, "request_id": requestID})
++	_, _ = s.config.Store.AppendAgentSessionEvent(ctx, db.AgentSessionEvent{SessionID: session.ID, EventType: event, PayloadJSON: string(payload)})
++	_, _ = s.config.Store.AppendEvent(ctx, db.Event{RunID: session.RunID, Type: "session." + event, ActorID: actor, PayloadJSON: string(payload)})
++}
++func returnPaginatedSessions(w http.ResponseWriter, r *http.Request, items []sessionResponse) {
++	start, err := cursorOffset(r.URL.Query().Get("cursor"))
++	if err != nil {
++		WriteProblem(w, r, 400, "invalid_cursor", "Invalid cursor", err.Error())
++		return
++	}
++	limit := 50
++	if raw := r.URL.Query().Get("limit"); raw != "" {
++		limit, err = strconv.Atoi(raw)
++		if err != nil || limit < 1 || limit > 200 {
++			WriteProblem(w, r, 400, "invalid_limit", "Invalid limit", "limit must be between 1 and 200")
++			return
++		}
++	}
++	if start > len(items) {
++		start = len(items)
++	}
++	end := start + limit
++	if end > len(items) {
++		end = len(items)
++	}
++	var next *string
++	if end < len(items) {
++		value := strconv.Itoa(end)
++		next = &value
++	}
++	writeJSON(w, 200, map[string]any{"items": items[start:end], "next_cursor": next})
++}
+diff --git a/api/internal/httpapi/sessions_test.go b/api/internal/httpapi/sessions_test.go
+new file mode 100644
+index 0000000..a38e95c
+--- /dev/null
++++ b/api/internal/httpapi/sessions_test.go
+@@ -0,0 +1,86 @@
++package httpapi
++
++import (
++	"bytes"
++	"encoding/json"
++	"net/http"
++	"net/http/httptest"
++	"path/filepath"
++	"testing"
++
++	"roundtable/internal/db"
++)
++
++func TestSessionLifecycleStateMachineAndWorkspaceBoundary(t *testing.T) {
++	sqlDB, err := db.Open(filepath.Join(t.TempDir(), "roundtable.db"))
++	if err != nil {
++		t.Fatal(err)
++	}
++	defer sqlDB.Close()
++	store := db.NewStore(sqlDB, nil)
++	if err := store.UpsertWorkspace(t.Context(), db.Workspace{ID: "ws-session", DisplayName: "Session", RootPath: t.TempDir(), Status: "active", Revision: 1}); err != nil {
++		t.Fatal(err)
++	}
++	if err := store.UpsertAgent(t.Context(), db.Agent{ID: "agent-session", Name: "Worker", Role: "implementer", Adapter: "codex", Status: "idle", IsEnabled: true}); err != nil {
++		t.Fatal(err)
++	}
++	server := NewServer(Config{Store: store})
++
++	req := httptest.NewRequest(http.MethodPost, "/api/v1/workspaces/ws-session/sessions", bytes.NewBufferString(`{"agent_id":"agent-session","run_id":"run-1","adapter":"codex","external_session_id":"ext-1"}`))
++	req.Header.Set("X-Actor-ID", "human-1")
++	req.Header.Set("X-Actor-Role", "human")
++	req.Header.Set("Idempotency-Key", "create-1")
++	res := httptest.NewRecorder()
++	server.Handler().ServeHTTP(res, req)
++	if res.Code != http.StatusCreated {
++		t.Fatalf("create = %d %s", res.Code, res.Body.String())
++	}
++	var created sessionResponse
++	if err := json.Unmarshal(res.Body.Bytes(), &created); err != nil {
++		t.Fatal(err)
++	}
++	if created.Status != "starting" || created.ResumeCommandTemplate != "codex resume <external_session_id>" {
++		t.Fatalf("created = %+v", created)
++	}
++
++	path := "/api/v1/workspaces/ws-session/sessions/" + created.ID + "/pause"
++	req = httptest.NewRequest(http.MethodPost, path, nil)
++	req.Header.Set("X-Actor-ID", "human-1")
++	req.Header.Set("X-Actor-Role", "human")
++	res = httptest.NewRecorder()
++	server.Handler().ServeHTTP(res, req)
++	if res.Code != http.StatusOK || !bytes.Contains(res.Body.Bytes(), []byte(`"status":"paused"`)) {
++		t.Fatalf("pause = %d %s", res.Code, res.Body.String())
++	}
++
++	path = "/api/v1/workspaces/ws-session/sessions/" + created.ID + "/resume"
++	req = httptest.NewRequest(http.MethodPost, path, nil)
++	req.Header.Set("X-Actor-ID", "human-1")
++	req.Header.Set("X-Actor-Role", "human")
++	req.Header.Set("Idempotency-Key", "resume-1")
++	res = httptest.NewRecorder()
++	server.Handler().ServeHTTP(res, req)
++	if res.Code != http.StatusOK || !bytes.Contains(res.Body.Bytes(), []byte(`"status":"resuming"`)) {
++		t.Fatalf("resume = %d %s", res.Code, res.Body.String())
++	}
++
++	path = "/api/v1/workspaces/ws-session/sessions/" + created.ID + "/stop"
++	req = httptest.NewRequest(http.MethodPost, path, nil)
++	req.Header.Set("X-Actor-ID", "human-1")
++	req.Header.Set("X-Actor-Role", "human")
++	res = httptest.NewRecorder()
++	server.Handler().ServeHTTP(res, req)
++	if res.Code != http.StatusOK || !bytes.Contains(res.Body.Bytes(), []byte(`"status":"stopped"`)) {
++		t.Fatalf("stop = %d %s", res.Code, res.Body.String())
++	}
++
++	path = "/api/v1/workspaces/ws-session/sessions/" + created.ID + "/pause"
++	req = httptest.NewRequest(http.MethodPost, path, nil)
++	req.Header.Set("X-Actor-ID", "human-1")
++	req.Header.Set("X-Actor-Role", "human")
++	res = httptest.NewRecorder()
++	server.Handler().ServeHTTP(res, req)
++	if res.Code != http.StatusConflict || !bytes.Contains(res.Body.Bytes(), []byte("illegal_session_transition")) {
++		t.Fatalf("illegal transition = %d %s", res.Code, res.Body.String())
++	}
++}
