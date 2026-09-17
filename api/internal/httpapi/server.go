@@ -127,6 +127,12 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/v1/workspaces/{id}/sessions/{session_id}/resume", s.resumeSession)
 	mux.HandleFunc("POST /api/v1/workspaces/{id}/sessions/{session_id}/stop", s.stopSession)
 	mux.HandleFunc("POST /api/v1/workspaces/{id}/sessions/{session_id}/terminate", s.terminateSession)
+	mux.HandleFunc("GET /api/v1/workspaces/{id}/sessions/{session_id}/logs", s.sessionLogs)
+	mux.HandleFunc("GET /api/v1/workspaces/{id}/sessions/{session_id}/tool-calls", s.sessionToolCalls)
+	mux.HandleFunc("GET /api/v1/workspaces/{id}/sessions/{session_id}/claims", s.sessionClaims)
+	mux.HandleFunc("GET /api/v1/workspaces/{id}/sessions/{session_id}/proposals", s.sessionProposals)
+	mux.HandleFunc("GET /api/v1/workspaces/{id}/sessions/{session_id}/metrics", s.sessionMetrics)
+	mux.HandleFunc("GET /api/v1/workspaces/{id}/sessions/{session_id}/environment", s.sessionEnvironment)
 	return requestIDs(securityHeaders(jsonDefaults(mux)))
 }
 
