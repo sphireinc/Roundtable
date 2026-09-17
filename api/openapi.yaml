@@ -283,6 +283,30 @@ paths:
         '200': {description: Agent disabled, content: {application/json: {schema: {$ref: '#/components/schemas/Agent'}}}}
         '403': {$ref: '#/components/responses/Problem'}
         '409': {$ref: '#/components/responses/Problem'}
+  /api/v1/workspaces/{id}/agents/{agent_id}/diagnostics:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: {type: string}
+      - name: agent_id
+        in: path
+        required: true
+        schema: {type: string}
+      - {$ref: '#/components/parameters/ActorID'}
+      - {$ref: '#/components/parameters/ActorRole'}
+      - {$ref: '#/components/parameters/IdempotencyKey'}
+    post:
+      operationId: runAgentDiagnostics
+      summary: Run bounded, read-only adapter and MCP diagnostics
+      responses:
+        '202':
+          description: Diagnostic completed or accepted
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/DiagnosticRun'}
+        '403': {$ref: '#/components/responses/Problem'}
+        '404': {$ref: '#/components/responses/Problem'}
     patch:
       operationId: updateWorkspace
       summary: Update workspace metadata
@@ -508,6 +532,26 @@ components:
         policy_weight: {type: integer, minimum: 0}
         active_session_count: {type: integer, minimum: 0}
         last_heartbeat: {type: string, format: date-time}
+    DiagnosticCheck:
+      type: object
+      required: [name, status]
+      properties:
+        name: {type: string}
+        status: {type: string, enum: [passed, failed]}
+        detail: {type: string}
+    DiagnosticRun:
+      type: object
+      required: [run_id, agent_id, started_at, finished_at, status, checks]
+      properties:
+        run_id: {type: string}
+        agent_id: {type: string}
+        started_at: {type: string, format: date-time}
+        finished_at: {type: string, format: date-time}
+        status: {type: string, enum: [passed, failed]}
+        checks: {type: array, items: {$ref: '#/components/schemas/DiagnosticCheck'}}
+        stdout: {type: string}
+        stderr: {type: string}
+        remediation_hints: {type: array, items: {type: string}}
     HealthResponse:
       type: object
       required: [status, version, request_id]
