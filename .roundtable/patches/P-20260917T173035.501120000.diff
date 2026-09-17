@@ -1,0 +1,390 @@
+diff --git a/api/internal/httpapi/server.go b/api/internal/httpapi/server.go
+index 17b8d7f..63ee5df 100644
+--- a/api/internal/httpapi/server.go
++++ b/api/internal/httpapi/server.go
+@@ -114,6 +114,10 @@ func (s *Server) Handler() http.Handler {
+ 	mux.HandleFunc("POST /api/v1/workspaces/{id}/repository/branch-switch", s.branchSwitch)
+ 	mux.HandleFunc("GET /api/v1/workspaces/{id}/repository/entities", s.repositoryEntities)
+ 	mux.HandleFunc("GET /api/v1/workspaces/{id}/repository/entities/{entity_id}", s.repositoryEntity)
++	mux.HandleFunc("GET /api/v1/workspaces/{id}/agents", s.listAgents)
++	mux.HandleFunc("GET /api/v1/workspaces/{id}/agents/{agent_id}", s.getAgent)
++	mux.HandleFunc("POST /api/v1/workspaces/{id}/agents/{agent_id}/enable", func(w http.ResponseWriter, r *http.Request) { s.setAgentEnabled(w, r, true) })
++	mux.HandleFunc("POST /api/v1/workspaces/{id}/agents/{agent_id}/disable", func(w http.ResponseWriter, r *http.Request) { s.setAgentEnabled(w, r, false) })
+ 	return requestIDs(securityHeaders(jsonDefaults(mux)))
+ }
+ 
+diff --git a/api/openapi.yaml b/api/openapi.yaml
+index 3d16254..8f2995c 100644
+--- a/api/openapi.yaml
++++ b/api/openapi.yaml
+@@ -213,6 +213,76 @@ paths:
+             application/json:
+               schema: {$ref: '#/components/schemas/RepositoryEntity'}
+         '404': {$ref: '#/components/responses/Problem'}
++  /api/v1/workspaces/{id}/agents:
++    parameters:
++      - name: id
++        in: path
++        required: true
++        schema: {type: string}
++      - name: cursor
++        in: query
++        schema: {type: string}
++      - name: limit
++        in: query
++        schema: {type: integer, minimum: 1, maximum: 200, default: 50}
++    get:
++      operationId: listAgents
++      summary: List redacted agent registry entries
++      responses:
++        '200':
++          description: Agent registry
++          content:
++            application/json:
++              schema:
++                type: object
++                required: [items]
++                properties:
++                  items: {type: array, items: {$ref: '#/components/schemas/Agent'}}
++                  next_cursor: {type: [string, 'null']}
++        '404': {$ref: '#/components/responses/Problem'}
++  /api/v1/workspaces/{id}/agents/{agent_id}:
++    parameters:
++      - name: id
++        in: path
++        required: true
++        schema: {type: string}
++      - name: agent_id
++        in: path
++        required: true
++        schema: {type: string}
++    get:
++      operationId: getAgent
++      summary: Get one redacted agent registry entry
++      responses:
++        '200':
++          description: Agent
++          content:
++            application/json:
++              schema: {$ref: '#/components/schemas/Agent'}
++        '404': {$ref: '#/components/responses/Problem'}
++  /api/v1/workspaces/{id}/agents/{agent_id}/enable:
++    post:
++      operationId: enableAgent
++      summary: Enable an agent
++      parameters:
++        - {$ref: '#/components/parameters/ActorID'}
++        - {$ref: '#/components/parameters/ActorRole'}
++        - {$ref: '#/components/parameters/IdempotencyKey'}
++      responses:
++        '200': {description: Agent enabled, content: {application/json: {schema: {$ref: '#/components/schemas/Agent'}}}}
++        '403': {$ref: '#/components/responses/Problem'}
++  /api/v1/workspaces/{id}/agents/{agent_id}/disable:
++    post:
++      operationId: disableAgent
++      summary: Disable an agent using drain semantics
++      parameters:
++        - {$ref: '#/components/parameters/ActorID'}
++        - {$ref: '#/components/parameters/ActorRole'}
++        - {$ref: '#/components/parameters/IdempotencyKey'}
++      responses:
++        '200': {description: Agent disabled, content: {application/json: {schema: {$ref: '#/components/schemas/Agent'}}}}
++        '403': {$ref: '#/components/responses/Problem'}
++        '409': {$ref: '#/components/responses/Problem'}
+     patch:
+       operationId: updateWorkspace
+       summary: Update workspace metadata
+@@ -421,6 +491,23 @@ components:
+       properties:
+         items: {type: array, items: {$ref: '#/components/schemas/RepositoryEntity'}}
+         next_cursor: {type: [string, 'null']}
++    Agent:
++      type: object
++      required: [agent_id, display_name, adapter_type, enabled, health, capabilities, supports_resume, supports_mcp, concurrency_limit, policy_weight, active_session_count]
++      properties:
++        agent_id: {type: string}
++        display_name: {type: string}
++        adapter_type: {type: string}
++        enabled: {type: boolean}
++        health: {type: string}
++        executable_version: {type: string}
++        capabilities: {type: object, additionalProperties: {type: boolean}}
++        supports_resume: {type: boolean}
++        supports_mcp: {type: boolean}
++        concurrency_limit: {type: integer, minimum: 1}
++        policy_weight: {type: integer, minimum: 0}
++        active_session_count: {type: integer, minimum: 0}
++        last_heartbeat: {type: string, format: date-time}
+     HealthResponse:
+       type: object
+       required: [status, version, request_id]
+diff --git a/internal/db/store.go b/internal/db/store.go
+index 6091afa..dd7c367 100644
+--- a/internal/db/store.go
++++ b/internal/db/store.go
+@@ -6,6 +6,7 @@ import (
+ 	"encoding/json"
+ 	"errors"
+ 	"fmt"
++	"time"
+ 
+ 	"roundtable/internal/events"
+ )
+@@ -401,6 +402,42 @@ func (s *Store) ListAgents(ctx context.Context) ([]Agent, error) {
+ 	return out, rows.Err()
+ }
+ 
++func (s *Store) SetAgentEnabled(ctx context.Context, workspaceID, agentID string, enabled bool, actorID, requestID string) (Agent, error) {
++	tx, err := s.db.BeginTx(ctx, nil)
++	if err != nil {
++		return Agent{}, fmt.Errorf("begin agent state change: %w", err)
++	}
++	defer tx.Rollback()
++	value := 0
++	state := "disabled"
++	if enabled {
++		value = 1
++		state = "idle"
++	}
++	result, err := tx.ExecContext(ctx, `UPDATE agents SET is_enabled = ?, status = ? WHERE id = ?`, value, state, agentID)
++	if err != nil {
++		return Agent{}, fmt.Errorf("set agent enabled: %w", err)
++	}
++	if affected, _ := result.RowsAffected(); affected == 0 {
++		return Agent{}, fmt.Errorf("agent %s not found", agentID)
++	}
++	payload, err := json.Marshal(map[string]any{"agent_id": agentID, "enabled": enabled})
++	if err != nil {
++		return Agent{}, fmt.Errorf("marshal agent state audit: %w", err)
++	}
++	if _, err := tx.ExecContext(ctx, `INSERT INTO audit_events (workspace_id, actor_id, action, entity_type, entity_id, request_id, payload_json) VALUES (?, ?, 'agent.state_changed', 'agent', ?, ?, ?)`, workspaceID, actorID, agentID, nullIfEmpty(requestID), string(payload)); err != nil {
++		return Agent{}, fmt.Errorf("audit agent state: %w", err)
++	}
++	eventID := fmt.Sprintf("agent:%s:%d:state-changed", agentID, time.Now().UnixNano())
++	if _, err := tx.ExecContext(ctx, `INSERT INTO event_outbox (workspace_id, event_id, event_type, entity_type, entity_id, payload_json) VALUES (?, ?, 'agent.state_changed', 'agent', ?, ?)`, workspaceID, eventID, agentID, string(payload)); err != nil {
++		return Agent{}, fmt.Errorf("outbox agent state: %w", err)
++	}
++	if err := tx.Commit(); err != nil {
++		return Agent{}, fmt.Errorf("commit agent state: %w", err)
++	}
++	return s.GetAgent(ctx, agentID)
++}
++
+ func (s *Store) UpsertAgentSession(ctx context.Context, session AgentSession) error {
+ 	_, err := s.db.ExecContext(ctx, `
+ 		INSERT INTO agent_sessions (
+diff --git a/api/internal/httpapi/agents.go b/api/internal/httpapi/agents.go
+new file mode 100644
+index 0000000..14a09fa
+--- /dev/null
++++ b/api/internal/httpapi/agents.go
+@@ -0,0 +1,152 @@
++package httpapi
++
++import (
++	"net/http"
++	"strconv"
++	"strings"
++
++	"roundtable/internal/db"
++)
++
++type agentResponse struct {
++	AgentID            string          `json:"agent_id"`
++	DisplayName        string          `json:"display_name"`
++	AdapterType        string          `json:"adapter_type"`
++	Enabled            bool            `json:"enabled"`
++	Health             string          `json:"health"`
++	ExecutableVersion  string          `json:"executable_version,omitempty"`
++	Capabilities       map[string]bool `json:"capabilities"`
++	SupportsResume     bool            `json:"supports_resume"`
++	SupportsMCP        bool            `json:"supports_mcp"`
++	ConcurrencyLimit   int             `json:"concurrency_limit"`
++	PolicyWeight       int             `json:"policy_weight"`
++	ActiveSessionCount int             `json:"active_session_count"`
++	LastHeartbeat      string          `json:"last_heartbeat,omitempty"`
++}
++
++func (s *Server) listAgents(w http.ResponseWriter, r *http.Request) {
++	if _, err := s.workspace(r); err != nil {
++		writeWorkspaceError(w, r, err)
++		return
++	}
++	agents, err := s.config.Store.ListAgents(r.Context())
++	if err != nil {
++		WriteProblem(w, r, 500, "agent_list_failed", "Unable to list agents", err.Error())
++		return
++	}
++	items := make([]agentResponse, 0, len(agents))
++	for _, agent := range agents {
++		item, itemErr := s.agentResponse(r, agent)
++		if itemErr != nil {
++			WriteProblem(w, r, 500, "agent_context_failed", "Unable to load agent context", itemErr.Error())
++			return
++		}
++		items = append(items, item)
++	}
++	start, err := cursorOffset(r.URL.Query().Get("cursor"))
++	if err != nil {
++		WriteProblem(w, r, 400, "invalid_cursor", "Invalid cursor", err.Error())
++		return
++	}
++	limit := 50
++	if raw := r.URL.Query().Get("limit"); raw != "" {
++		limit, err = strconv.Atoi(raw)
++		if err != nil || limit < 1 || limit > 200 {
++			WriteProblem(w, r, 400, "invalid_limit", "Invalid limit", "limit must be between 1 and 200")
++			return
++		}
++	}
++	if start > len(items) {
++		start = len(items)
++	}
++	end := start + limit
++	if end > len(items) {
++		end = len(items)
++	}
++	var next *string
++	if end < len(items) {
++		value := strconv.Itoa(end)
++		next = &value
++	}
++	writeJSON(w, 200, map[string]any{"items": items[start:end], "next_cursor": next})
++}
++
++func (s *Server) getAgent(w http.ResponseWriter, r *http.Request) {
++	if _, err := s.workspace(r); err != nil {
++		writeWorkspaceError(w, r, err)
++		return
++	}
++	agent, err := s.config.Store.GetAgent(r.Context(), r.PathValue("agent_id"))
++	if err != nil {
++		WriteProblem(w, r, 404, "agent_not_found", "Agent not found", err.Error())
++		return
++	}
++	item, err := s.agentResponse(r, agent)
++	if err != nil {
++		WriteProblem(w, r, 500, "agent_context_failed", "Unable to load agent context", err.Error())
++		return
++	}
++	writeJSON(w, 200, item)
++}
++
++func (s *Server) setAgentEnabled(w http.ResponseWriter, r *http.Request, enabled bool) {
++	if !humanAuthorized(r) {
++		WriteProblem(w, r, 403, "forbidden", "Human authorization required", "Set X-Actor-ID and X-Actor-Role to a human role")
++		return
++	}
++	if strings.TrimSpace(r.Header.Get("Idempotency-Key")) == "" {
++		WriteProblem(w, r, 400, "idempotency_key_required", "Idempotency key required", "Agent state changes require Idempotency-Key")
++		return
++	}
++	workspace, err := s.workspace(r)
++	if err != nil {
++		writeWorkspaceError(w, r, err)
++		return
++	}
++	agent, err := s.config.Store.GetAgent(r.Context(), r.PathValue("agent_id"))
++	if err != nil {
++		WriteProblem(w, r, 404, "agent_not_found", "Agent not found", err.Error())
++		return
++	}
++	if !enabled && agent.IsEnabled {
++		var active int
++		if err := s.config.Store.DB().QueryRowContext(r.Context(), "SELECT COUNT(*) FROM agent_sessions WHERE agent_id = ? AND status IN ('active','running')", agent.ID).Scan(&active); err != nil {
++			WriteProblem(w, r, 500, "agent_impact_failed", "Unable to determine agent impact", err.Error())
++			return
++		}
++		if active > 0 {
++			WriteProblem(w, r, 409, "agent_has_active_sessions", "Agent has active sessions", "Disable uses drain semantics until active sessions finish")
++			return
++		}
++	}
++	updated, err := s.config.Store.SetAgentEnabled(r.Context(), workspace.ID, agent.ID, enabled, r.Header.Get("X-Actor-ID"), requestID(r.Context()))
++	if err != nil {
++		WriteProblem(w, r, 409, "agent_state_conflict", "Agent state could not be changed", err.Error())
++		return
++	}
++	item, err := s.agentResponse(r, updated)
++	if err != nil {
++		WriteProblem(w, r, 500, "agent_context_failed", "Unable to load agent context", err.Error())
++		return
++	}
++	writeJSON(w, 200, item)
++}
++
++func (s *Server) agentResponse(r *http.Request, agent db.Agent) (agentResponse, error) {
++	var active int
++	if err := s.config.Store.DB().QueryRowContext(r.Context(), "SELECT COUNT(*) FROM agent_sessions WHERE agent_id = ? AND status IN ('active','running')", agent.ID).Scan(&active); err != nil {
++		return agentResponse{}, err
++	}
++	resume, mcp := false, false
++	switch agent.Adapter {
++	case "codex", "claude", "gemini":
++		resume, mcp = true, true
++	case "opencode":
++		mcp = true
++	}
++	health := agent.Status
++	if health == "" {
++		health = "unknown"
++	}
++	return agentResponse{AgentID: agent.ID, DisplayName: agent.Name, AdapterType: agent.Adapter, Enabled: agent.IsEnabled, Health: health, Capabilities: map[string]bool{"resume": resume, "mcp": mcp, "read_only_workspace": true}, SupportsResume: resume, SupportsMCP: mcp, ConcurrencyLimit: 1, PolicyWeight: 1, ActiveSessionCount: active}, nil
++}
+diff --git a/api/internal/httpapi/agents_test.go b/api/internal/httpapi/agents_test.go
+new file mode 100644
+index 0000000..1b0ea5c
+--- /dev/null
++++ b/api/internal/httpapi/agents_test.go
+@@ -0,0 +1,51 @@
++package httpapi
++
++import (
++	"bytes"
++	"net/http"
++	"net/http/httptest"
++	"path/filepath"
++	"testing"
++
++	"roundtable/internal/db"
++)
++
++func TestAgentRegistryRedactsCommandAndSupportsDrainDisable(t *testing.T) {
++	sqlDB, err := db.Open(filepath.Join(t.TempDir(), "roundtable.db"))
++	if err != nil {
++		t.Fatal(err)
++	}
++	defer sqlDB.Close()
++	store := db.NewStore(sqlDB, nil)
++	if err := store.UpsertWorkspace(t.Context(), db.Workspace{ID: "ws-agent", DisplayName: "Agent", RootPath: t.TempDir(), Status: "active", Revision: 1}); err != nil {
++		t.Fatal(err)
++	}
++	if err := store.UpsertAgent(t.Context(), db.Agent{ID: "agent-1", Name: "Worker", Role: "implementer", Adapter: "codex", Command: "codex --secret token", Status: "idle", IsEnabled: true}); err != nil {
++		t.Fatal(err)
++	}
++	server := NewServer(Config{Store: store})
++
++	req := httptest.NewRequest(http.MethodGet, "/api/v1/workspaces/ws-agent/agents", nil)
++	res := httptest.NewRecorder()
++	server.Handler().ServeHTTP(res, req)
++	if res.Code != http.StatusOK || bytes.Contains(res.Body.Bytes(), []byte("secret")) || !bytes.Contains(res.Body.Bytes(), []byte(`"supports_resume":true`)) {
++		t.Fatalf("list = %d %s", res.Code, res.Body.String())
++	}
++
++	req = httptest.NewRequest(http.MethodPost, "/api/v1/workspaces/ws-agent/agents/agent-1/disable", nil)
++	req.Header.Set("X-Actor-ID", "human-1")
++	req.Header.Set("X-Actor-Role", "human")
++	req.Header.Set("Idempotency-Key", "disable-1")
++	res = httptest.NewRecorder()
++	server.Handler().ServeHTTP(res, req)
++	if res.Code != http.StatusOK || !bytes.Contains(res.Body.Bytes(), []byte(`"enabled":false`)) {
++		t.Fatalf("disable = %d %s", res.Code, res.Body.String())
++	}
++	var audits int
++	if err := sqlDB.QueryRow("SELECT COUNT(*) FROM audit_events WHERE action = 'agent.state_changed'").Scan(&audits); err != nil {
++		t.Fatal(err)
++	}
++	if audits != 1 {
++		t.Fatalf("audit count = %d", audits)
++	}
++}

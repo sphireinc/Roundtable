@@ -114,6 +114,10 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/v1/workspaces/{id}/repository/branch-switch", s.branchSwitch)
 	mux.HandleFunc("GET /api/v1/workspaces/{id}/repository/entities", s.repositoryEntities)
 	mux.HandleFunc("GET /api/v1/workspaces/{id}/repository/entities/{entity_id}", s.repositoryEntity)
+	mux.HandleFunc("GET /api/v1/workspaces/{id}/agents", s.listAgents)
+	mux.HandleFunc("GET /api/v1/workspaces/{id}/agents/{agent_id}", s.getAgent)
+	mux.HandleFunc("POST /api/v1/workspaces/{id}/agents/{agent_id}/enable", func(w http.ResponseWriter, r *http.Request) { s.setAgentEnabled(w, r, true) })
+	mux.HandleFunc("POST /api/v1/workspaces/{id}/agents/{agent_id}/disable", func(w http.ResponseWriter, r *http.Request) { s.setAgentEnabled(w, r, false) })
 	return requestIDs(securityHeaders(jsonDefaults(mux)))
 }
 

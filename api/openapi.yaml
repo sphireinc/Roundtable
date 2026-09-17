@@ -213,6 +213,76 @@ paths:
             application/json:
               schema: {$ref: '#/components/schemas/RepositoryEntity'}
         '404': {$ref: '#/components/responses/Problem'}
+  /api/v1/workspaces/{id}/agents:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: {type: string}
+      - name: cursor
+        in: query
+        schema: {type: string}
+      - name: limit
+        in: query
+        schema: {type: integer, minimum: 1, maximum: 200, default: 50}
+    get:
+      operationId: listAgents
+      summary: List redacted agent registry entries
+      responses:
+        '200':
+          description: Agent registry
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items: {type: array, items: {$ref: '#/components/schemas/Agent'}}
+                  next_cursor: {type: [string, 'null']}
+        '404': {$ref: '#/components/responses/Problem'}
+  /api/v1/workspaces/{id}/agents/{agent_id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: {type: string}
+      - name: agent_id
+        in: path
+        required: true
+        schema: {type: string}
+    get:
+      operationId: getAgent
+      summary: Get one redacted agent registry entry
+      responses:
+        '200':
+          description: Agent
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Agent'}
+        '404': {$ref: '#/components/responses/Problem'}
+  /api/v1/workspaces/{id}/agents/{agent_id}/enable:
+    post:
+      operationId: enableAgent
+      summary: Enable an agent
+      parameters:
+        - {$ref: '#/components/parameters/ActorID'}
+        - {$ref: '#/components/parameters/ActorRole'}
+        - {$ref: '#/components/parameters/IdempotencyKey'}
+      responses:
+        '200': {description: Agent enabled, content: {application/json: {schema: {$ref: '#/components/schemas/Agent'}}}}
+        '403': {$ref: '#/components/responses/Problem'}
+  /api/v1/workspaces/{id}/agents/{agent_id}/disable:
+    post:
+      operationId: disableAgent
+      summary: Disable an agent using drain semantics
+      parameters:
+        - {$ref: '#/components/parameters/ActorID'}
+        - {$ref: '#/components/parameters/ActorRole'}
+        - {$ref: '#/components/parameters/IdempotencyKey'}
+      responses:
+        '200': {description: Agent disabled, content: {application/json: {schema: {$ref: '#/components/schemas/Agent'}}}}
+        '403': {$ref: '#/components/responses/Problem'}
+        '409': {$ref: '#/components/responses/Problem'}
     patch:
       operationId: updateWorkspace
       summary: Update workspace metadata
@@ -421,6 +491,23 @@ components:
       properties:
         items: {type: array, items: {$ref: '#/components/schemas/RepositoryEntity'}}
         next_cursor: {type: [string, 'null']}
+    Agent:
+      type: object
+      required: [agent_id, display_name, adapter_type, enabled, health, capabilities, supports_resume, supports_mcp, concurrency_limit, policy_weight, active_session_count]
+      properties:
+        agent_id: {type: string}
+        display_name: {type: string}
+        adapter_type: {type: string}
+        enabled: {type: boolean}
+        health: {type: string}
+        executable_version: {type: string}
+        capabilities: {type: object, additionalProperties: {type: boolean}}
+        supports_resume: {type: boolean}
+        supports_mcp: {type: boolean}
+        concurrency_limit: {type: integer, minimum: 1}
+        policy_weight: {type: integer, minimum: 0}
+        active_session_count: {type: integer, minimum: 0}
+        last_heartbeat: {type: string, format: date-time}
     HealthResponse:
       type: object
       required: [status, version, request_id]
