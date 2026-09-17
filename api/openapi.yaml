@@ -496,6 +496,18 @@ paths:
       summary: Append governed human input
       requestBody: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/DeliberationMessageInput'}}}}
       responses: {'201': {description: Message appended}, '403': {$ref: '#/components/responses/Problem'}, '409': {$ref: '#/components/responses/Problem'}}
+  /api/v1/workspaces/{id}/deliberations/{deliberation_id}/transcript:
+    parameters: [{name: id, in: path, required: true, schema: {type: string}}, {name: deliberation_id, in: path, required: true, schema: {type: string}}, {name: cursor, in: query, schema: {type: string}}, {name: limit, in: query, schema: {type: integer, minimum: 1, maximum: 200, default: 50}}]
+    get:
+      operationId: listDeliberationTranscript
+      summary: List the immutable user-visible deliberation transcript and events
+      responses: {'200': {description: Transcript, content: {application/json: {schema: {$ref: '#/components/schemas/TranscriptEntries'}}}}, '404': {$ref: '#/components/responses/Problem'}}
+  /api/v1/workspaces/{id}/deliberations/{deliberation_id}/transcript/{entry_id}:
+    parameters: [{name: id, in: path, required: true, schema: {type: string}}, {name: deliberation_id, in: path, required: true, schema: {type: string}}, {name: entry_id, in: path, required: true, schema: {type: string}}]
+    get:
+      operationId: getDeliberationTranscriptEntry
+      summary: Deep-link to one transcript entry
+      responses: {'200': {description: Transcript entry, content: {application/json: {schema: {$ref: '#/components/schemas/TranscriptEntry'}}}}, '404': {$ref: '#/components/responses/Problem'}}
 components:
   parameters:
     ActorID:
@@ -845,6 +857,30 @@ components:
       properties:
         message_type: {type: string, default: human_instruction}
         body: {type: string}
+    TranscriptEntry:
+      type: object
+      required: [id, round, actor, kind, visibility_class, rendering, created_at]
+      properties:
+        id: {type: string}
+        round: {type: integer, minimum: 0}
+        actor: {type: string}
+        kind: {type: string, enum: [message, event]}
+        message_type: {type: string}
+        summary: {type: string}
+        content: {type: string}
+        tool_references: {type: array, items: {type: string}}
+        claim_references: {type: array, items: {type: string}}
+        proposal_references: {type: array, items: {type: string}}
+        vote_references: {type: array, items: {type: string}}
+        visibility_class: {type: string, enum: [user_visible, operational]}
+        rendering: {type: object, additionalProperties: true}
+        created_at: {type: string, format: date-time}
+    TranscriptEntries:
+      type: object
+      required: [items]
+      properties:
+        items: {type: array, items: {$ref: '#/components/schemas/TranscriptEntry'}}
+        next_cursor: {type: [string, 'null']}
     HealthResponse:
       type: object
       required: [status, version, request_id]

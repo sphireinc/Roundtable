@@ -1,0 +1,267 @@
+diff --git a/api/internal/httpapi/server.go b/api/internal/httpapi/server.go
+index 4ac4cd8..e62aded 100644
+--- a/api/internal/httpapi/server.go
++++ b/api/internal/httpapi/server.go
+@@ -141,6 +141,8 @@ func (s *Server) Handler() http.Handler {
+ 	mux.HandleFunc("POST /api/v1/workspaces/{id}/deliberations/{deliberation_id}/resume", s.transitionDeliberation)
+ 	mux.HandleFunc("POST /api/v1/workspaces/{id}/deliberations/{deliberation_id}/terminate", s.transitionDeliberation)
+ 	mux.HandleFunc("POST /api/v1/workspaces/{id}/deliberations/{deliberation_id}/messages", s.addDeliberationMessage)
++	mux.HandleFunc("GET /api/v1/workspaces/{id}/deliberations/{deliberation_id}/transcript", s.listTranscript)
++	mux.HandleFunc("GET /api/v1/workspaces/{id}/deliberations/{deliberation_id}/transcript/{entry_id}", s.getTranscriptEntry)
+ 	return requestIDs(securityHeaders(jsonDefaults(mux)))
+ }
+ 
+diff --git a/api/openapi.yaml b/api/openapi.yaml
+index 3d04192..28b69ab 100644
+--- a/api/openapi.yaml
++++ b/api/openapi.yaml
+@@ -496,6 +496,18 @@ paths:
+       summary: Append governed human input
+       requestBody: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/DeliberationMessageInput'}}}}
+       responses: {'201': {description: Message appended}, '403': {$ref: '#/components/responses/Problem'}, '409': {$ref: '#/components/responses/Problem'}}
++  /api/v1/workspaces/{id}/deliberations/{deliberation_id}/transcript:
++    parameters: [{name: id, in: path, required: true, schema: {type: string}}, {name: deliberation_id, in: path, required: true, schema: {type: string}}, {name: cursor, in: query, schema: {type: string}}, {name: limit, in: query, schema: {type: integer, minimum: 1, maximum: 200, default: 50}}]
++    get:
++      operationId: listDeliberationTranscript
++      summary: List the immutable user-visible deliberation transcript and events
++      responses: {'200': {description: Transcript, content: {application/json: {schema: {$ref: '#/components/schemas/TranscriptEntries'}}}}, '404': {$ref: '#/components/responses/Problem'}}
++  /api/v1/workspaces/{id}/deliberations/{deliberation_id}/transcript/{entry_id}:
++    parameters: [{name: id, in: path, required: true, schema: {type: string}}, {name: deliberation_id, in: path, required: true, schema: {type: string}}, {name: entry_id, in: path, required: true, schema: {type: string}}]
++    get:
++      operationId: getDeliberationTranscriptEntry
++      summary: Deep-link to one transcript entry
++      responses: {'200': {description: Transcript entry, content: {application/json: {schema: {$ref: '#/components/schemas/TranscriptEntry'}}}}, '404': {$ref: '#/components/responses/Problem'}}
+ components:
+   parameters:
+     ActorID:
+@@ -845,6 +857,30 @@ components:
+       properties:
+         message_type: {type: string, default: human_instruction}
+         body: {type: string}
++    TranscriptEntry:
++      type: object
++      required: [id, round, actor, kind, visibility_class, rendering, created_at]
++      properties:
++        id: {type: string}
++        round: {type: integer, minimum: 0}
++        actor: {type: string}
++        kind: {type: string, enum: [message, event]}
++        message_type: {type: string}
++        summary: {type: string}
++        content: {type: string}
++        tool_references: {type: array, items: {type: string}}
++        claim_references: {type: array, items: {type: string}}
++        proposal_references: {type: array, items: {type: string}}
++        vote_references: {type: array, items: {type: string}}
++        visibility_class: {type: string, enum: [user_visible, operational]}
++        rendering: {type: object, additionalProperties: true}
++        created_at: {type: string, format: date-time}
++    TranscriptEntries:
++      type: object
++      required: [items]
++      properties:
++        items: {type: array, items: {$ref: '#/components/schemas/TranscriptEntry'}}
++        next_cursor: {type: [string, 'null']}
+     HealthResponse:
+       type: object
+       required: [status, version, request_id]
+diff --git a/api/internal/httpapi/transcript.go b/api/internal/httpapi/transcript.go
+new file mode 100644
+index 0000000..61270b3
+--- /dev/null
++++ b/api/internal/httpapi/transcript.go
+@@ -0,0 +1,127 @@
++package httpapi
++
++import (
++	"encoding/json"
++	"fmt"
++	"net/http"
++	"sort"
++	"strings"
++)
++
++type transcriptEntry struct {
++	ID                 string         `json:"id"`
++	Round              int            `json:"round"`
++	Actor              string         `json:"actor"`
++	Kind               string         `json:"kind"`
++	MessageType        string         `json:"message_type,omitempty"`
++	Summary            string         `json:"summary,omitempty"`
++	Content            string         `json:"content,omitempty"`
++	ToolReferences     []string       `json:"tool_references,omitempty"`
++	ClaimReferences    []string       `json:"claim_references,omitempty"`
++	ProposalReferences []string       `json:"proposal_references,omitempty"`
++	VoteReferences     []string       `json:"vote_references,omitempty"`
++	VisibilityClass    string         `json:"visibility_class"`
++	Rendering          map[string]any `json:"rendering"`
++	CreatedAt          string         `json:"created_at"`
++}
++
++func (s *Server) listTranscript(w http.ResponseWriter, r *http.Request) {
++	entries, err := s.transcriptForRequest(r)
++	if err != nil {
++		writeTranscriptError(w, r, err)
++		return
++	}
++	writePage(w, r, entries)
++}
++
++func (s *Server) getTranscriptEntry(w http.ResponseWriter, r *http.Request) {
++	entries, err := s.transcriptForRequest(r)
++	if err != nil {
++		writeTranscriptError(w, r, err)
++		return
++	}
++	wanted := r.PathValue("entry_id")
++	for _, entry := range entries {
++		if entry.ID == wanted || strings.TrimPrefix(entry.ID, "message:") == wanted || strings.TrimPrefix(entry.ID, "event:") == wanted {
++			writeJSON(w, 200, entry)
++			return
++		}
++	}
++	WriteProblem(w, r, 404, "transcript_entry_not_found", "Transcript entry not found", "entry does not belong to this deliberation")
++}
++
++func (s *Server) transcriptForRequest(r *http.Request) ([]transcriptEntry, error) {
++	workspace, err := s.workspace(r)
++	if err != nil {
++		return nil, err
++	}
++	value, err := s.readDeliberation(r, workspace.ID, r.PathValue("deliberation_id"))
++	if err != nil {
++		return nil, fmt.Errorf("deliberation not found: %w", err)
++	}
++	var entries []transcriptEntry
++	rows, err := s.config.Store.DB().QueryContext(r.Context(), `SELECT id, actor, message_type, body, created_at FROM deliberation_messages WHERE deliberation_id = ? ORDER BY sequence, id`, value.ID)
++	if err != nil {
++		return nil, err
++	}
++	for rows.Next() {
++		var id, actor, typ, body, created string
++		if err := rows.Scan(&id, &actor, &typ, &body, &created); err != nil {
++			rows.Close()
++			return nil, err
++		}
++		lower := strings.ToLower(typ)
++		if strings.Contains(lower, "chain_of_thought") || strings.Contains(lower, "hidden_reasoning") {
++			continue
++		}
++		entries = append(entries, transcriptEntry{ID: "message:" + id, Round: value.Round, Actor: redactText(actor), Kind: "message", MessageType: redactText(typ), Content: redactText(body), VisibilityClass: "user_visible", Rendering: safeRendering(), CreatedAt: created})
++	}
++	rows.Close()
++	if err := rows.Err(); err != nil {
++		return nil, err
++	}
++	events, err := s.config.Store.ListEvents(r.Context(), value.ID)
++	if err != nil {
++		return nil, err
++	}
++	for _, event := range events {
++		entry := transcriptEntry{ID: fmt.Sprintf("event:%d", event.ID), Round: value.Round, Actor: redactText(event.ActorID), Kind: "event", Summary: redactText(event.Type), VisibilityClass: "operational", Rendering: safeRendering(), CreatedAt: event.CreatedAt}
++		refs := referencesFromPayload(event.PayloadJSON)
++		entry.ToolReferences, entry.ClaimReferences, entry.ProposalReferences, entry.VoteReferences = refs["tool"], refs["claim"], refs["proposal"], refs["vote"]
++		entries = append(entries, entry)
++	}
++	sort.SliceStable(entries, func(i, j int) bool {
++		if entries[i].CreatedAt == entries[j].CreatedAt {
++			return entries[i].ID < entries[j].ID
++		}
++		return entries[i].CreatedAt < entries[j].CreatedAt
++	})
++	return entries, nil
++}
++
++func safeRendering() map[string]any {
++	return map[string]any{"format": "markdown", "html_allowed": false, "links": "untrusted"}
++}
++func referencesFromPayload(raw string) map[string][]string {
++	out := map[string][]string{}
++	var payload map[string]any
++	if json.Unmarshal([]byte(raw), &payload) != nil {
++		return out
++	}
++	for _, key := range []string{"tool", "claim", "proposal", "vote"} {
++		if value, ok := payload[key].(string); ok && value != "" {
++			out[key] = []string{redactText(value)}
++		}
++		if value, ok := payload[key+"_id"].(string); ok && value != "" {
++			out[key] = []string{redactText(value)}
++		}
++	}
++	return out
++}
++func writeTranscriptError(w http.ResponseWriter, r *http.Request, err error) {
++	if strings.Contains(strings.ToLower(err.Error()), "not found") {
++		WriteProblem(w, r, 404, "deliberation_not_found", "Deliberation not found", err.Error())
++		return
++	}
++	WriteProblem(w, r, 500, "transcript_failed", "Unable to load transcript", err.Error())
++}
+diff --git a/api/internal/httpapi/transcript_test.go b/api/internal/httpapi/transcript_test.go
+new file mode 100644
+index 0000000..b6a29b8
+--- /dev/null
++++ b/api/internal/httpapi/transcript_test.go
+@@ -0,0 +1,61 @@
++package httpapi
++
++import (
++	"encoding/json"
++	"net/http"
++	"net/http/httptest"
++	"path/filepath"
++	"testing"
++
++	"roundtable/internal/db"
++)
++
++func TestDeliberationTranscriptDeepLinkAndVisibility(t *testing.T) {
++	sqlDB, err := db.Open(filepath.Join(t.TempDir(), "roundtable.db"))
++	if err != nil {
++		t.Fatal(err)
++	}
++	defer sqlDB.Close()
++	store := db.NewStore(sqlDB, nil)
++	root := t.TempDir()
++	if err := store.UpsertWorkspace(t.Context(), db.Workspace{ID: "ws-transcript", DisplayName: "Transcript", RootPath: root, Status: "active", Revision: 1}); err != nil {
++		t.Fatal(err)
++	}
++	if err := store.UpsertAgent(t.Context(), db.Agent{ID: "agent-transcript", Name: "Agent", Role: "implementer", Adapter: "codex", IsEnabled: true}); err != nil {
++		t.Fatal(err)
++	}
++	if _, err := store.DB().Exec(`INSERT INTO deliberations (id, workspace_id, title, status, created_by, metadata_json) VALUES ('delib-transcript','ws-transcript','Goal','running','human','{}')`); err != nil {
++		t.Fatal(err)
++	}
++	if _, err := store.DB().Exec(`INSERT INTO deliberation_messages (id, deliberation_id, actor, message_type, body, sequence) VALUES ('msg-visible','delib-transcript','agent','reasoning_summary','Visible summary',0),('msg-hidden','delib-transcript','agent','chain_of_thought','Hidden reasoning',1)`); err != nil {
++		t.Fatal(err)
++	}
++	if _, err := store.AppendEvent(t.Context(), db.Event{RunID: "delib-transcript", Type: "deliberation.started", ActorID: "human", PayloadJSON: `{"proposal_id":"P-1"}`}); err != nil {
++		t.Fatal(err)
++	}
++	server := NewServer(Config{Store: store})
++	req := httptest.NewRequest(http.MethodGet, "/api/v1/workspaces/ws-transcript/deliberations/delib-transcript/transcript?limit=10", nil)
++	res := httptest.NewRecorder()
++	server.Handler().ServeHTTP(res, req)
++	if res.Code != http.StatusOK || string(res.Body.Bytes()) == "" {
++		t.Fatalf("list = %d %s", res.Code, res.Body.String())
++	}
++	if contains(res.Body.String(), "Hidden reasoning") {
++		t.Fatalf("hidden transcript leaked: %s", res.Body.String())
++	}
++	var page struct {
++		Items []transcriptEntry `json:"items"`
++	}
++	if err := json.Unmarshal(res.Body.Bytes(), &page); err != nil {
++		t.Fatal(err)
++	}
++	if len(page.Items) != 2 {
++		t.Fatalf("page = %+v", page)
++	}
++	req = httptest.NewRequest(http.MethodGet, "/api/v1/workspaces/ws-transcript/deliberations/delib-transcript/transcript/msg-visible", nil)
++	res = httptest.NewRecorder()
++	server.Handler().ServeHTTP(res, req)
++	if res.Code != http.StatusOK || !contains(res.Body.String(), "Visible summary") {
++		t.Fatalf("deep link = %d %s", res.Code, res.Body.String())
++	}
++}
