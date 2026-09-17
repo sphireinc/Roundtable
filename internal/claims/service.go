@@ -147,6 +147,29 @@ func (s *Service) Release(ctx context.Context, runID, claimID, actorID, reason s
 	return s.transition(ctx, runID, claimID, actorID, "released", "claim.released", reason)
 }
 
+func (s *Service) Extend(ctx context.Context, runID, claimID, actorID string, ttl time.Duration) (db.Claim, error) {
+	claim, err := s.store.GetClaim(ctx, claimID)
+	if err != nil {
+		return db.Claim{}, err
+	}
+	if claim.Status != "active" {
+		return db.Claim{}, fmt.Errorf("claim %s is not active", claimID)
+	}
+	if ttl <= 0 {
+		ttl = 15 * time.Minute
+	}
+	claim.ExpiresAt = time.Now().UTC().Add(ttl).Format(time.RFC3339)
+	claim.HeartbeatAt = time.Now().UTC().Format(time.RFC3339)
+	if err := s.store.UpsertClaim(ctx, claim); err != nil {
+		return db.Claim{}, err
+	}
+	saved, err := s.store.GetClaim(ctx, claimID)
+	if err != nil {
+		return db.Claim{}, err
+	}
+	return saved, s.appendEvent(ctx, runID, "claim.extended", actorID, saved.TaskID, map[string]any{"claim_id": saved.ID, "expires_at": saved.ExpiresAt})
+}
+
 func (s *Service) Revoke(ctx context.Context, runID, claimID, actorID, reason string) (db.Claim, error) {
 	return s.transition(ctx, runID, claimID, actorID, "revoked", "claim.revoked", reason)
 }

@@ -565,6 +565,39 @@ paths:
       summary: Rerun safe proposal validation stages without repository mutation
       requestBody: {required: false, content: {application/json: {schema: {$ref: '#/components/schemas/ValidationInput'}}}}
       responses: {'202': {description: Validation run, content: {application/json: {schema: {$ref: '#/components/schemas/ValidationRun'}}}}, '400': {$ref: '#/components/responses/Problem'}, '403': {$ref: '#/components/responses/Problem'}, '404': {$ref: '#/components/responses/Problem'}}
+  /api/v1/workspaces/{id}/claims:
+    parameters: [{name: id, in: path, required: true, schema: {type: string}}, {name: cursor, in: query, schema: {type: string}}, {name: limit, in: query, schema: {type: integer, minimum: 1, maximum: 200, default: 50}}]
+    get:
+      operationId: listClaims
+      summary: List workspace resource claims
+      responses: {'200': {description: Claims, content: {application/json: {schema: {$ref: '#/components/schemas/Claims'}}}}, '404': {$ref: '#/components/responses/Problem'}}
+  /api/v1/workspaces/{id}/claims/internal:
+    parameters: [{name: id, in: path, required: true, schema: {type: string}}, {$ref: '#/components/parameters/IdempotencyKey'}]
+    post:
+      operationId: createInternalClaim
+      summary: Acquire a claim through the orchestrator boundary
+      parameters: [{name: X-Roundtable-Orchestrator, in: header, required: true, schema: {type: string, enum: ['true']}}]
+      requestBody: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/ClaimInput'}}}}
+      responses: {'201': {description: Created, content: {application/json: {schema: {$ref: '#/components/schemas/Claim'}}}}, '400': {$ref: '#/components/responses/Problem'}, '403': {$ref: '#/components/responses/Problem'}, '409': {$ref: '#/components/responses/Problem'}}
+  /api/v1/workspaces/{id}/claims/{claim_id}:
+    parameters: [{name: id, in: path, required: true, schema: {type: string}}, {name: claim_id, in: path, required: true, schema: {type: string}}]
+    get:
+      operationId: getClaim
+      summary: Get one workspace resource claim
+      responses: {'200': {description: Claim, content: {application/json: {schema: {$ref: '#/components/schemas/Claim'}}}}, '404': {$ref: '#/components/responses/Problem'}}
+  /api/v1/workspaces/{id}/claims/{claim_id}/{action}:
+    parameters: [{name: id, in: path, required: true, schema: {type: string}}, {name: claim_id, in: path, required: true, schema: {type: string}}, {name: action, in: path, required: true, schema: {type: string, enum: [extend, release, force-release]}}, {$ref: '#/components/parameters/ActorID'}, {$ref: '#/components/parameters/ActorRole'}, {$ref: '#/components/parameters/IdempotencyKey'}]
+    post:
+      operationId: transitionClaim
+      summary: Extend or release a claim
+      requestBody: {required: false, content: {application/json: {schema: {$ref: '#/components/schemas/ClaimExtendInput'}}}}
+      responses: {'200': {description: Updated claim, content: {application/json: {schema: {$ref: '#/components/schemas/Claim'}}}}, '400': {$ref: '#/components/responses/Problem'}, '403': {$ref: '#/components/responses/Problem'}, '409': {$ref: '#/components/responses/Problem'}}
+  /api/v1/workspaces/{id}/claims/contentions:
+    parameters: [{name: id, in: path, required: true, schema: {type: string}}, {name: resource_id, in: query, schema: {type: string}}, {name: cursor, in: query, schema: {type: string}}, {name: limit, in: query, schema: {type: integer, minimum: 1, maximum: 200, default: 50}}]
+    get:
+      operationId: listClaimContentions
+      summary: List active claims that may contend for a resource
+      responses: {'200': {description: Claim contentions, content: {application/json: {schema: {$ref: '#/components/schemas/Contentions'}}}}, '404': {$ref: '#/components/responses/Problem'}}
 components:
   parameters:
     ActorID:
@@ -1047,6 +1080,67 @@ components:
         stages: {type: object, additionalProperties: true}
         commands: {type: object, additionalProperties: {type: string}}
         output: {type: string}
+    ClaimInput:
+      type: object
+      required: [agent_id, task_id, resource_type, mode]
+      properties:
+        claim_id: {type: string}
+        agent_id: {type: string}
+        session_id: {type: string}
+        task_id: {type: string}
+        resource_id: {type: string}
+        resource_type: {type: string, enum: [file, directory, symbol, command, schema, endpoint, test_suite, custom]}
+        path: {type: string}
+        symbol: {type: string}
+        mode: {type: string, enum: [exclusive, shared, advisory, execution]}
+        run_id: {type: string}
+        base_hash: {type: string}
+        ttl_seconds: {type: integer, minimum: 1}
+        rationale: {type: string}
+    ClaimExtendInput:
+      type: object
+      properties:
+        ttl_seconds: {type: integer, minimum: 1}
+    Claim:
+      type: object
+      required: [id, workspace_id, agent_id, task_id, resource_id, resource_type, mode, state, acquired_at, lease_expires_at]
+      properties:
+        id: {type: string}
+        workspace_id: {type: string}
+        agent_id: {type: string}
+        session_id: {type: string}
+        task_id: {type: string}
+        resource_id: {type: string}
+        resource_type: {type: string}
+        path: {type: string}
+        symbol: {type: string}
+        mode: {type: string}
+        base_hash: {type: string}
+        state: {type: string, enum: [active, released, revoked, suspended, expired]}
+        rationale: {type: string}
+        acquired_at: {type: string, format: date-time}
+        lease_expires_at: {type: string, format: date-time}
+    Claims:
+      type: object
+      required: [items]
+      properties:
+        items: {type: array, items: {$ref: '#/components/schemas/Claim'}}
+        next_cursor: {type: [string, 'null']}
+    Contention:
+      type: object
+      required: [claim_id, resource_id, agent_id, state, reason]
+      properties:
+        claim_id: {type: string}
+        resource_id: {type: string}
+        agent_id: {type: string}
+        state: {type: string}
+        reason: {type: string}
+    Contentions:
+      type: object
+      required: [items]
+      properties:
+        items: {type: array, items: {$ref: '#/components/schemas/Contention'}}
+        next_cursor: {type: [string, 'null']}
     HealthResponse:
       type: object
       required: [status, version, request_id]
