@@ -1,0 +1,487 @@
+diff --git a/api/internal/httpapi/server.go b/api/internal/httpapi/server.go
+index 541c90e..80a4bcf 100644
+--- a/api/internal/httpapi/server.go
++++ b/api/internal/httpapi/server.go
+@@ -127,6 +127,12 @@ func (s *Server) Handler() http.Handler {
+ 	mux.HandleFunc("POST /api/v1/workspaces/{id}/sessions/{session_id}/resume", s.resumeSession)
+ 	mux.HandleFunc("POST /api/v1/workspaces/{id}/sessions/{session_id}/stop", s.stopSession)
+ 	mux.HandleFunc("POST /api/v1/workspaces/{id}/sessions/{session_id}/terminate", s.terminateSession)
++	mux.HandleFunc("GET /api/v1/workspaces/{id}/sessions/{session_id}/logs", s.sessionLogs)
++	mux.HandleFunc("GET /api/v1/workspaces/{id}/sessions/{session_id}/tool-calls", s.sessionToolCalls)
++	mux.HandleFunc("GET /api/v1/workspaces/{id}/sessions/{session_id}/claims", s.sessionClaims)
++	mux.HandleFunc("GET /api/v1/workspaces/{id}/sessions/{session_id}/proposals", s.sessionProposals)
++	mux.HandleFunc("GET /api/v1/workspaces/{id}/sessions/{session_id}/metrics", s.sessionMetrics)
++	mux.HandleFunc("GET /api/v1/workspaces/{id}/sessions/{session_id}/environment", s.sessionEnvironment)
+ 	return requestIDs(securityHeaders(jsonDefaults(mux)))
+ }
+ 
+diff --git a/api/openapi.yaml b/api/openapi.yaml
+index c8a2479..fc20f63 100644
+--- a/api/openapi.yaml
++++ b/api/openapi.yaml
+@@ -420,6 +420,50 @@ paths:
+       - {name: session_id, in: path, required: true, schema: {type: string}}
+       - {name: status, in: query, schema: {type: string, enum: [starting, active, running, paused, resuming]}}
+     post: {operationId: heartbeatSession, summary: Report session heartbeat, responses: {'200': {description: Heartbeat accepted, content: {application/json: {schema: {$ref: '#/components/schemas/Session'}}}}, '409': {$ref: '#/components/responses/Problem'}}}
++  /api/v1/workspaces/{id}/sessions/{session_id}/logs:
++    parameters:
++      - {name: id, in: path, required: true, schema: {type: string}}
++      - {name: session_id, in: path, required: true, schema: {type: string}}
++      - {name: cursor, in: query, schema: {type: string}}
++      - {name: limit, in: query, schema: {type: integer, minimum: 1, maximum: 200, default: 50}}
++    get:
++      operationId: listSessionLogs
++      summary: List redacted session event logs
++      responses: {'200': {description: Session logs, content: {application/json: {schema: {$ref: '#/components/schemas/SessionLogs'}}}}, '404': {$ref: '#/components/responses/Problem'}}
++  /api/v1/workspaces/{id}/sessions/{session_id}/tool-calls:
++    parameters:
++      - {name: id, in: path, required: true, schema: {type: string}}
++      - {name: session_id, in: path, required: true, schema: {type: string}}
++      - {name: cursor, in: query, schema: {type: string}}
++      - {name: limit, in: query, schema: {type: integer, minimum: 1, maximum: 200, default: 50}}
++    get:
++      operationId: listSessionToolCalls
++      summary: List user-visible MCP tool and action records
++      responses: {'200': {description: Tool calls, content: {application/json: {schema: {$ref: '#/components/schemas/SessionToolCalls'}}}}, '404': {$ref: '#/components/responses/Problem'}}
++  /api/v1/workspaces/{id}/sessions/{session_id}/claims:
++    parameters: [{name: id, in: path, required: true, schema: {type: string}}, {name: session_id, in: path, required: true, schema: {type: string}}, {name: cursor, in: query, schema: {type: string}}, {name: limit, in: query, schema: {type: integer, minimum: 1, maximum: 200, default: 50}}]
++    get:
++      operationId: listSessionClaims
++      summary: List current and historical claims for the session agent
++      responses: {'200': {description: Claims, content: {application/json: {schema: {$ref: '#/components/schemas/PaginatedClaims'}}}}, '404': {$ref: '#/components/responses/Problem'}}
++  /api/v1/workspaces/{id}/sessions/{session_id}/proposals:
++    parameters: [{name: id, in: path, required: true, schema: {type: string}}, {name: session_id, in: path, required: true, schema: {type: string}}, {name: cursor, in: query, schema: {type: string}}, {name: limit, in: query, schema: {type: integer, minimum: 1, maximum: 200, default: 50}}]
++    get:
++      operationId: listSessionProposals
++      summary: List proposal references for the session agent
++      responses: {'200': {description: Proposals, content: {application/json: {schema: {$ref: '#/components/schemas/PaginatedSessionProposals'}}}}, '404': {$ref: '#/components/responses/Problem'}}
++  /api/v1/workspaces/{id}/sessions/{session_id}/metrics:
++    parameters: [{name: id, in: path, required: true, schema: {type: string}}, {name: session_id, in: path, required: true, schema: {type: string}}]
++    get:
++      operationId: getSessionMetrics
++      summary: Get adapter-supplied usage metrics
++      responses: {'200': {description: Session metrics, content: {application/json: {schema: {$ref: '#/components/schemas/SessionMetrics'}}}}, '404': {$ref: '#/components/responses/Problem'}}
++  /api/v1/workspaces/{id}/sessions/{session_id}/environment:
++    parameters: [{name: id, in: path, required: true, schema: {type: string}}, {name: session_id, in: path, required: true, schema: {type: string}}]
++    get:
++      operationId: getSessionEnvironment
++      summary: Get safe environment fingerprint metadata
++      responses: {'200': {description: Environment fingerprint, content: {application/json: {schema: {$ref: '#/components/schemas/SessionEnvironment'}}}}, '404': {$ref: '#/components/responses/Problem'}}
+ components:
+   parameters:
+     ActorID:
+@@ -666,6 +710,60 @@ components:
+       additionalProperties: false
+       properties:
+         impact_details: {type: string}
++    SessionLog:
++      type: object
++      required: [id, event_type, created_at]
++      properties:
++        id: {type: integer}
++        event_type: {type: string}
++        payload: {type: string}
++        created_at: {type: string, format: date-time}
++    SessionLogs:
++      type: object
++      required: [items]
++      properties:
++        items: {type: array, items: {$ref: '#/components/schemas/SessionLog'}}
++        next_cursor: {type: [string, 'null']}
++    SessionToolCall:
++      type: object
++      required: [id, tool, created_at]
++      properties:
++        id: {type: integer}
++        tool: {type: string}
++        action: {type: string}
++        status: {type: string}
++        created_at: {type: string, format: date-time}
++    SessionToolCalls:
++      type: object
++      required: [items]
++      properties:
++        items: {type: array, items: {$ref: '#/components/schemas/SessionToolCall'}}
++        next_cursor: {type: [string, 'null']}
++    PaginatedClaims:
++      type: object
++      required: [items]
++      properties:
++        items: {type: array, items: {type: object}}
++        next_cursor: {type: [string, 'null']}
++    PaginatedSessionProposals:
++      type: object
++      required: [items]
++      properties:
++        items: {type: array, items: {type: object}}
++        next_cursor: {type: [string, 'null']}
++    SessionMetrics:
++      type: object
++      required: [session_id, usage, source]
++      properties:
++        session_id: {type: string}
++        usage: {type: object, additionalProperties: {type: number}}
++        source: {type: string}
++    SessionEnvironment:
++      type: object
++      required: [session_id, fingerprint]
++      properties:
++        session_id: {type: string}
++        fingerprint: {type: object, additionalProperties: {type: string}}
+     HealthResponse:
+       type: object
+       required: [status, version, request_id]
+diff --git a/api/internal/httpapi/observability.go b/api/internal/httpapi/observability.go
+new file mode 100644
+index 0000000..4e5e32f
+--- /dev/null
++++ b/api/internal/httpapi/observability.go
+@@ -0,0 +1,267 @@
++package httpapi
++
++import (
++	"encoding/json"
++	"net/http"
++	"runtime"
++	"strconv"
++	"strings"
++
++	"roundtable/internal/db"
++)
++
++type sessionLog struct {
++	ID        int64  `json:"id"`
++	EventType string `json:"event_type"`
++	Payload   string `json:"payload,omitempty"`
++	CreatedAt string `json:"created_at"`
++}
++
++type sessionToolCall struct {
++	ID        int64  `json:"id"`
++	Tool      string `json:"tool"`
++	Action    string `json:"action,omitempty"`
++	Status    string `json:"status,omitempty"`
++	CreatedAt string `json:"created_at"`
++}
++
++func (s *Server) sessionLogs(w http.ResponseWriter, r *http.Request) {
++	workspace, err := s.workspace(r)
++	if err != nil {
++		writeWorkspaceError(w, r, err)
++		return
++	}
++	session, err := s.sessionForWorkspace(r, workspace)
++	if err != nil {
++		WriteProblem(w, r, 404, "session_not_found", "Session not found", err.Error())
++		return
++	}
++	events, err := s.config.Store.ListAgentSessionEvents(r.Context(), session.ID)
++	if err != nil {
++		WriteProblem(w, r, 500, "session_logs_failed", "Unable to list session logs", err.Error())
++		return
++	}
++	items := make([]sessionLog, 0, len(events))
++	for _, event := range events {
++		items = append(items, sessionLog{ID: event.ID, EventType: event.EventType, Payload: redactLogPayload(event.PayloadJSON), CreatedAt: event.CreatedAt})
++	}
++	writePage(w, r, items)
++}
++
++func (s *Server) sessionToolCalls(w http.ResponseWriter, r *http.Request) {
++	workspace, err := s.workspace(r)
++	if err != nil {
++		writeWorkspaceError(w, r, err)
++		return
++	}
++	session, err := s.sessionForWorkspace(r, workspace)
++	if err != nil {
++		WriteProblem(w, r, 404, "session_not_found", "Session not found", err.Error())
++		return
++	}
++	events, err := s.config.Store.ListEvents(r.Context(), session.RunID)
++	if err != nil {
++		WriteProblem(w, r, 500, "tool_calls_failed", "Unable to list tool calls", err.Error())
++		return
++	}
++	items := make([]sessionToolCall, 0)
++	for _, event := range events {
++		if !strings.HasPrefix(event.Type, "tool.") && !strings.Contains(strings.ToLower(event.PayloadJSON), "\"tool\"") {
++			continue
++		}
++		var payload map[string]any
++		_ = json.Unmarshal([]byte(event.PayloadJSON), &payload)
++		tool, _ := payload["tool"].(string)
++		if tool == "" {
++			tool = strings.TrimPrefix(event.Type, "tool.")
++		}
++		action, _ := payload["action"].(string)
++		status, _ := payload["status"].(string)
++		items = append(items, sessionToolCall{ID: event.ID, Tool: redactText(tool), Action: redactText(action), Status: redactText(status), CreatedAt: event.CreatedAt})
++	}
++	writePage(w, r, items)
++}
++
++func (s *Server) sessionClaims(w http.ResponseWriter, r *http.Request) {
++	workspace, err := s.workspace(r)
++	if err != nil {
++		writeWorkspaceError(w, r, err)
++		return
++	}
++	session, err := s.sessionForWorkspace(r, workspace)
++	if err != nil {
++		WriteProblem(w, r, 404, "session_not_found", "Session not found", err.Error())
++		return
++	}
++	claims, err := s.config.Store.ListClaims(r.Context())
++	if err != nil {
++		WriteProblem(w, r, 500, "claims_failed", "Unable to list claims", err.Error())
++		return
++	}
++	items := make([]db.Claim, 0)
++	for _, claim := range claims {
++		if claim.AgentID == session.AgentID {
++			claim.RationaleMD = redactText(claim.RationaleMD)
++			items = append(items, claim)
++		}
++	}
++	writePage(w, r, items)
++}
++
++func (s *Server) sessionProposals(w http.ResponseWriter, r *http.Request) {
++	workspace, err := s.workspace(r)
++	if err != nil {
++		writeWorkspaceError(w, r, err)
++		return
++	}
++	session, err := s.sessionForWorkspace(r, workspace)
++	if err != nil {
++		WriteProblem(w, r, 404, "session_not_found", "Session not found", err.Error())
++		return
++	}
++	proposals, err := s.config.Store.ListProposals(r.Context())
++	if err != nil {
++		WriteProblem(w, r, 500, "proposals_failed", "Unable to list proposals", err.Error())
++		return
++	}
++	items := make([]map[string]any, 0)
++	for _, proposal := range proposals {
++		if proposal.AgentID != session.AgentID {
++			continue
++		}
++		items = append(items, map[string]any{"id": proposal.ID, "task_id": proposal.TaskID, "title": redactText(proposal.Title), "summary_md": redactText(proposal.SummaryMD), "status": proposal.Status, "risk": proposal.Risk, "created_at": proposal.CreatedAt})
++	}
++	writePage(w, r, items)
++}
++
++func (s *Server) sessionMetrics(w http.ResponseWriter, r *http.Request) {
++	workspace, err := s.workspace(r)
++	if err != nil {
++		writeWorkspaceError(w, r, err)
++		return
++	}
++	session, err := s.sessionForWorkspace(r, workspace)
++	if err != nil {
++		WriteProblem(w, r, 404, "session_not_found", "Session not found", err.Error())
++		return
++	}
++	var metadata map[string]any
++	_ = json.Unmarshal([]byte(session.MetadataJSON), &metadata)
++	usage := map[string]any{}
++	if candidate, ok := metadata["usage"].(map[string]any); ok {
++		for key, value := range candidate {
++			if isSafeMetric(key, value) {
++				usage[key] = value
++			}
++		}
++	}
++	writeJSON(w, 200, map[string]any{"session_id": session.ID, "usage": usage, "source": "adapter_metadata"})
++}
++
++func (s *Server) sessionEnvironment(w http.ResponseWriter, r *http.Request) {
++	workspace, err := s.workspace(r)
++	if err != nil {
++		writeWorkspaceError(w, r, err)
++		return
++	}
++	session, err := s.sessionForWorkspace(r, workspace)
++	if err != nil {
++		WriteProblem(w, r, 404, "session_not_found", "Session not found", err.Error())
++		return
++	}
++	writeJSON(w, 200, map[string]any{"session_id": session.ID, "fingerprint": map[string]string{"go_version": runtime.Version(), "os": runtime.GOOS, "arch": runtime.GOARCH, "adapter": session.Adapter}})
++}
++
++func writePage[T any](w http.ResponseWriter, r *http.Request, items []T) {
++	start, err := cursorOffset(r.URL.Query().Get("cursor"))
++	if err != nil {
++		WriteProblem(w, r, 400, "invalid_cursor", "Invalid cursor", err.Error())
++		return
++	}
++	limit := 50
++	if raw := r.URL.Query().Get("limit"); raw != "" {
++		limit, err = strconv.Atoi(raw)
++		if err != nil || limit < 1 || limit > 200 {
++			WriteProblem(w, r, 400, "invalid_limit", "Invalid limit", "limit must be between 1 and 200")
++			return
++		}
++	}
++	if start > len(items) {
++		start = len(items)
++	}
++	end := start + limit
++	if end > len(items) {
++		end = len(items)
++	}
++	var next *string
++	if end < len(items) {
++		value := strconv.Itoa(end)
++		next = &value
++	}
++	writeJSON(w, 200, map[string]any{"items": items[start:end], "next_cursor": next})
++}
++
++func redactLogPayload(raw string) string {
++	var value any
++	if json.Unmarshal([]byte(raw), &value) == nil {
++		value = redactJSON(value)
++		encoded, err := json.Marshal(value)
++		if err == nil {
++			return string(encoded)
++		}
++	}
++	return redactText(raw)
++}
++func redactJSON(value any) any {
++	switch typed := value.(type) {
++	case map[string]any:
++		for key, child := range typed {
++			lower := strings.ToLower(key)
++			if strings.Contains(lower, "token") || strings.Contains(lower, "password") || strings.Contains(lower, "secret") || strings.Contains(lower, "api_key") || strings.Contains(lower, "authorization") || strings.Contains(lower, "chain_of_thought") {
++				typed[key] = "[REDACTED]"
++			} else {
++				typed[key] = redactJSON(child)
++			}
++		}
++	case []any:
++		for i := range typed {
++			typed[i] = redactJSON(typed[i])
++		}
++	case string:
++		return redactText(typed)
++	}
++	return value
++}
++func redactText(value string) string {
++	for _, key := range []string{"token", "password", "secret", "api_key", "authorization"} {
++		value = redactAfterKey(value, key)
++	}
++	return value
++}
++func redactAfterKey(value, key string) string {
++	lower := strings.ToLower(value)
++	marker := key + "="
++	index := strings.Index(lower, marker)
++	if index < 0 {
++		return value
++	}
++	end := strings.IndexAny(value[index+len(marker):], " &,\n")
++	if end < 0 {
++		end = len(value) - index - len(marker)
++	}
++	return value[:index+len(marker)] + "[REDACTED]" + value[index+len(marker)+end:]
++}
++func isSafeMetric(key string, value any) bool {
++	lowerKey := strings.ToLower(key)
++	for _, sensitive := range []string{"secret", "password", "api_key", "authorization"} {
++		if strings.Contains(lowerKey, sensitive) {
++			return false
++		}
++	}
++	switch value.(type) {
++	case float64, int, int64, json.Number:
++		return true
++	default:
++		return false
++	}
++}
+diff --git a/api/internal/httpapi/observability_test.go b/api/internal/httpapi/observability_test.go
+new file mode 100644
+index 0000000..378c81c
+--- /dev/null
++++ b/api/internal/httpapi/observability_test.go
+@@ -0,0 +1,75 @@
++package httpapi
++
++import (
++	"encoding/json"
++	"net/http"
++	"net/http/httptest"
++	"path/filepath"
++	"testing"
++
++	"roundtable/internal/db"
++)
++
++func TestSessionObservabilityIsPaginatedAndRedacted(t *testing.T) {
++	sqlDB, err := db.Open(filepath.Join(t.TempDir(), "roundtable.db"))
++	if err != nil {
++		t.Fatal(err)
++	}
++	defer sqlDB.Close()
++	store := db.NewStore(sqlDB, nil)
++	root := t.TempDir()
++	if err := store.UpsertWorkspace(t.Context(), db.Workspace{ID: "ws-observe", DisplayName: "Observe", RootPath: root, Status: "active", Revision: 1}); err != nil {
++		t.Fatal(err)
++	}
++	if err := store.UpsertAgent(t.Context(), db.Agent{ID: "agent-observe", Name: "Worker", Role: "implementer", Adapter: "codex", Status: "idle", IsEnabled: true}); err != nil {
++		t.Fatal(err)
++	}
++	if err := store.UpsertAgentSession(t.Context(), db.AgentSession{ID: "session-observe", AgentID: "agent-observe", RunID: "run-observe", Adapter: "codex", WorkingDirectory: root, Status: "active", MetadataJSON: `{"workspace_id":"ws-observe","usage":{"input_tokens":12,"secret_value":99}}`}); err != nil {
++		t.Fatal(err)
++	}
++	if _, err := store.AppendAgentSessionEvent(t.Context(), db.AgentSessionEvent{SessionID: "session-observe", EventType: "output", PayloadJSON: `{"message":"ok","token":"dont-return"}`}); err != nil {
++		t.Fatal(err)
++	}
++	if _, err := store.AppendEvent(t.Context(), db.Event{RunID: "run-observe", Type: "tool.mcp_call", PayloadJSON: `{"tool":"repo.read_file","action":"read","password":"dont-return"}`}); err != nil {
++		t.Fatal(err)
++	}
++	server := NewServer(Config{Store: store})
++	request := httptest.NewRequest(http.MethodGet, "/api/v1/workspaces/ws-observe/sessions/session-observe/logs?limit=1", nil)
++	response := httptest.NewRecorder()
++	server.Handler().ServeHTTP(response, request)
++	if response.Code != http.StatusOK || response.Header().Get("X-Request-ID") == "" {
++		t.Fatalf("logs = %d %s", response.Code, response.Body.String())
++	}
++	if string(response.Body.Bytes()) == "" || contains(response.Body.String(), "dont-return") {
++		t.Fatalf("logs leaked secret: %s", response.Body.String())
++	}
++	request = httptest.NewRequest(http.MethodGet, "/api/v1/workspaces/ws-observe/sessions/session-observe/tool-calls", nil)
++	response = httptest.NewRecorder()
++	server.Handler().ServeHTTP(response, request)
++	if response.Code != http.StatusOK || !contains(response.Body.String(), "repo.read_file") || contains(response.Body.String(), "dont-return") {
++		t.Fatalf("tools = %d %s", response.Code, response.Body.String())
++	}
++	request = httptest.NewRequest(http.MethodGet, "/api/v1/workspaces/ws-observe/sessions/session-observe/metrics", nil)
++	response = httptest.NewRecorder()
++	server.Handler().ServeHTTP(response, request)
++	var metrics map[string]any
++	if err := json.Unmarshal(response.Body.Bytes(), &metrics); err != nil {
++		t.Fatal(err)
++	}
++	usage, _ := metrics["usage"].(map[string]any)
++	if usage["input_tokens"] != float64(12) || usage["secret_value"] != nil {
++		t.Fatalf("metrics = %+v", metrics)
++	}
++}
++
++func contains(value, fragment string) bool {
++	return len(value) >= len(fragment) && (value == fragment || indexOf(value, fragment) >= 0)
++}
++func indexOf(value, fragment string) int {
++	for i := 0; i+len(fragment) <= len(value); i++ {
++		if value[i:i+len(fragment)] == fragment {
++			return i
++		}
++	}
++	return -1
++}

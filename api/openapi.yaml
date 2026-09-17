@@ -420,6 +420,50 @@ paths:
       - {name: session_id, in: path, required: true, schema: {type: string}}
       - {name: status, in: query, schema: {type: string, enum: [starting, active, running, paused, resuming]}}
     post: {operationId: heartbeatSession, summary: Report session heartbeat, responses: {'200': {description: Heartbeat accepted, content: {application/json: {schema: {$ref: '#/components/schemas/Session'}}}}, '409': {$ref: '#/components/responses/Problem'}}}
+  /api/v1/workspaces/{id}/sessions/{session_id}/logs:
+    parameters:
+      - {name: id, in: path, required: true, schema: {type: string}}
+      - {name: session_id, in: path, required: true, schema: {type: string}}
+      - {name: cursor, in: query, schema: {type: string}}
+      - {name: limit, in: query, schema: {type: integer, minimum: 1, maximum: 200, default: 50}}
+    get:
+      operationId: listSessionLogs
+      summary: List redacted session event logs
+      responses: {'200': {description: Session logs, content: {application/json: {schema: {$ref: '#/components/schemas/SessionLogs'}}}}, '404': {$ref: '#/components/responses/Problem'}}
+  /api/v1/workspaces/{id}/sessions/{session_id}/tool-calls:
+    parameters:
+      - {name: id, in: path, required: true, schema: {type: string}}
+      - {name: session_id, in: path, required: true, schema: {type: string}}
+      - {name: cursor, in: query, schema: {type: string}}
+      - {name: limit, in: query, schema: {type: integer, minimum: 1, maximum: 200, default: 50}}
+    get:
+      operationId: listSessionToolCalls
+      summary: List user-visible MCP tool and action records
+      responses: {'200': {description: Tool calls, content: {application/json: {schema: {$ref: '#/components/schemas/SessionToolCalls'}}}}, '404': {$ref: '#/components/responses/Problem'}}
+  /api/v1/workspaces/{id}/sessions/{session_id}/claims:
+    parameters: [{name: id, in: path, required: true, schema: {type: string}}, {name: session_id, in: path, required: true, schema: {type: string}}, {name: cursor, in: query, schema: {type: string}}, {name: limit, in: query, schema: {type: integer, minimum: 1, maximum: 200, default: 50}}]
+    get:
+      operationId: listSessionClaims
+      summary: List current and historical claims for the session agent
+      responses: {'200': {description: Claims, content: {application/json: {schema: {$ref: '#/components/schemas/PaginatedClaims'}}}}, '404': {$ref: '#/components/responses/Problem'}}
+  /api/v1/workspaces/{id}/sessions/{session_id}/proposals:
+    parameters: [{name: id, in: path, required: true, schema: {type: string}}, {name: session_id, in: path, required: true, schema: {type: string}}, {name: cursor, in: query, schema: {type: string}}, {name: limit, in: query, schema: {type: integer, minimum: 1, maximum: 200, default: 50}}]
+    get:
+      operationId: listSessionProposals
+      summary: List proposal references for the session agent
+      responses: {'200': {description: Proposals, content: {application/json: {schema: {$ref: '#/components/schemas/PaginatedSessionProposals'}}}}, '404': {$ref: '#/components/responses/Problem'}}
+  /api/v1/workspaces/{id}/sessions/{session_id}/metrics:
+    parameters: [{name: id, in: path, required: true, schema: {type: string}}, {name: session_id, in: path, required: true, schema: {type: string}}]
+    get:
+      operationId: getSessionMetrics
+      summary: Get adapter-supplied usage metrics
+      responses: {'200': {description: Session metrics, content: {application/json: {schema: {$ref: '#/components/schemas/SessionMetrics'}}}}, '404': {$ref: '#/components/responses/Problem'}}
+  /api/v1/workspaces/{id}/sessions/{session_id}/environment:
+    parameters: [{name: id, in: path, required: true, schema: {type: string}}, {name: session_id, in: path, required: true, schema: {type: string}}]
+    get:
+      operationId: getSessionEnvironment
+      summary: Get safe environment fingerprint metadata
+      responses: {'200': {description: Environment fingerprint, content: {application/json: {schema: {$ref: '#/components/schemas/SessionEnvironment'}}}}, '404': {$ref: '#/components/responses/Problem'}}
 components:
   parameters:
     ActorID:
@@ -666,6 +710,60 @@ components:
       additionalProperties: false
       properties:
         impact_details: {type: string}
+    SessionLog:
+      type: object
+      required: [id, event_type, created_at]
+      properties:
+        id: {type: integer}
+        event_type: {type: string}
+        payload: {type: string}
+        created_at: {type: string, format: date-time}
+    SessionLogs:
+      type: object
+      required: [items]
+      properties:
+        items: {type: array, items: {$ref: '#/components/schemas/SessionLog'}}
+        next_cursor: {type: [string, 'null']}
+    SessionToolCall:
+      type: object
+      required: [id, tool, created_at]
+      properties:
+        id: {type: integer}
+        tool: {type: string}
+        action: {type: string}
+        status: {type: string}
+        created_at: {type: string, format: date-time}
+    SessionToolCalls:
+      type: object
+      required: [items]
+      properties:
+        items: {type: array, items: {$ref: '#/components/schemas/SessionToolCall'}}
+        next_cursor: {type: [string, 'null']}
+    PaginatedClaims:
+      type: object
+      required: [items]
+      properties:
+        items: {type: array, items: {type: object}}
+        next_cursor: {type: [string, 'null']}
+    PaginatedSessionProposals:
+      type: object
+      required: [items]
+      properties:
+        items: {type: array, items: {type: object}}
+        next_cursor: {type: [string, 'null']}
+    SessionMetrics:
+      type: object
+      required: [session_id, usage, source]
+      properties:
+        session_id: {type: string}
+        usage: {type: object, additionalProperties: {type: number}}
+        source: {type: string}
+    SessionEnvironment:
+      type: object
+      required: [session_id, fingerprint]
+      properties:
+        session_id: {type: string}
+        fingerprint: {type: object, additionalProperties: {type: string}}
     HealthResponse:
       type: object
       required: [status, version, request_id]
