@@ -670,6 +670,20 @@ paths:
       operationId: getTransactionRecovery
       summary: Return safe recovery actions computed from transaction state
       responses: {'200': {description: Recovery actions, content: {application/json: {schema: {$ref: '#/components/schemas/TransactionRecovery'}}}}, '404': {$ref: '#/components/responses/Problem'}}
+  /api/v1/workspaces/{id}/runs/status:
+    parameters: [{name: id, in: path, required: true, schema: {type: string}}]
+    get:
+      operationId: getRunStatus
+      summary: Get workspace run state and aggregate activity
+      responses: {'200': {description: Run status, content: {application/json: {schema: {$ref: '#/components/schemas/RunControl'}}}}, '404': {$ref: '#/components/responses/Problem'}}
+  /api/v1/workspaces/{id}/runs/{action}:
+    parameters: [{name: id, in: path, required: true, schema: {type: string}}, {name: action, in: path, required: true, schema: {type: string, enum: [start, pause, resume, stop, force-stop]}}, {$ref: '#/components/parameters/ActorID'}, {$ref: '#/components/parameters/ActorRole'}, {$ref: '#/components/parameters/IdempotencyKey'}]
+    post:
+      operationId: transitionRun
+      summary: Start, pause intake, resume, or stop a workspace run
+      description: Run state is distinct from individual agent-session state. All control transitions require a human role and are audited.
+      requestBody: {required: false, content: {application/json: {schema: {$ref: '#/components/schemas/RunStartInput'}}}}
+      responses: {'200': {description: Run transition, content: {application/json: {schema: {$ref: '#/components/schemas/RunTransition'}}}}, '400': {$ref: '#/components/responses/Problem'}, '403': {$ref: '#/components/responses/Problem'}, '409': {$ref: '#/components/responses/Problem'}}
   /api/v1/workspaces/{id}/transactions/{transaction_id}/{action}:
     parameters: [{name: id, in: path, required: true, schema: {type: string}}, {name: transaction_id, in: path, required: true, schema: {type: string}}, {name: action, in: path, required: true, schema: {type: string, enum: [stage, validate, apply, cancel, retry, compensate]}}, {$ref: '#/components/parameters/ActorID'}, {$ref: '#/components/parameters/ActorRole'}, {$ref: '#/components/parameters/IdempotencyKey'}]
     post:
@@ -1517,6 +1531,31 @@ components:
         repository_state: {type: string}
         actions: {type: array, items: {type: string}}
         blocked_reason: {type: string}
+    RunControl:
+      type: object
+      required: [run_id, workspace_id, goal, state, active_agent_count, active_deliberations, open_proposals, pending_approvals, blockers, updated_at]
+      properties:
+        run_id: {type: string}
+        workspace_id: {type: string}
+        goal: {type: string}
+        state: {type: string, enum: [stopped, starting, active, paused-intake, draining, stopping, degraded]}
+        active_agent_count: {type: integer, minimum: 0}
+        active_deliberations: {type: integer, minimum: 0}
+        open_proposals: {type: integer, minimum: 0}
+        pending_approvals: {type: integer, minimum: 0}
+        blockers: {type: integer, minimum: 0}
+        updated_at: {type: string, format: date-time}
+    RunStartInput:
+      type: object
+      properties:
+        run_id: {type: string}
+        goal: {type: string}
+    RunTransition:
+      type: object
+      required: [run_id, state]
+      properties:
+        run_id: {type: string}
+        state: {type: string}
     ContentionResolutionInput:
       type: object
       required: [resolution]

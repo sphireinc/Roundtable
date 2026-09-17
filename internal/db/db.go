@@ -293,6 +293,7 @@ func ensureWorkspaceHardening(db *sql.DB) error {
 		if err := addColumnIfMissing(db, "policies", column); err != nil { return err }
 	}
 	if err := addColumnIfMissing(db, "policy_revisions", "status TEXT NOT NULL DEFAULT 'draft'"); err != nil { return err }
+	if err := addColumnIfMissing(db, "runs", "workspace_id TEXT"); err != nil { return err }
 	for _, column := range []string{"inputs_json TEXT NOT NULL DEFAULT '{}'", "outputs_json TEXT NOT NULL DEFAULT '{}'", "log_ref TEXT", "failure_code TEXT", "recovery_state TEXT NOT NULL DEFAULT 'recoverable'"} {
 		if err := addColumnIfMissing(db, "transaction_phases", column); err != nil { return err }
 	}
