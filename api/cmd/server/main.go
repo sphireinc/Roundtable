@@ -27,7 +27,8 @@ func main() {
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	server := httpapi.NewServer(httpapi.Config{Store: db.NewStore(sqlDB, nil), AllowedWorkspaceRoots: []string{*root}})
+	version := os.Getenv("ROUNDTABLE_API_VERSION")
+	server := httpapi.NewServer(httpapi.Config{Version: version, Store: db.NewStore(sqlDB, nil), AllowedWorkspaceRoots: []string{*root}})
 	if err := server.Serve(ctx, *addr); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)

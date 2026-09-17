@@ -1,0 +1,79 @@
+diff --git a/api/cmd/server/main.go b/api/cmd/server/main.go
+index 8b671e2..4865f4e 100644
+--- a/api/cmd/server/main.go
++++ b/api/cmd/server/main.go
+@@ -27,7 +27,8 @@ func main() {
+ 
+ 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+ 	defer stop()
+-	server := httpapi.NewServer(httpapi.Config{Store: db.NewStore(sqlDB, nil), AllowedWorkspaceRoots: []string{*root}})
++	version := os.Getenv("ROUNDTABLE_API_VERSION")
++	server := httpapi.NewServer(httpapi.Config{Version: version, Store: db.NewStore(sqlDB, nil), AllowedWorkspaceRoots: []string{*root}})
+ 	if err := server.Serve(ctx, *addr); err != nil {
+ 		fmt.Fprintln(os.Stderr, err)
+ 		os.Exit(1)
+diff --git a/api/Dockerfile b/api/Dockerfile
+new file mode 100644
+index 0000000..735330e
+--- /dev/null
++++ b/api/Dockerfile
+@@ -0,0 +1,19 @@
++FROM golang:1.26-bookworm AS build
++
++WORKDIR /src
++COPY go.mod go.sum ./
++RUN go mod download
++COPY . .
++RUN CGO_ENABLED=1 go build -o /out/roundtable-api ./api/cmd/server
++
++FROM debian:bookworm-slim
++
++RUN apt-get update \
++    && apt-get install --no-install-recommends -y ca-certificates git \
++    && rm -rf /var/lib/apt/lists/*
++WORKDIR /app
++COPY --from=build /out/roundtable-api /usr/local/bin/roundtable-api
++RUN mkdir -p /app/.roundtable
++EXPOSE 8080
++ENTRYPOINT ["roundtable-api"]
++CMD ["-addr", "0.0.0.0:8080", "-workspace-root", "/workspace", "-database", "/app/.roundtable/roundtable.db"]
+diff --git a/api/docker-compose.yml b/api/docker-compose.yml
+new file mode 100644
+index 0000000..bb099ec
+--- /dev/null
++++ b/api/docker-compose.yml
+@@ -0,0 +1,13 @@
++services:
++  api:
++    build:
++      context: ..
++      dockerfile: api/Dockerfile
++    environment:
++      ROUNDTABLE_API_VERSION: ${ROUNDTABLE_API_VERSION:-dev}
++    ports:
++      - "${ROUNDTABLE_API_PORT:-8080}:8080"
++    volumes:
++      - ../.roundtable:/app/.roundtable
++      - ..:/workspace:ro
++    restart: unless-stopped
+diff --git a/api/README.md b/api/README.md
+new file mode 100644
+index 0000000..9e4b5fd
+--- /dev/null
++++ b/api/README.md
+@@ -0,0 +1,15 @@
++# Roundtable API
++
++The API is a standalone Go project boundary inside the repository. Its authoritative contract is [`openapi.yaml`](./openapi.yaml), and its container can be run independently of the UI:
++
++```bash
++docker compose -f api/docker-compose.yml up --build
++```
++
++The service listens on `http://127.0.0.1:8080` by default. Override the host port with `ROUNDTABLE_API_PORT`, and keep the repository mounted read-only at `/workspace`; only `.roundtable/` is writable for SQLite runtime state.
++
++For a host-native run from the repository root:
++
++```bash
++GOCACHE=/tmp/roundtable-go-cache go run ./api/cmd/server -addr 127.0.0.1:8080 -workspace-root .
++```
