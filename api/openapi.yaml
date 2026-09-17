@@ -691,6 +691,13 @@ paths:
       summary: Return bounded dashboard metrics and governance status
       description: The measurement window is the preceding 24 hours. Consensus success rate is approved finalized snapshots divided by all finalized snapshots. Policy pass rate is pass evaluations divided by all evaluations in the window. The response intentionally excludes proposal, claim, and activity lists.
       responses: {'200': {description: Dashboard summary, content: {application/json: {schema: {$ref: '#/components/schemas/DashboardSummary'}}}}, '404': {$ref: '#/components/responses/Problem'}}
+  /api/v1/workspaces/{id}/activity:
+    parameters: [{name: id, in: path, required: true, schema: {type: string}}, {name: entity, in: query, description: Filter by normalized entity type., schema: {type: string}}, {name: category, in: query, description: Filter by event category prefix., schema: {type: string}}, {name: actor, in: query, schema: {type: string}}, {name: severity, in: query, schema: {type: string}}, {name: cursor, in: query, schema: {type: string}}, {name: limit, in: query, schema: {type: integer, minimum: 1, maximum: 200, default: 50}}]
+    get:
+      operationId: listActivityFeed
+      summary: List normalized workspace activity events
+      description: Each item contains a stable event type, normalized category/entity linkage, concise display title, and redacted metadata; clients do not parse log strings. Results are cursor-paginated.
+      responses: {'200': {description: Activity feed, content: {application/json: {schema: {$ref: '#/components/schemas/ActivityFeed'}}}}, '404': {$ref: '#/components/responses/Problem'}}
   /api/v1/workspaces/{id}/transactions/{transaction_id}/{action}:
     parameters: [{name: id, in: path, required: true, schema: {type: string}}, {name: transaction_id, in: path, required: true, schema: {type: string}}, {name: action, in: path, required: true, schema: {type: string, enum: [stage, validate, apply, cancel, retry, compensate]}}, {$ref: '#/components/parameters/ActorID'}, {$ref: '#/components/parameters/ActorRole'}, {$ref: '#/components/parameters/IdempotencyKey'}]
     post:
@@ -1579,6 +1586,26 @@ components:
         memory_oracle: {type: string}
         run_state: {type: string}
         repository: {type: object, additionalProperties: true}
+    ActivityItem:
+      type: object
+      required: [id, type, category, entity_type, severity, title, metadata, created_at]
+      properties:
+        id: {type: integer}
+        type: {type: string}
+        category: {type: string}
+        actor_id: {type: string}
+        entity_type: {type: string}
+        entity_id: {type: string}
+        severity: {type: string}
+        title: {type: string}
+        metadata: {type: object, additionalProperties: true}
+        created_at: {type: string, format: date-time}
+    ActivityFeed:
+      type: object
+      required: [items]
+      properties:
+        items: {type: array, items: {$ref: '#/components/schemas/ActivityItem'}}
+        next_cursor: {type: [string, 'null']}
     ContentionResolutionInput:
       type: object
       required: [resolution]
