@@ -1,0 +1,257 @@
+diff --git a/api/internal/httpapi/server.go b/api/internal/httpapi/server.go
+index bdfc681..98ce7e2 100644
+--- a/api/internal/httpapi/server.go
++++ b/api/internal/httpapi/server.go
+@@ -151,6 +151,7 @@ func (s *Server) Handler() http.Handler {
+ 	mux.HandleFunc("GET /api/v1/workspaces/{id}/proposals/{proposal_id}/patch/files", s.patchFilesAPI)
+ 	mux.HandleFunc("GET /api/v1/workspaces/{id}/proposals/{proposal_id}/patch/diff", s.patchDiffAPI)
+ 	mux.HandleFunc("GET /api/v1/workspaces/{id}/proposals/{proposal_id}/patch/symbol-impact", s.patchSymbolsAPI)
++	mux.HandleFunc("POST /api/v1/workspaces/{id}/proposals/{proposal_id}/validation", s.validateProposalAPI)
+ 	return requestIDs(securityHeaders(jsonDefaults(mux)))
+ }
+ 
+diff --git a/api/openapi.yaml b/api/openapi.yaml
+index 0252e40..8d87db9 100644
+--- a/api/openapi.yaml
++++ b/api/openapi.yaml
+@@ -558,6 +558,13 @@ paths:
+       operationId: listPatchSymbolImpact
+       summary: List symbols impacted by an immutable patch
+       responses: {'200': {description: Symbol impact, content: {application/json: {schema: {$ref: '#/components/schemas/PatchSymbols'}}}}, '400': {$ref: '#/components/responses/Problem'}}
++  /api/v1/workspaces/{id}/proposals/{proposal_id}/validation:
++    parameters: [{name: id, in: path, required: true, schema: {type: string}}, {name: proposal_id, in: path, required: true, schema: {type: string}}, {$ref: '#/components/parameters/ActorID'}, {$ref: '#/components/parameters/ActorRole'}, {$ref: '#/components/parameters/IdempotencyKey'}]
++    post:
++      operationId: rerunProposalValidation
++      summary: Rerun safe proposal validation stages without repository mutation
++      requestBody: {required: false, content: {application/json: {schema: {$ref: '#/components/schemas/ValidationInput'}}}}
++      responses: {'202': {description: Validation run, content: {application/json: {schema: {$ref: '#/components/schemas/ValidationRun'}}}}, '400': {$ref: '#/components/responses/Problem'}, '403': {$ref: '#/components/responses/Problem'}, '404': {$ref: '#/components/responses/Problem'}}
+ components:
+   parameters:
+     ActorID:
+@@ -1023,6 +1030,23 @@ components:
+       properties:
+         items: {type: array, items: {$ref: '#/components/schemas/PatchSymbol'}}
+         next_cursor: {type: [string, 'null']}
++    ValidationInput:
++      type: object
++      additionalProperties: false
++      properties:
++        stages: {type: array, items: {type: string, enum: [patch_parse, apply_dry_run, static_checks, tests, policy, stale_base]}}
++    ValidationRun:
++      type: object
++      required: [run_id, proposal_id, status, started_at, completed_at, stages, commands]
++      properties:
++        run_id: {type: string}
++        proposal_id: {type: string}
++        status: {type: string, enum: [passed, failed]}
++        started_at: {type: string, format: date-time}
++        completed_at: {type: string, format: date-time}
++        stages: {type: object, additionalProperties: true}
++        commands: {type: object, additionalProperties: {type: string}}
++        output: {type: string}
+     HealthResponse:
+       type: object
+       required: [status, version, request_id]
+diff --git a/api/internal/httpapi/validation.go b/api/internal/httpapi/validation.go
+new file mode 100644
+index 0000000..9f8b583
+--- /dev/null
++++ b/api/internal/httpapi/validation.go
+@@ -0,0 +1,129 @@
++package httpapi
++
++import (
++	"context"
++	"encoding/json"
++	"fmt"
++	"net/http"
++	"os/exec"
++	"strings"
++	"time"
++
++	"roundtable/internal/db"
++	"roundtable/internal/proposals"
++)
++
++type validationInput struct {
++	Stages []string `json:"stages"`
++}
++type validationResponse struct {
++	RunID       string            `json:"run_id"`
++	ProposalID  string            `json:"proposal_id"`
++	Status      string            `json:"status"`
++	StartedAt   string            `json:"started_at"`
++	CompletedAt string            `json:"completed_at"`
++	Stages      map[string]any    `json:"stages"`
++	Commands    map[string]string `json:"commands"`
++	Output      string            `json:"output,omitempty"`
++}
++
++func (s *Server) validateProposalAPI(w http.ResponseWriter, r *http.Request) {
++	if !humanAuthorized(r) {
++		WriteProblem(w, r, 403, "forbidden", "Human authorization required", "Set X-Actor-ID and X-Actor-Role to a human role")
++		return
++	}
++	if strings.TrimSpace(r.Header.Get("Idempotency-Key")) == "" {
++		WriteProblem(w, r, 400, "idempotency_key_required", "Idempotency key required", "Validation reruns require Idempotency-Key")
++		return
++	}
++	workspace, err := s.workspace(r)
++	if err != nil {
++		writeWorkspaceError(w, r, err)
++		return
++	}
++	proposal, err := s.readProposal(r.Context(), workspace.ID, r.PathValue("proposal_id"))
++	if err != nil {
++		WriteProblem(w, r, 404, "proposal_not_found", "Proposal not found", err.Error())
++		return
++	}
++	var input validationInput
++	if r.Body != nil {
++		_ = decodeJSON(r, &input)
++	}
++	if len(input.Stages) == 0 {
++		input.Stages = []string{"patch_parse", "apply_dry_run", "policy", "stale_base"}
++	}
++	allowed := map[string]bool{"patch_parse": true, "apply_dry_run": true, "static_checks": true, "tests": true, "policy": true, "stale_base": true}
++	for _, stage := range input.Stages {
++		if !allowed[stage] {
++			WriteProblem(w, r, 400, "invalid_validation_stage", "Invalid validation stage", stage)
++			return
++		}
++	}
++	started := time.Now().UTC()
++	result := validationResponse{RunID: fmt.Sprintf("validation-%d", started.UnixNano()), ProposalID: proposal.ProposalID, Status: "passed", StartedAt: started.Format(time.RFC3339Nano), Stages: map[string]any{}, Commands: map[string]string{}}
++	service := proposals.NewService(workspace.RootPath, s.config.Store, nil)
++	validation, validateErr := service.PatchValidate(r.Context(), map[string]any{"proposal_id": proposal.ProposalID})
++	if validateErr != nil {
++		result.Status = "failed"
++		result.Output = redactText(validateErr.Error())
++	} else {
++		for _, stage := range input.Stages {
++			result.Stages[stage] = validationStageResult(stage, validation, workspace, proposal)
++		}
++	}
++	if validateErr == nil {
++		for _, stage := range input.Stages {
++			if passed, ok := result.Stages[stage].(map[string]any)["passed"].(bool); ok && !passed {
++				result.Status = "failed"
++			}
++		}
++	}
++	result.CompletedAt = time.Now().UTC().Format(time.RFC3339Nano)
++	summary, _ := json.Marshal(result.Stages)
++	run := db.TestRun{ID: result.RunID, ProposalID: proposal.ProposalID, Command: "proposal validation stages", Status: result.Status, SummaryMD: redactText(string(summary))}
++	if err := s.config.Store.UpsertTestRun(r.Context(), run); err != nil {
++		WriteProblem(w, r, 500, "validation_persist_failed", "Unable to persist validation run", err.Error())
++		return
++	}
++	writeJSON(w, 202, result)
++}
++
++func validationStageResult(stage string, validation map[string]any, workspace db.Workspace, proposal proposalResponse) map[string]any {
++	out := map[string]any{"passed": false}
++	switch stage {
++	case "patch_parse":
++		out["passed"] = validation["patch_parse_error"] == "" && validation["patch_exists"] == true
++	case "apply_dry_run":
++		out["passed"] = validation["temp_apply_error"] == ""
++	case "policy":
++		if policy, ok := validation["policy"].(map[string]any); ok {
++			out["passed"] = policy["approvable"] == true || policy["summary"] == "no policy blockers"
++		} else {
++			out["passed"] = validation["claims_valid"] == true
++		}
++	case "stale_base":
++		status, _ := inspectRepository(context.Background(), workspace)
++		out["current_head"] = status.HeadSHA
++		out["base_revision"] = proposal.BaseRevision
++		out["passed"] = proposal.BaseRevision == "" || status.HeadSHA == proposal.BaseRevision
++	case "static_checks":
++		output, err := boundedCommand(workspace.RootPath, "git", "diff", "--check")
++		out["passed"], out["output"] = err == nil, redactText(output)
++	case "tests":
++		output, err := boundedCommand(workspace.RootPath, "go", "test", "./...")
++		out["passed"], out["output"] = err == nil, redactText(output)
++	}
++	return out
++}
++func boundedCommand(dir, name string, args ...string) (string, error) {
++	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
++	defer cancel()
++	command := exec.CommandContext(ctx, name, args...)
++	command.Dir = dir
++	output, err := command.CombinedOutput()
++	if len(output) > 8192 {
++		output = output[:8192]
++	}
++	return string(output), err
++}
+diff --git a/api/internal/httpapi/validation_test.go b/api/internal/httpapi/validation_test.go
+new file mode 100644
+index 0000000..6200580
+--- /dev/null
++++ b/api/internal/httpapi/validation_test.go
+@@ -0,0 +1,62 @@
++package httpapi
++
++import (
++	"bytes"
++	"net/http"
++	"net/http/httptest"
++	"os"
++	"path/filepath"
++	"testing"
++
++	"roundtable/internal/db"
++)
++
++func TestProposalValidationRerunIsAuthorizedAndPersisted(t *testing.T) {
++	root := t.TempDir()
++	if err := os.MkdirAll(filepath.Join(root, ".roundtable", "patches"), 0o755); err != nil {
++		t.Fatal(err)
++	}
++	patch := "diff --git a/a.txt b/a.txt\n--- a/a.txt\n+++ b/a.txt\n@@ -1 +1 @@\n-old\n+new\n"
++	if err := os.WriteFile(filepath.Join(root, ".roundtable", "patches", "P.diff"), []byte(patch), 0o600); err != nil {
++		t.Fatal(err)
++	}
++	sqlDB, err := db.Open(filepath.Join(root, "state.db"))
++	if err != nil {
++		t.Fatal(err)
++	}
++	defer sqlDB.Close()
++	store := db.NewStore(sqlDB, nil)
++	if err := store.UpsertWorkspace(t.Context(), db.Workspace{ID: "ws-validate", DisplayName: "Validate", RootPath: root, Status: "active", Revision: 1}); err != nil {
++		t.Fatal(err)
++	}
++	if err := store.UpsertProposal(t.Context(), db.Proposal{ID: "P-validate", Title: "Validate", SummaryMD: "safe", PatchPath: ".roundtable/patches/P.diff", Status: "pending", Risk: "normal"}); err != nil {
++		t.Fatal(err)
++	}
++	if _, err := store.DB().Exec(`UPDATE proposals SET workspace_id = 'ws-validate' WHERE id = 'P-validate'`); err != nil {
++		t.Fatal(err)
++	}
++	server := NewServer(Config{Store: store})
++	req := httptest.NewRequest(http.MethodPost, "/api/v1/workspaces/ws-validate/proposals/P-validate/validation", bytes.NewBufferString(`{"stages":["patch_parse","stale_base"]}`))
++	req.Header.Set("X-Actor-ID", "human")
++	req.Header.Set("X-Actor-Role", "human")
++	req.Header.Set("Idempotency-Key", "validate-1")
++	res := httptest.NewRecorder()
++	server.Handler().ServeHTTP(res, req)
++	if res.Code != http.StatusAccepted || !contains(res.Body.String(), "run_id") || !contains(res.Body.String(), "patch_parse") {
++		t.Fatalf("validation = %d %s", res.Code, res.Body.String())
++	}
++	var runs int
++	if err := sqlDB.QueryRow("SELECT COUNT(*) FROM test_runs WHERE proposal_id = 'P-validate'").Scan(&runs); err != nil {
++		t.Fatal(err)
++	}
++	if runs != 1 {
++		t.Fatalf("test runs = %d", runs)
++	}
++	req = httptest.NewRequest(http.MethodPost, "/api/v1/workspaces/ws-validate/proposals/P-validate/validation", nil)
++	req.Header.Set("Idempotency-Key", "validate-2")
++	res = httptest.NewRecorder()
++	server.Handler().ServeHTTP(res, req)
++	if res.Code != http.StatusForbidden {
++		t.Fatalf("unauthorized validation = %d", res.Code)
++	}
++}

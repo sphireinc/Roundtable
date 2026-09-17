@@ -151,6 +151,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/v1/workspaces/{id}/proposals/{proposal_id}/patch/files", s.patchFilesAPI)
 	mux.HandleFunc("GET /api/v1/workspaces/{id}/proposals/{proposal_id}/patch/diff", s.patchDiffAPI)
 	mux.HandleFunc("GET /api/v1/workspaces/{id}/proposals/{proposal_id}/patch/symbol-impact", s.patchSymbolsAPI)
+	mux.HandleFunc("POST /api/v1/workspaces/{id}/proposals/{proposal_id}/validation", s.validateProposalAPI)
 	return requestIDs(securityHeaders(jsonDefaults(mux)))
 }
 
