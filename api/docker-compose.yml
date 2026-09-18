@@ -5,6 +5,8 @@ services:
       dockerfile: api/Dockerfile
     environment:
       ROUNDTABLE_API_VERSION: ${ROUNDTABLE_API_VERSION:-dev}
+      ROUNDTABLE_HUMAN_TOKEN: ${ROUNDTABLE_HUMAN_TOKEN:-}
+      ROUNDTABLE_AGENT_TOKEN: ${ROUNDTABLE_AGENT_TOKEN:-}
     ports:
       - "${ROUNDTABLE_API_PORT:-8080}:8080"
     volumes:
