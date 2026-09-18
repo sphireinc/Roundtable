@@ -766,6 +766,25 @@ paths:
       operationId: transitionMemory
       summary: Pin, archive, restore, merge, or request memory resynthesis
       responses: {'200': {description: Updated memory, content: {application/json: {schema: {$ref: '#/components/schemas/Memory'}}}}, '400': {$ref: '#/components/responses/Problem'}, '403': {$ref: '#/components/responses/Problem'}, '404': {$ref: '#/components/responses/Problem'}, '409': {$ref: '#/components/responses/Problem'}}
+  /api/v1/workspaces/{id}/notifications:
+    parameters: [{name: id, in: path, required: true, schema: {type: string}}, {name: recipient_id, in: query, schema: {type: string}}, {name: category, in: query, schema: {type: string}}, {name: severity, in: query, schema: {type: string}}, {name: unread, in: query, schema: {type: boolean}}, {name: actionable, in: query, schema: {type: boolean}}, {name: cursor, in: query, schema: {type: string}}, {name: limit, in: query, schema: {type: integer, minimum: 1, maximum: 200, default: 50}}]
+    get:
+      operationId: listNotifications
+      summary: List actionable attention items
+      description: Attention items are distinct from the raw activity stream. Acknowledgement marks an item read but does not resolve the underlying condition.
+      responses: {'200': {description: Notification collection, content: {application/json: {schema: {$ref: '#/components/schemas/Notifications'}}}}, '404': {$ref: '#/components/responses/Problem'}}
+  /api/v1/workspaces/{id}/notifications/counts:
+    parameters: [{name: id, in: path, required: true, schema: {type: string}}, {name: recipient_id, in: query, schema: {type: string}}]
+    get:
+      operationId: getNotificationCounts
+      summary: Return unread and actionable attention counts
+      responses: {'200': {description: Attention counts, content: {application/json: {schema: {$ref: '#/components/schemas/NotificationCounts'}}}}, '404': {$ref: '#/components/responses/Problem'}}
+  /api/v1/workspaces/{id}/notifications/{notification_id}/ack:
+    parameters: [{name: id, in: path, required: true, schema: {type: string}}, {name: notification_id, in: path, required: true, schema: {type: string}}, {$ref: '#/components/parameters/ActorID'}, {$ref: '#/components/parameters/IdempotencyKey'}]
+    post:
+      operationId: acknowledgeNotification
+      summary: Acknowledge an attention item without resolving it
+      responses: {'200': {description: Acknowledged notification, content: {application/json: {schema: {$ref: '#/components/schemas/Notification'}}}}, '403': {$ref: '#/components/responses/Problem'}, '404': {$ref: '#/components/responses/Problem'}, '409': {$ref: '#/components/responses/Problem'}}
   /api/v1/workspaces/{id}/transactions/{transaction_id}/{action}:
     parameters: [{name: id, in: path, required: true, schema: {type: string}}, {name: transaction_id, in: path, required: true, schema: {type: string}}, {name: action, in: path, required: true, schema: {type: string, enum: [stage, validate, apply, cancel, retry, compensate]}}, {$ref: '#/components/parameters/ActorID'}, {$ref: '#/components/parameters/ActorRole'}, {$ref: '#/components/parameters/IdempotencyKey'}]
     post:
@@ -1754,6 +1773,31 @@ components:
       type: object
       required: [memory_id, edges]
       properties: {memory_id: {type: string}, edges: {type: array, items: {type: object, additionalProperties: true}}}
+    Notification:
+      type: object
+      required: [id, workspace_id, recipient_id, severity, category, title, body, actionable, created_at]
+      properties:
+        id: {type: string}
+        workspace_id: {type: string}
+        recipient_id: {type: string}
+        severity: {type: string, enum: [info, warning, error, critical]}
+        category: {type: string, enum: [approval_required, claim_contention, transaction_failure, policy_intervention, agent_session_failure, repository_degraded, system_warning]}
+        title: {type: string}
+        body: {type: string}
+        entity_type: {type: string}
+        entity_id: {type: string}
+        read_at: {type: string, format: date-time}
+        actionable: {type: boolean}
+        resolved_at: {type: string, format: date-time}
+        created_at: {type: string, format: date-time}
+    Notifications:
+      type: object
+      required: [items]
+      properties: {items: {type: array, items: {$ref: '#/components/schemas/Notification'}}, next_cursor: {type: [string, 'null']}}
+    NotificationCounts:
+      type: object
+      required: [workspace_id, unread, actionable]
+      properties: {workspace_id: {type: string}, unread: {type: integer, minimum: 0}, actionable: {type: integer, minimum: 0}}
     LiveEventEnvelope:
       type: object
       required: [event_id, workspace_id, sequence, type, occurred_at, payload]

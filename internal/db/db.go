@@ -293,6 +293,14 @@ func ensureMemoryColumns(db *sql.DB) error {
 			return fmt.Errorf("create memory index: %w", err)
 		}
 	}
+	for _, column := range []string{"actionable INTEGER NOT NULL DEFAULT 1", "resolved_at TEXT", "resolution_note TEXT"} {
+		if err := addColumnIfMissing(db, "notifications", column); err != nil {
+			return err
+		}
+	}
+	if _, err := db.Exec("CREATE INDEX IF NOT EXISTS idx_notifications_workspace_actionable ON notifications(workspace_id, actionable, read_at, created_at DESC)"); err != nil {
+		return fmt.Errorf("create notification attention index: %w", err)
+	}
 	return nil
 }
 
