@@ -59,7 +59,7 @@ func TestMemoryOracleLifecycleSearchRevisionsAndAuthorization(t *testing.T) {
 	if out := act("pin", ""); out.Code != http.StatusOK || !bytes.Contains(out.Body.Bytes(), []byte(`"pinned":true`)) {
 		t.Fatalf("pin = %d %s", out.Code, out.Body.String())
 	}
-	rev := httptest.NewRequest(http.MethodPost, endpoint+"/"+created.ID+"/revisions", bytes.NewBufferString(`{"body_md":"Use SQLite authoritatively","reason":"clarified"}`))
+	rev := httptest.NewRequest(http.MethodPost, endpoint+"/"+created.ID+"/revisions", bytes.NewBufferString(`{"body_md":"Use SQLite authoritatively","reason":"clarified","expected_revision":1}`))
 	rev.Header.Set("X-Actor-ID", "human")
 	revRes := httptest.NewRecorder()
 	server.Handler().ServeHTTP(revRes, rev)

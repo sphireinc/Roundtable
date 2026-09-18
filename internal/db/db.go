@@ -264,6 +264,16 @@ func migrate(db *sql.DB) error {
 }
 
 func ensureMemoryColumns(db *sql.DB) error {
+	for _, stmt := range []string{
+		`CREATE TABLE IF NOT EXISTS memory_aliases (alias_id TEXT PRIMARY KEY, canonical_id TEXT NOT NULL, reason TEXT, created_by TEXT NOT NULL, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)`,
+		`CREATE TABLE IF NOT EXISTS memory_provenance_edges (id INTEGER PRIMARY KEY AUTOINCREMENT, memory_id TEXT NOT NULL, source_type TEXT NOT NULL, source_id TEXT NOT NULL, relation TEXT NOT NULL, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)`,
+		`CREATE INDEX IF NOT EXISTS idx_memory_alias_canonical ON memory_aliases(canonical_id)`,
+		`CREATE INDEX IF NOT EXISTS idx_memory_provenance_memory ON memory_provenance_edges(memory_id, source_type, source_id)`,
+	} {
+		if _, err := db.Exec(stmt); err != nil {
+			return fmt.Errorf("create memory provenance schema: %w", err)
+		}
+	}
 	for _, column := range []string{
 		"workspace_id TEXT", "tags_json TEXT NOT NULL DEFAULT '[]'", "provenance_json TEXT NOT NULL DEFAULT '{}'",
 		"source_session_id TEXT", "source_proposal_id TEXT", "confidence REAL NOT NULL DEFAULT 0.5",
