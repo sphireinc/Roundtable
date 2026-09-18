@@ -63,4 +63,28 @@ func TestMemoryRevisionExpectedVersionAndProvenanceReads(t *testing.T) {
 	if out.Code != 200 || !bytes.Contains(out.Body.Bytes(), []byte("E-1")) {
 		t.Fatalf("chain=%d %s", out.Code, out.Body.String())
 	}
+	second := httptest.NewRequest(http.MethodPost, base, bytes.NewBufferString(`{"scope":"project","kind":"decision","title":"Two","body_md":"second"}`))
+	second.Header.Set("X-Actor-ID", "human")
+	out = httptest.NewRecorder()
+	server.Handler().ServeHTTP(out, second)
+	if out.Code != 201 {
+		t.Fatalf("second create=%d %s", out.Code, out.Body.String())
+	}
+	var secondItem memoryResponse
+	if err := json.Unmarshal(out.Body.Bytes(), &secondItem); err != nil {
+		t.Fatal(err)
+	}
+	merge := httptest.NewRequest(http.MethodPost, base+"/"+item.ID+"/merge?target_id="+secondItem.ID, nil)
+	merge.Header.Set("X-Actor-ID", "human")
+	out = httptest.NewRecorder()
+	server.Handler().ServeHTTP(out, merge)
+	if out.Code != 200 || !bytes.Contains(out.Body.Bytes(), []byte(`"id":"M-merge-`)) {
+		t.Fatalf("merge=%d %s", out.Code, out.Body.String())
+	}
+	graph := httptest.NewRequest(http.MethodGet, base+"/"+item.ID+"/graph", nil)
+	out = httptest.NewRecorder()
+	server.Handler().ServeHTTP(out, graph)
+	if out.Code != 200 || !bytes.Contains(out.Body.Bytes(), []byte(`"canonical_id":"M-merge-`)) {
+		t.Fatalf("graph=%d %s", out.Code, out.Body.String())
+	}
 }
