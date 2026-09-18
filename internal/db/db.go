@@ -254,8 +254,34 @@ func migrate(db *sql.DB) error {
 	if err := ensureWorkspaceColumns(db); err != nil {
 		return err
 	}
+	if err := ensureMemoryColumns(db); err != nil {
+		return err
+	}
 	if err := ensureWorkspaceHardening(db); err != nil {
 		return err
+	}
+	return nil
+}
+
+func ensureMemoryColumns(db *sql.DB) error {
+	for _, column := range []string{
+		"workspace_id TEXT", "tags_json TEXT NOT NULL DEFAULT '[]'", "provenance_json TEXT NOT NULL DEFAULT '{}'",
+		"source_session_id TEXT", "source_proposal_id TEXT", "confidence REAL NOT NULL DEFAULT 0.5",
+		"reliability REAL NOT NULL DEFAULT 0.5", "pinned INTEGER NOT NULL DEFAULT 0", "revision INTEGER NOT NULL DEFAULT 1",
+		"archived_at TEXT", "resynthesis_status TEXT NOT NULL DEFAULT 'none'",
+	} {
+		if err := addColumnIfMissing(db, "memory_entries", column); err != nil {
+			return err
+		}
+	}
+	for _, index := range []string{
+		"CREATE INDEX IF NOT EXISTS idx_memory_workspace_status ON memory_entries(workspace_id, status, updated_at DESC)",
+		"CREATE INDEX IF NOT EXISTS idx_memory_workspace_scope ON memory_entries(workspace_id, scope, kind, updated_at DESC)",
+		"CREATE INDEX IF NOT EXISTS idx_memory_workspace_pinned ON memory_entries(workspace_id, pinned, importance DESC)",
+	} {
+		if _, err := db.Exec(index); err != nil {
+			return fmt.Errorf("create memory index: %w", err)
+		}
 	}
 	return nil
 }
@@ -290,12 +316,20 @@ func ensureWorkspaceHardening(db *sql.DB) error {
 		}
 	}
 	for _, column := range []string{"scope TEXT NOT NULL DEFAULT 'workspace'", "selector_json TEXT NOT NULL DEFAULT '{}'", "severity TEXT NOT NULL DEFAULT 'normal'", "enforcement_mode TEXT NOT NULL DEFAULT 'advisory'", "human_approval_required INTEGER NOT NULL DEFAULT 0", "metadata_json TEXT NOT NULL DEFAULT '{}'"} {
-		if err := addColumnIfMissing(db, "policies", column); err != nil { return err }
+		if err := addColumnIfMissing(db, "policies", column); err != nil {
+			return err
+		}
 	}
-	if err := addColumnIfMissing(db, "policy_revisions", "status TEXT NOT NULL DEFAULT 'draft'"); err != nil { return err }
-	if err := addColumnIfMissing(db, "runs", "workspace_id TEXT"); err != nil { return err }
+	if err := addColumnIfMissing(db, "policy_revisions", "status TEXT NOT NULL DEFAULT 'draft'"); err != nil {
+		return err
+	}
+	if err := addColumnIfMissing(db, "runs", "workspace_id TEXT"); err != nil {
+		return err
+	}
 	for _, column := range []string{"inputs_json TEXT NOT NULL DEFAULT '{}'", "outputs_json TEXT NOT NULL DEFAULT '{}'", "log_ref TEXT", "failure_code TEXT", "recovery_state TEXT NOT NULL DEFAULT 'recoverable'"} {
-		if err := addColumnIfMissing(db, "transaction_phases", column); err != nil { return err }
+		if err := addColumnIfMissing(db, "transaction_phases", column); err != nil {
+			return err
+		}
 	}
 	for _, index := range []string{
 		"CREATE INDEX IF NOT EXISTS idx_workspace_sessions_status ON agent_sessions(workspace_id, status)",
