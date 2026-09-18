@@ -2,6 +2,8 @@
 
 The API is a standalone Go project boundary inside the repository. Its authoritative contract is [`openapi.yaml`](./openapi.yaml), and its container can be run independently of the UI:
 
+Human-oriented endpoint documentation is generated at [`docs/admin-api-guide.md`](./docs/admin-api-guide.md), with dashboard fixtures in [`examples/dashboard-fixtures.json`](./examples/dashboard-fixtures.json). Regenerate the endpoint inventory with `ruby api/scripts/generate-admin-api-guide.rb`; validate the contract with `ruby api/scripts/verify-openapi.rb`.
+
 ```bash
 docker compose -f api/docker-compose.yml up --build
 ```
