@@ -48,6 +48,38 @@ paths:
           content:
             text/plain:
               schema: {type: string}
+  /api/v1/maintenance:
+    get:
+      operationId: getMaintenanceStatus
+      summary: Inspect SQLite maintenance capabilities and protected tables
+      responses:
+        '200': {description: Maintenance status, content: {application/json: {schema: {$ref: '#/components/schemas/MaintenanceStatus'}}}}
+        '503': {$ref: '#/components/responses/Problem'}
+  /api/v1/maintenance/integrity-check:
+    post:
+      operationId: runIntegrityCheck
+      summary: Run SQLite integrity check
+      parameters: [{$ref: '#/components/parameters/ActorID'}, {$ref: '#/components/parameters/ActorRole'}, {$ref: '#/components/parameters/IdempotencyKey'}]
+      responses: {'200': {description: Integrity result}, '400': {$ref: '#/components/responses/Problem'}, '403': {$ref: '#/components/responses/Problem'}, '409': {$ref: '#/components/responses/Problem'}}
+  /api/v1/maintenance/checkpoint:
+    post:
+      operationId: checkpointDatabase
+      summary: Checkpoint the SQLite WAL
+      parameters: [{$ref: '#/components/parameters/ActorID'}, {$ref: '#/components/parameters/ActorRole'}, {$ref: '#/components/parameters/IdempotencyKey'}]
+      responses: {'200': {description: Checkpoint result}, '400': {$ref: '#/components/responses/Problem'}, '403': {$ref: '#/components/responses/Problem'}, '409': {$ref: '#/components/responses/Problem'}}
+  /api/v1/maintenance/backup:
+    post:
+      operationId: createDatabaseBackup
+      summary: Create a server-side SQLite backup artifact
+      parameters: [{$ref: '#/components/parameters/ActorID'}, {$ref: '#/components/parameters/ActorRole'}, {$ref: '#/components/parameters/IdempotencyKey'}]
+      responses: {'201': {description: Backup artifact reference}, '400': {$ref: '#/components/responses/Problem'}, '403': {$ref: '#/components/responses/Problem'}, '409': {$ref: '#/components/responses/Problem'}}
+  /api/v1/maintenance/retention:
+    post:
+      operationId: runRetentionCleanup
+      summary: Remove eligible non-immutable notification history
+      parameters: [{$ref: '#/components/parameters/ActorID'}, {$ref: '#/components/parameters/ActorRole'}, {$ref: '#/components/parameters/IdempotencyKey'}]
+      requestBody: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/RetentionInput'}}}}
+      responses: {'200': {description: Retention result}, '400': {$ref: '#/components/responses/Problem'}, '403': {$ref: '#/components/responses/Problem'}, '409': {$ref: '#/components/responses/Problem'}}
   /api/v1/workspaces/{id}/health:
     parameters:
       - name: id
@@ -967,6 +999,18 @@ components:
         default_bind: {type: string, example: 127.0.0.1}
         roles: {type: array, items: {type: string, enum: [view, operate, approve, govern, administer, force-override]}}
         allowed_origins: {type: array, items: {type: string, format: uri}}
+    MaintenanceStatus:
+      type: object
+      required: [foreign_keys, wal, protected_immutable_tables]
+      properties:
+        foreign_keys: {type: boolean}
+        wal: {type: boolean}
+        protected_immutable_tables: {type: array, items: {type: string}}
+    RetentionInput:
+      type: object
+      required: [retention_days]
+      properties:
+        retention_days: {type: integer, minimum: 1, maximum: 3650}
     ComponentHealth:
       type: object
       required: [status]

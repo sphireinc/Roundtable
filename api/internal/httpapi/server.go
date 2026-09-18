@@ -28,6 +28,7 @@ type Config struct {
 	AllowedOrigins        []string
 	HumanToken            string
 	AgentToken            string
+	MaintenanceDirectory  string
 }
 
 type Server struct {
@@ -115,6 +116,11 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/v1/health", s.health)
 	mux.HandleFunc("GET /api/v1/status", s.status)
 	mux.HandleFunc("GET /metrics", s.metricsAPI)
+	mux.HandleFunc("GET /api/v1/maintenance", s.maintenanceStatusAPI)
+	mux.HandleFunc("POST /api/v1/maintenance/integrity-check", s.integrityCheckAPI)
+	mux.HandleFunc("POST /api/v1/maintenance/checkpoint", s.checkpointAPI)
+	mux.HandleFunc("POST /api/v1/maintenance/backup", s.backupAPI)
+	mux.HandleFunc("POST /api/v1/maintenance/retention", s.retentionAPI)
 	mux.HandleFunc("GET /api/v1/security/capabilities", s.securityCapabilitiesAPI)
 	mux.HandleFunc("GET /api/v1/workspaces/{id}/health", s.workspaceHealth)
 	mux.HandleFunc("GET /api/v1/workspaces", s.listWorkspaces)
