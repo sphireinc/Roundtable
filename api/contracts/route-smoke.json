@@ -1,0 +1,9 @@
+{
+  "description": "Safe no-mutation contract smoke routes exercised by the API contract test.",
+  "routes": [
+    {"method": "GET", "path": "/api/v1/health", "status": 200},
+    {"method": "GET", "path": "/api/v1/status", "status": 200},
+    {"method": "GET", "path": "/api/v1/security/capabilities", "status": 200},
+    {"method": "GET", "path": "/metrics", "status": 200}
+  ]
+}
