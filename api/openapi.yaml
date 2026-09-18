@@ -26,6 +26,18 @@ paths:
           content:
             application/json:
               schema: {$ref: '#/components/schemas/NodeHealthResponse'}
+  /api/v1/security/capabilities:
+    get:
+      operationId: getSecurityCapabilities
+      summary: Describe the configured local security boundary
+      security: [{HumanBearer: []}, {}]
+      responses:
+        '200':
+          description: Security capabilities
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/SecurityCapabilities'}
+        '401': {$ref: '#/components/responses/Problem'}
   /api/v1/workspaces/{id}/health:
     parameters:
       - name: id
@@ -878,6 +890,17 @@ paths:
       requestBody: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/ContentionResolutionInput'}}}}
       responses: {'200': {description: Resolved contention, content: {application/json: {schema: {$ref: '#/components/schemas/ContentionResolution'}}}}, '400': {$ref: '#/components/responses/Problem'}, '403': {$ref: '#/components/responses/Problem'}, '404': {$ref: '#/components/responses/Problem'}, '409': {$ref: '#/components/responses/Problem'}}
 components:
+  securitySchemes:
+    HumanBearer:
+      type: http
+      scheme: bearer
+      bearerFormat: local-human-token
+      description: Optional local-first bearer token for browser/admin requests. Store outside source control.
+    AgentBearer:
+      type: http
+      scheme: bearer
+      bearerFormat: local-agent-token
+      description: Separate token for agent/MCP control surfaces. Never expose it to browser code.
   parameters:
     ActorID:
       name: X-Actor-ID
@@ -894,13 +917,23 @@ components:
       name: X-Actor-Role
       in: header
       required: true
-      schema: {type: string, enum: [human, admin, chair]}
+      schema: {type: string, enum: [human, view, operate, approve, govern, administer, force-override]}
     IdempotencyKey:
       name: Idempotency-Key
       in: header
       required: true
       schema: {type: string, minLength: 1, maxLength: 128}
   schemas:
+    SecurityCapabilities:
+      type: object
+      required: [authentication, agent_boundary, csrf, default_bind, roles]
+      properties:
+        authentication: {type: string, enum: [local-header-development, bearer-token]}
+        agent_boundary: {type: string}
+        csrf: {type: string}
+        default_bind: {type: string, example: 127.0.0.1}
+        roles: {type: array, items: {type: string, enum: [view, operate, approve, govern, administer, force-override]}}
+        allowed_origins: {type: array, items: {type: string, format: uri}}
     ComponentHealth:
       type: object
       required: [status]

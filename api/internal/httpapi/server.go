@@ -25,6 +25,9 @@ type Config struct {
 	Logger                *slog.Logger
 	Store                 *db.Store
 	AllowedWorkspaceRoots []string
+	AllowedOrigins        []string
+	HumanToken            string
+	AgentToken            string
 }
 
 type Server struct{ config Config }
@@ -96,6 +99,9 @@ func NewServer(cfg Config) *Server {
 	if cfg.Logger == nil {
 		cfg.Logger = slog.Default()
 	}
+	if len(cfg.AllowedOrigins) == 0 {
+		cfg.AllowedOrigins = []string{"http://127.0.0.1:3000", "http://localhost:3000"}
+	}
 	return &Server{config: cfg}
 }
 
@@ -103,6 +109,7 @@ func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /api/v1/health", s.health)
 	mux.HandleFunc("GET /api/v1/status", s.status)
+	mux.HandleFunc("GET /api/v1/security/capabilities", s.securityCapabilitiesAPI)
 	mux.HandleFunc("GET /api/v1/workspaces/{id}/health", s.workspaceHealth)
 	mux.HandleFunc("GET /api/v1/workspaces", s.listWorkspaces)
 	mux.HandleFunc("POST /api/v1/workspaces", s.createWorkspace)
@@ -205,18 +212,27 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/v1/workspaces/{id}/claims/{claim_id}/{action}", s.transitionClaimAPI)
 	mux.HandleFunc("GET /api/v1/workspaces/{id}/claims/contentions", s.listContentionsAPI)
 	mux.HandleFunc("POST /api/v1/workspaces/{id}/claims/contentions/{contention_id}/resolve", s.resolveContentionAPI)
-	return withLocalCORS(requestIDs(securityHeaders(jsonDefaults(mux))))
+	return withLocalCORS(s, requestIDs(withSecurityPolicy(s, securityHeaders(jsonDefaults(mux)))))
 }
 
-func withLocalCORS(next http.Handler) http.Handler {
+func (s *Server) originAllowed(origin string) bool {
+	for _, allowed := range s.config.AllowedOrigins {
+		if strings.TrimSpace(allowed) == origin {
+			return true
+		}
+	}
+	return false
+}
+
+func withLocalCORS(s *Server, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		origin := r.Header.Get("Origin")
-		allowed := origin == "http://127.0.0.1:3000" || origin == "http://localhost:3000"
+		allowed := origin == "" || s.originAllowed(origin)
 		if allowed {
 			w.Header().Set("Access-Control-Allow-Origin", origin)
 			w.Header().Add("Vary", "Origin")
 			w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PATCH, PUT, DELETE, OPTIONS")
-			w.Header().Set("Access-Control-Allow-Headers", "Accept, Content-Type, X-Actor-ID, X-Actor-Role, X-Request-ID, X-Workspace-ID, Idempotency-Key, If-Match, X-Roundtable-Orchestrator")
+			w.Header().Set("Access-Control-Allow-Headers", "Accept, Authorization, Content-Type, X-Actor-ID, X-Actor-Role, X-Request-ID, X-Workspace-ID, Idempotency-Key, If-Match, X-Roundtable-Orchestrator, X-CSRF-Token")
 			w.Header().Set("Access-Control-Max-Age", "600")
 		}
 		if r.Method == http.MethodOptions {

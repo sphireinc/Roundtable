@@ -16,4 +16,4 @@ COPY --from=build /out/roundtable-api /usr/local/bin/roundtable-api
 RUN mkdir -p /app/.roundtable
 EXPOSE 8080
 ENTRYPOINT ["roundtable-api"]
-CMD ["-addr", "0.0.0.0:8080", "-workspace-root", "/workspace", "-database", "/app/.roundtable/roundtable.db"]
+CMD ["-addr", "0.0.0.0:8080", "-allow-remote", "-workspace-root", "/workspace", "-database", "/app/.roundtable/roundtable.db"]
