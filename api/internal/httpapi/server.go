@@ -33,6 +33,7 @@ type Config struct {
 type Server struct {
 	config      Config
 	idempotency *idempotencyStore
+	metrics     httpMetrics
 }
 
 type problem struct {
@@ -113,6 +114,7 @@ func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /api/v1/health", s.health)
 	mux.HandleFunc("GET /api/v1/status", s.status)
+	mux.HandleFunc("GET /metrics", s.metricsAPI)
 	mux.HandleFunc("GET /api/v1/security/capabilities", s.securityCapabilitiesAPI)
 	mux.HandleFunc("GET /api/v1/workspaces/{id}/health", s.workspaceHealth)
 	mux.HandleFunc("GET /api/v1/workspaces", s.listWorkspaces)
@@ -216,7 +218,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/v1/workspaces/{id}/claims/{claim_id}/{action}", s.transitionClaimAPI)
 	mux.HandleFunc("GET /api/v1/workspaces/{id}/claims/contentions", s.listContentionsAPI)
 	mux.HandleFunc("POST /api/v1/workspaces/{id}/claims/contentions/{contention_id}/resolve", s.resolveContentionAPI)
-	return withLocalCORS(s, requestIDs(withIdempotency(s, withSecurityPolicy(s, securityHeaders(jsonDefaults(mux))))))
+	return withLocalCORS(s, withObservability(s, requestIDs(withIdempotency(s, withSecurityPolicy(s, securityHeaders(jsonDefaults(mux)))))))
 }
 
 func (s *Server) originAllowed(origin string) bool {

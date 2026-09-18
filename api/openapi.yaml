@@ -38,6 +38,16 @@ paths:
             application/json:
               schema: {$ref: '#/components/schemas/SecurityCapabilities'}
         '401': {$ref: '#/components/responses/Problem'}
+  /metrics:
+    get:
+      operationId: getMetrics
+      summary: Prometheus-compatible low-cardinality HTTP metrics
+      responses:
+        '200':
+          description: Prometheus text exposition
+          content:
+            text/plain:
+              schema: {type: string}
   /api/v1/workspaces/{id}/health:
     parameters:
       - name: id
