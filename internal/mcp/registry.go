@@ -112,7 +112,7 @@ func DefaultRegistry() *Registry {
 				prop("assigned_agent_id", "string"),
 			)...)),
 			tool("test.get_result", "Fetch a stored test result.", requiredSchema("test_run_id")),
-			tool("test.run", "Run a test command under orchestrator control.", schema([]string{"command"}, optionalProperties(
+			tool("test.run", "Run an allowlisted, read-only test command under orchestrator control; shell control characters and repository write primitives are rejected.", schema([]string{"command"}, optionalProperties(
 				prop("proposal_id", "string"),
 				prop("task_id", "string"),
 			)...)),

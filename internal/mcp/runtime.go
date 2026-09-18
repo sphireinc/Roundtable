@@ -536,6 +536,9 @@ func (r *Runtime) testRun(ctx context.Context, args map[string]any) (map[string]
 	if strings.TrimSpace(command) == "" {
 		return nil, errors.New("command is required")
 	}
+	if err := validateAgentCommand(command); err != nil {
+		return nil, err
+	}
 	testRun := db.TestRun{
 		ID:         stringArgDefault(args, "test_run_id", generatedID("TR")),
 		ProposalID: stringArg(args, "proposal_id"),
@@ -547,6 +550,10 @@ func (r *Runtime) testRun(ctx context.Context, args map[string]any) (map[string]
 		return nil, err
 	}
 
+	// The command is restricted to a read/test allowlist and shell-control
+	// characters are rejected before this compatibility execution path. This
+	// keeps existing configured test commands while preventing repository write
+	// primitives from entering the agent surface.
 	cmd := exec.CommandContext(ctx, "/bin/sh", "-lc", command)
 	cmd.Dir = r.root
 	output, err := cmd.CombinedOutput()
@@ -606,7 +613,10 @@ func (r *Runtime) repoReadFile(args map[string]any) (map[string]any, error) {
 	if path == "" {
 		return nil, errors.New("path is required")
 	}
-	fullPath := r.resolvePath(path)
+	fullPath, err := r.resolveAgentPath(path)
+	if err != nil {
+		return nil, err
+	}
 	data, err := os.ReadFile(fullPath)
 	if err != nil {
 		return nil, err
@@ -626,7 +636,11 @@ func (r *Runtime) repoSearch(args map[string]any) (map[string]any, error) {
 
 	var paths []string
 	if targetPath != "" {
-		paths = []string{r.resolvePath(targetPath)}
+		path, err := r.resolveAgentPath(targetPath)
+		if err != nil {
+			return nil, err
+		}
+		paths = []string{path}
 	} else {
 		err := filepath.Walk(r.root, func(path string, info os.FileInfo, err error) error {
 			if err != nil {
@@ -771,9 +785,9 @@ func (r *Runtime) repoSymbols(ctx context.Context, args map[string]any) (map[str
 	if path == "" {
 		return nil, errors.New("path is required")
 	}
-	fullPath := path
-	if !filepath.IsAbs(path) {
-		fullPath = filepath.Join(r.root, path)
+	fullPath, err := r.resolveAgentPath(path)
+	if err != nil {
+		return nil, err
 	}
 	found, err := r.indexer.IndexPath(fullPath)
 	if err != nil {
@@ -824,11 +838,56 @@ func ReadJSONFile(path string) (map[string]any, error) {
 	return payload, nil
 }
 
-func (r *Runtime) resolvePath(path string) string {
-	if filepath.IsAbs(path) {
-		return path
+func (r *Runtime) resolveAgentPath(path string) (string, error) {
+	if strings.TrimSpace(path) == "" {
+		return "", errors.New("path is required")
 	}
-	return filepath.Join(r.root, path)
+	root, err := filepath.Abs(r.root)
+	if err != nil {
+		return "", err
+	}
+	root, err = filepath.EvalSymlinks(root)
+	if err != nil {
+		return "", err
+	}
+	candidate := path
+	if !filepath.IsAbs(candidate) {
+		candidate = filepath.Join(root, candidate)
+	}
+	candidate, err = filepath.Abs(candidate)
+	if err != nil {
+		return "", err
+	}
+	resolved := candidate
+	if evaluated, evalErr := filepath.EvalSymlinks(candidate); evalErr == nil {
+		resolved = evaluated
+	}
+	rel, err := filepath.Rel(root, resolved)
+	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return "", errors.New("path is outside the repository root")
+	}
+	return resolved, nil
+}
+
+func validateAgentCommand(command string) error {
+	trimmed := strings.TrimSpace(command)
+	if strings.ContainsAny(trimmed, ";|&><`$\n\r") {
+		return errors.New("command contains disallowed shell control characters")
+	}
+	fields := strings.Fields(trimmed)
+	if len(fields) == 0 {
+		return errors.New("command is required")
+	}
+	name := filepath.Base(fields[0])
+	allowed := map[string]bool{
+		"cargo": true, "git": true, "go": true, "make": true, "node": true,
+		"npm": true, "pnpm": true, "printf": true, "pytest": true, "ruby": true,
+		"swift": true, "vitest": true, "yarn": true,
+	}
+	if !allowed[name] {
+		return fmt.Errorf("command %q is not allowlisted for the agent test surface", name)
+	}
+	return nil
 }
 
 func containsResource(resource db.Resource, query string) bool {
