@@ -173,6 +173,10 @@ func (s *Server) memoryActionAPI(w http.ResponseWriter, r *http.Request) {
 	}
 	id := r.PathValue("memory_id")
 	action := r.PathValue("action")
+	if action == "merge" {
+		s.memoryMergeCanonicalAPI(w, r, workspace, id)
+		return
+	}
 	if action == "resynthesize" {
 		if _, err := s.config.Store.DB().ExecContext(r.Context(), `UPDATE memory_entries SET resynthesis_status='requested', updated_at=CURRENT_TIMESTAMP WHERE id=? AND (workspace_id=? OR workspace_id IS NULL)`, id, workspace.ID); err != nil {
 			WriteProblem(w, r, 409, "memory_resynthesis_conflict", "Unable to request resynthesis", err.Error())
@@ -188,7 +192,7 @@ func (s *Server) memoryActionAPI(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 200, item)
 		return
 	}
-	if action == "merge" {
+	if action == "merge-legacy" {
 		target := strings.TrimSpace(r.URL.Query().Get("target_id"))
 		if target == "" || target == id {
 			WriteProblem(w, r, 400, "invalid_memory_merge", "Invalid memory merge", "target_id must identify a different memory")
@@ -325,6 +329,62 @@ func (s *Server) createMemoryRevisionAPI(w http.ResponseWriter, r *http.Request)
 	s.memoryAudit(r, workspace.ID, r.Header.Get("X-Actor-ID"), "memory.revised", r.PathValue("memory_id"))
 	_, _ = s.config.Store.AppendEvent(r.Context(), db.Event{RunID: workspace.ID, Type: "memory.revised", ActorID: r.Header.Get("X-Actor-ID"), PayloadJSON: fmt.Sprintf(`{"memory_id":%q,"revision":%d}`, r.PathValue("memory_id"), revision)})
 	item, _ := s.readMemory(r, workspace.ID, r.PathValue("memory_id"))
+	writeJSON(w, 200, item)
+}
+
+func (s *Server) memoryMergeCanonicalAPI(w http.ResponseWriter, r *http.Request, workspace db.Workspace, sourceID string) {
+	targetID := strings.TrimSpace(r.URL.Query().Get("target_id"))
+	if targetID == "" || targetID == sourceID {
+		WriteProblem(w, r, 400, "invalid_memory_merge", "Invalid memory merge", "target_id must identify a different memory")
+		return
+	}
+	tx, err := s.config.Store.DB().BeginTx(r.Context(), nil)
+	if err != nil {
+		WriteProblem(w, r, 500, "memory_merge_failed", "Unable to merge memory", err.Error())
+		return
+	}
+	defer tx.Rollback()
+	var source, target struct {
+		Scope, Kind, Title, Body, Tags, Provenance string
+		Confidence, Reliability                    float64
+		Importance                                 int
+	}
+	if err := tx.QueryRowContext(r.Context(), `SELECT scope,kind,title,body_md,COALESCE(tags_json,'[]'),COALESCE(provenance_json,'{}'),confidence,reliability,importance FROM memory_entries WHERE id=? AND (workspace_id=? OR workspace_id IS NULL)`, sourceID, workspace.ID).Scan(&source.Scope, &source.Kind, &source.Title, &source.Body, &source.Tags, &source.Provenance, &source.Confidence, &source.Reliability, &source.Importance); err != nil {
+		WriteProblem(w, r, 404, "memory_not_found", "Source memory not found", err.Error())
+		return
+	}
+	if err := tx.QueryRowContext(r.Context(), `SELECT scope,kind,title,body_md,COALESCE(tags_json,'[]'),COALESCE(provenance_json,'{}'),confidence,reliability,importance FROM memory_entries WHERE id=? AND (workspace_id=? OR workspace_id IS NULL)`, targetID, workspace.ID).Scan(&target.Scope, &target.Kind, &target.Title, &target.Body, &target.Tags, &target.Provenance, &target.Confidence, &target.Reliability, &target.Importance); err != nil {
+		WriteProblem(w, r, 404, "memory_target_not_found", "Merge target not found", err.Error())
+		return
+	}
+	canonicalID := "M-merge-" + strconv.FormatInt(time.Now().UnixNano(), 10)
+	provenance, _ := json.Marshal(map[string]any{"merged_from": []string{sourceID, targetID}, "source": target.Provenance})
+	body := redactText(target.Body + "\n\n" + source.Body)
+	if _, err = tx.ExecContext(r.Context(), `INSERT INTO memory_entries(id,workspace_id,scope,kind,title,body_md,tags_json,provenance_json,confidence,reliability,importance,status,revision) VALUES(?,?,?,?,?,?,?,?,?,?,?,'active',1)`, canonicalID, workspace.ID, target.Scope, target.Kind, target.Title, body, target.Tags, string(provenance), (target.Confidence+source.Confidence)/2, (target.Reliability+source.Reliability)/2, target.Importance); err != nil {
+		WriteProblem(w, r, 409, "memory_merge_conflict", "Unable to create canonical memory", err.Error())
+		return
+	}
+	for _, alias := range []string{sourceID, targetID} {
+		if _, err = tx.ExecContext(r.Context(), `INSERT INTO memory_aliases(alias_id,canonical_id,reason,created_by) VALUES(?,?,?,?)`, alias, canonicalID, "merged", r.Header.Get("X-Actor-ID")); err != nil {
+			WriteProblem(w, r, 409, "memory_merge_conflict", "Unable to preserve memory alias", err.Error())
+			return
+		}
+	}
+	if _, err = tx.ExecContext(r.Context(), `UPDATE memory_entries SET status='merged',updated_at=CURRENT_TIMESTAMP WHERE id IN (?,?)`, sourceID, targetID); err != nil {
+		WriteProblem(w, r, 409, "memory_merge_conflict", "Unable to redirect merged memories", err.Error())
+		return
+	}
+	if err = tx.Commit(); err != nil {
+		WriteProblem(w, r, 409, "memory_merge_conflict", "Unable to commit memory merge", err.Error())
+		return
+	}
+	s.memoryAudit(r, workspace.ID, r.Header.Get("X-Actor-ID"), "memory.merged", canonicalID)
+	_, _ = s.config.Store.AppendEvent(r.Context(), db.Event{RunID: workspace.ID, Type: "memory.merged", ActorID: r.Header.Get("X-Actor-ID"), PayloadJSON: fmt.Sprintf(`{"memory_id":%q,"aliases":[%q,%q]}`, canonicalID, sourceID, targetID)})
+	item, err := s.readMemory(r, workspace.ID, canonicalID)
+	if err != nil {
+		WriteProblem(w, r, 404, "memory_not_found", "Canonical memory not found", err.Error())
+		return
+	}
 	writeJSON(w, 200, item)
 }
 
