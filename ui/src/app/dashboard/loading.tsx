@@ -1,0 +1,1 @@
+export default function DashboardLoading() { return <main className="state-screen" aria-busy="true"><p className="eyebrow">ROUNDTABLE / DASHBOARD</p><div className="skeleton" /><p className="muted">Loading authoritative workspace state…</p></main>; }
