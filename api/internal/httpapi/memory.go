@@ -277,12 +277,17 @@ func (s *Server) createMemoryRevisionAPI(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	var input struct {
-		BodyMD string `json:"body_md"`
-		Title  string `json:"title"`
-		Reason string `json:"reason"`
+		BodyMD           string `json:"body_md"`
+		Title            string `json:"title"`
+		Reason           string `json:"reason"`
+		ExpectedRevision int    `json:"expected_revision"`
 	}
 	if err = decodeJSON(r, &input); err != nil || strings.TrimSpace(input.BodyMD) == "" {
 		WriteProblem(w, r, 400, "invalid_revision", "Invalid memory revision", "body_md is required")
+		return
+	}
+	if input.ExpectedRevision < 1 {
+		WriteProblem(w, r, 400, "invalid_expected_revision", "Invalid expected revision", "expected_revision must be a positive integer")
 		return
 	}
 	tx, err := s.config.Store.DB().BeginTx(r.Context(), nil)
@@ -295,6 +300,10 @@ func (s *Server) createMemoryRevisionAPI(w http.ResponseWriter, r *http.Request)
 	var title string
 	if err = tx.QueryRowContext(r.Context(), `SELECT revision,title FROM memory_entries WHERE id=? AND (workspace_id=? OR workspace_id IS NULL)`, r.PathValue("memory_id"), workspace.ID).Scan(&revision, &title); err != nil {
 		WriteProblem(w, r, 404, "memory_not_found", "Memory not found", err.Error())
+		return
+	}
+	if revision != input.ExpectedRevision {
+		WriteProblem(w, r, 409, "memory_revision_conflict", "Memory changed", fmt.Sprintf("expected revision %d, current revision %d", input.ExpectedRevision, revision))
 		return
 	}
 	if input.Title != "" {

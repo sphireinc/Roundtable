@@ -738,6 +738,28 @@ paths:
       summary: Edit a memory as a new immutable revision
       requestBody: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/MemoryRevisionInput'}}}}
       responses: {'200': {description: Revised memory, content: {application/json: {schema: {$ref: '#/components/schemas/Memory'}}}}, '400': {$ref: '#/components/responses/Problem'}, '403': {$ref: '#/components/responses/Problem'}, '404': {$ref: '#/components/responses/Problem'}, '409': {$ref: '#/components/responses/Problem'}}
+    get:
+      operationId: listMemoryRevisions
+      summary: List immutable memory revisions
+      responses: {'200': {description: Revision history, content: {application/json: {schema: {$ref: '#/components/schemas/MemoryRevisions'}}}}, '404': {$ref: '#/components/responses/Problem'}}
+  /api/v1/workspaces/{id}/memories/{memory_id}/diff:
+    parameters: [{name: id, in: path, required: true, schema: {type: string}}, {name: memory_id, in: path, required: true, schema: {type: string}}, {name: from, in: query, schema: {type: integer, minimum: 1}}, {name: to, in: query, schema: {type: integer, minimum: 1}}]
+    get:
+      operationId: getMemoryRevisionDiff
+      summary: Return a bounded memory revision diff
+      responses: {'200': {description: Revision diff, content: {application/json: {schema: {$ref: '#/components/schemas/MemoryDiff'}}}}, '404': {$ref: '#/components/responses/Problem'}}
+  /api/v1/workspaces/{id}/memories/{memory_id}/graph:
+    parameters: [{name: id, in: path, required: true, schema: {type: string}}, {name: memory_id, in: path, required: true, schema: {type: string}}]
+    get:
+      operationId: getMemoryGraph
+      summary: Return memory aliases and merge redirects
+      responses: {'200': {description: Related memory graph, content: {application/json: {schema: {$ref: '#/components/schemas/MemoryGraph'}}}}, '404': {$ref: '#/components/responses/Problem'}}
+  /api/v1/workspaces/{id}/memories/{memory_id}/source-chain:
+    parameters: [{name: id, in: path, required: true, schema: {type: string}}, {name: memory_id, in: path, required: true, schema: {type: string}}]
+    get:
+      operationId: getMemorySourceChain
+      summary: Return source and provenance edges for a memory
+      responses: {'200': {description: Source chain, content: {application/json: {schema: {$ref: '#/components/schemas/MemorySourceChain'}}}}, '404': {$ref: '#/components/responses/Problem'}}
   /api/v1/workspaces/{id}/memories/{memory_id}/{action}:
     parameters: [{name: id, in: path, required: true, schema: {type: string}}, {name: memory_id, in: path, required: true, schema: {type: string}}, {name: action, in: path, required: true, schema: {type: string, enum: [pin, unpin, archive, restore, merge, resynthesize]}}, {name: target_id, in: query, description: Required for merge., schema: {type: string}}, {$ref: '#/components/parameters/ActorID'}, {$ref: '#/components/parameters/IdempotencyKey'}]
     post:
@@ -1705,6 +1727,33 @@ components:
         body_md: {type: string}
         title: {type: string}
         reason: {type: string}
+    MemoryRevision:
+      type: object
+      required: [id, memory_id, revision, body_md, provenance, created_by, created_at]
+      properties:
+        id: {type: string}
+        memory_id: {type: string}
+        revision: {type: integer, minimum: 1}
+        body_md: {type: string}
+        provenance: {type: object, additionalProperties: true}
+        created_by: {type: string}
+        created_at: {type: string, format: date-time}
+    MemoryRevisions:
+      type: object
+      required: [items]
+      properties: {items: {type: array, items: {$ref: '#/components/schemas/MemoryRevision'}}}
+    MemoryDiff:
+      type: object
+      required: [memory_id, from_revision, to_revision, changed]
+      properties: {memory_id: {type: string}, from_revision: {type: string}, to_revision: {type: string}, changed: {type: boolean}, current_body_md: {type: string}}
+    MemoryGraph:
+      type: object
+      required: [memory_id, aliases]
+      properties: {memory_id: {type: string}, aliases: {type: array, items: {type: object, additionalProperties: true}}}
+    MemorySourceChain:
+      type: object
+      required: [memory_id, edges]
+      properties: {memory_id: {type: string}, edges: {type: array, items: {type: object, additionalProperties: true}}}
     LiveEventEnvelope:
       type: object
       required: [event_id, workspace_id, sequence, type, occurred_at, payload]
