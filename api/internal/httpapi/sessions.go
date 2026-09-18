@@ -326,7 +326,7 @@ func returnPaginatedSessions(w http.ResponseWriter, r *http.Request, items []ses
 	}
 	var next *string
 	if end < len(items) {
-		value := strconv.Itoa(end)
+		value := encodeCursor(end)
 		next = &value
 	}
 	writeJSON(w, 200, map[string]any{"items": items[start:end], "next_cursor": next})
