@@ -1,11 +1,11 @@
 import { create } from "zustand";
 
 type UIState = {
-  sidebarOpen: boolean;
-  setSidebarOpen: (open: boolean) => void;
+  sidebarCollapsed: boolean;
+  setSidebarCollapsed: (collapsed: boolean) => void;
 };
 
 export const useUIState = create<UIState>((set) => ({
-  sidebarOpen: true,
-  setSidebarOpen: (sidebarOpen) => set({ sidebarOpen }),
+  sidebarCollapsed: false,
+  setSidebarCollapsed: (sidebarCollapsed) => set({ sidebarCollapsed }),
 }));
