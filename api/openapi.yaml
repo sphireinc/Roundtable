@@ -804,6 +804,32 @@ paths:
       summary: Export a bounded redacted audit slice
       description: Exports are capped at 1000 rows and the export itself is recorded as an audit event.
       responses: {'200': {description: JSON, NDJSON, or CSV audit export}, '403': {$ref: '#/components/responses/Problem'}, '404': {$ref: '#/components/responses/Problem'}}
+  /api/v1/workspaces/{id}/settings:
+    parameters: [{name: id, in: path, required: true, schema: {type: string}}]
+    get:
+      operationId: getEffectiveSettings
+      summary: Return effective workspace configuration and source metadata
+      responses: {'200': {description: Effective settings, content: {application/json: {schema: {$ref: '#/components/schemas/EffectiveSettings'}}}}, '404': {$ref: '#/components/responses/Problem'}}
+  /api/v1/workspaces/{id}/settings/schema:
+    parameters: [{name: id, in: path, required: true, schema: {type: string}}]
+    get:
+      operationId: getSettingsSchema
+      summary: Return section and field configuration schema
+      responses: {'200': {description: Settings schema, content: {application/json: {schema: {$ref: '#/components/schemas/SettingsSchema'}}}}, '404': {$ref: '#/components/responses/Problem'}}
+  /api/v1/workspaces/{id}/settings/preflight:
+    parameters: [{name: id, in: path, required: true, schema: {type: string}}, {$ref: '#/components/parameters/ActorID'}]
+    post:
+      operationId: preflightSettingsUpdate
+      summary: Validate settings and calculate impact before update
+      requestBody: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/SettingsUpdate'}}}}
+      responses: {'200': {description: Settings impact and confirmation token, content: {application/json: {schema: {$ref: '#/components/schemas/SettingsPreflight'}}}}, '400': {$ref: '#/components/responses/Problem'}, '403': {$ref: '#/components/responses/Problem'}}
+  /api/v1/workspaces/{id}/settings/{section}:
+    parameters: [{name: id, in: path, required: true, schema: {type: string}}, {name: section, in: path, required: true, schema: {type: string, enum: [general, governance, adapters, mcp, storage, notifications]}}, {$ref: '#/components/parameters/ActorID'}, {$ref: '#/components/parameters/IfMatch'}, {name: X-Confirmation-Token, in: header, schema: {type: string}}, {$ref: '#/components/parameters/IdempotencyKey'}]
+    patch:
+      operationId: updateSettingsSection
+      summary: Update one configuration section with optimistic concurrency
+      requestBody: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/SettingsUpdate'}}}}
+      responses: {'200': {description: Updated effective settings, content: {application/json: {schema: {$ref: '#/components/schemas/EffectiveSettings'}}}}, '400': {$ref: '#/components/responses/Problem'}, '403': {$ref: '#/components/responses/Problem'}, '409': {$ref: '#/components/responses/Problem'}}
   /api/v1/workspaces/{id}/transactions/{transaction_id}/{action}:
     parameters: [{name: id, in: path, required: true, schema: {type: string}}, {name: transaction_id, in: path, required: true, schema: {type: string}}, {name: action, in: path, required: true, schema: {type: string, enum: [stage, validate, apply, cancel, retry, compensate]}}, {$ref: '#/components/parameters/ActorID'}, {$ref: '#/components/parameters/ActorRole'}, {$ref: '#/components/parameters/IdempotencyKey'}]
     post:
@@ -1854,6 +1880,25 @@ components:
       type: object
       required: [items]
       properties: {items: {type: array, items: {$ref: '#/components/schemas/AuditEvent'}}, next_cursor: {type: [string, 'null']}}
+    EffectiveSettings:
+      type: object
+      required: [workspace_id, version, sections]
+      properties: {workspace_id: {type: string}, version: {type: integer, minimum: 0}, sections: {type: object, additionalProperties: {$ref: '#/components/schemas/EffectiveSettingsSection'}}}
+    EffectiveSettingsSection:
+      type: object
+      required: [values, source, version, restart_required]
+      properties: {values: {type: object, additionalProperties: true}, source: {type: string, enum: [default, workspace]}, version: {type: integer, minimum: 0}, restart_required: {type: boolean}}
+    SettingsSchema:
+      type: object
+      required: [sections]
+      properties: {sections: {type: object, additionalProperties: true}}
+    SettingsUpdate:
+      type: object
+      properties: {expected_version: {type: integer, minimum: 1}, values: {type: object, additionalProperties: true}, section: {type: string}}
+    SettingsPreflight:
+      type: object
+      required: [allowed, version, confirmation_token, impact]
+      properties: {allowed: {type: boolean}, version: {type: integer}, confirmation_token: {type: string}, impact: {type: object, additionalProperties: true}}
     LiveEventEnvelope:
       type: object
       required: [event_id, workspace_id, sequence, type, occurred_at, payload]
