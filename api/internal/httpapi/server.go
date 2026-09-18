@@ -180,13 +180,41 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/v1/workspaces/{id}/activity", s.activityFeedAPI)
 	mux.HandleFunc("GET /api/v1/workspaces/{id}/events/ws", s.eventsWebSocketAPI)
 	mux.HandleFunc("GET /api/v1/workspaces/{id}/events/snapshot", s.eventSnapshotAPI)
+	mux.HandleFunc("GET /api/v1/workspaces/{id}/memories", s.listMemoriesAPI)
+	mux.HandleFunc("POST /api/v1/workspaces/{id}/memories", s.createMemoryAPI)
+	mux.HandleFunc("GET /api/v1/workspaces/{id}/memories/{memory_id}", s.getMemoryAPI)
+	mux.HandleFunc("POST /api/v1/workspaces/{id}/memories/{memory_id}/revisions", s.createMemoryRevisionAPI)
+	mux.HandleFunc("POST /api/v1/workspaces/{id}/memories/{memory_id}/{action}", s.memoryActionAPI)
 	mux.HandleFunc("GET /api/v1/workspaces/{id}/claims", s.listClaimsAPI)
 	mux.HandleFunc("POST /api/v1/workspaces/{id}/claims/internal", s.createClaimAPI)
 	mux.HandleFunc("GET /api/v1/workspaces/{id}/claims/{claim_id}", s.getClaimAPI)
 	mux.HandleFunc("POST /api/v1/workspaces/{id}/claims/{claim_id}/{action}", s.transitionClaimAPI)
 	mux.HandleFunc("GET /api/v1/workspaces/{id}/claims/contentions", s.listContentionsAPI)
 	mux.HandleFunc("POST /api/v1/workspaces/{id}/claims/contentions/{contention_id}/resolve", s.resolveContentionAPI)
-	return requestIDs(securityHeaders(jsonDefaults(mux)))
+	return withLocalCORS(requestIDs(securityHeaders(jsonDefaults(mux))))
+}
+
+func withLocalCORS(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		origin := r.Header.Get("Origin")
+		allowed := origin == "http://127.0.0.1:3000" || origin == "http://localhost:3000"
+		if allowed {
+			w.Header().Set("Access-Control-Allow-Origin", origin)
+			w.Header().Add("Vary", "Origin")
+			w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PATCH, PUT, DELETE, OPTIONS")
+			w.Header().Set("Access-Control-Allow-Headers", "Accept, Content-Type, X-Actor-ID, X-Actor-Role, X-Request-ID, X-Workspace-ID, Idempotency-Key, If-Match, X-Roundtable-Orchestrator")
+			w.Header().Set("Access-Control-Max-Age", "600")
+		}
+		if r.Method == http.MethodOptions {
+			if allowed {
+				w.WriteHeader(http.StatusNoContent)
+			} else {
+				w.WriteHeader(http.StatusMethodNotAllowed)
+			}
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
 }
 
 func (s *Server) Serve(ctx context.Context, addr string) error {

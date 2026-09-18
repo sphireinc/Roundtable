@@ -159,3 +159,28 @@ func TestWorkspaceRegistryRejectsTraversalAndUnauthenticatedMutation(t *testing.
 		t.Fatalf("outside-root status = %d", response.Code)
 	}
 }
+
+func TestLocalCORSPreflightAndGET(t *testing.T) {
+	sqlDB, err := db.Open(filepath.Join(t.TempDir(), "roundtable.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer sqlDB.Close()
+	server := NewServer(Config{Store: db.NewStore(sqlDB, nil)})
+	preflight := httptest.NewRequest(http.MethodOptions, "/api/v1/status", nil)
+	preflight.Header.Set("Origin", "http://127.0.0.1:3000")
+	preflight.Header.Set("Access-Control-Request-Method", "GET")
+	preflight.Header.Set("Access-Control-Request-Headers", "X-Request-ID, X-Workspace-ID")
+	response := httptest.NewRecorder()
+	server.Handler().ServeHTTP(response, preflight)
+	if response.Code != http.StatusNoContent || response.Header().Get("Access-Control-Allow-Origin") != "http://127.0.0.1:3000" {
+		t.Fatalf("preflight = %d headers=%v", response.Code, response.Header())
+	}
+	request := httptest.NewRequest(http.MethodGet, "/api/v1/status", nil)
+	request.Header.Set("Origin", "http://localhost:3000")
+	response = httptest.NewRecorder()
+	server.Handler().ServeHTTP(response, request)
+	if response.Code != http.StatusOK || response.Header().Get("Access-Control-Allow-Origin") != "http://localhost:3000" {
+		t.Fatalf("GET = %d headers=%v", response.Code, response.Header())
+	}
+}
