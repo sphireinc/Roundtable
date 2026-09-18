@@ -186,7 +186,7 @@ func humanAuthorized(r *http.Request) bool {
 		return false
 	}
 	switch strings.ToLower(strings.TrimSpace(r.Header.Get("X-Actor-Role"))) {
-	case "human", "admin", "chair":
+	case "human", "admin", "chair", "view", "operate", "approve", "govern", "administer", "force-override":
 		return true
 	default:
 		return false

@@ -1,7 +1,9 @@
 package httpapi
 
 import (
+	"bufio"
 	"fmt"
+	"net"
 	"net/http"
 	"sync/atomic"
 	"time"
@@ -30,6 +32,18 @@ func (w *statusWriter) Write(data []byte) (int, error) {
 	}
 	return w.ResponseWriter.Write(data)
 }
+func (w *statusWriter) Flush() {
+	if flusher, ok := w.ResponseWriter.(http.Flusher); ok {
+		flusher.Flush()
+	}
+}
+func (w *statusWriter) Hijack() (net.Conn, *bufio.ReadWriter, error) {
+	hijacker, ok := w.ResponseWriter.(http.Hijacker)
+	if !ok {
+		return nil, nil, fmt.Errorf("response writer does not support hijacking")
+	}
+	return hijacker.Hijack()
+}
 
 func withObservability(s *Server, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -51,7 +65,8 @@ func withObservability(s *Server, next http.Handler) http.Handler {
 		if status >= 400 {
 			s.metrics.errors.Add(1)
 		}
-		s.config.Logger.Info("http_request", "request_id", requestID(r.Context()), "correlation_id", correlationID, "workspace_id", r.Header.Get("X-Workspace-ID"), "method", r.Method, "path", r.URL.Path, "status", status, "duration_ms", duration.Milliseconds())
+		requestIDValue := response.Header().Get("X-Request-ID")
+		s.config.Logger.Info("http_request", "request_id", requestIDValue, "correlation_id", correlationID, "workspace_id", r.Header.Get("X-Workspace-ID"), "method", r.Method, "path", r.URL.Path, "status", status, "duration_ms", duration.Milliseconds())
 	})
 }
 

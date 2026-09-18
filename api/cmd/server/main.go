@@ -7,6 +7,7 @@ import (
 	"net"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"syscall"
 
 	"roundtable/api/internal/httpapi"
@@ -45,7 +46,7 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	version := os.Getenv("ROUNDTABLE_API_VERSION")
-	server := httpapi.NewServer(httpapi.Config{Version: version, Store: db.NewStore(sqlDB, nil), AllowedWorkspaceRoots: []string{*root}, HumanToken: *humanToken, AgentToken: *agentToken})
+	server := httpapi.NewServer(httpapi.Config{Version: version, Store: db.NewStore(sqlDB, nil), AllowedWorkspaceRoots: []string{*root}, HumanToken: *humanToken, AgentToken: *agentToken, MaintenanceDirectory: filepath.Dir(*databasePath)})
 	if err := server.Serve(ctx, *addr); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
