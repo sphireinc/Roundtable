@@ -30,16 +30,20 @@ type Config struct {
 	AgentToken            string
 }
 
-type Server struct{ config Config }
+type Server struct {
+	config      Config
+	idempotency *idempotencyStore
+}
 
 type problem struct {
-	Type      string `json:"type"`
-	Title     string `json:"title"`
-	Status    int    `json:"status"`
-	Detail    string `json:"detail,omitempty"`
-	Instance  string `json:"instance,omitempty"`
-	RequestID string `json:"request_id"`
-	Code      string `json:"code,omitempty"`
+	Type      string         `json:"type"`
+	Title     string         `json:"title"`
+	Status    int            `json:"status"`
+	Detail    string         `json:"detail,omitempty"`
+	Instance  string         `json:"instance,omitempty"`
+	RequestID string         `json:"request_id"`
+	Code      string         `json:"code,omitempty"`
+	Metadata  map[string]any `json:"metadata,omitempty"`
 }
 
 type workspaceInput struct {
@@ -102,7 +106,7 @@ func NewServer(cfg Config) *Server {
 	if len(cfg.AllowedOrigins) == 0 {
 		cfg.AllowedOrigins = []string{"http://127.0.0.1:3000", "http://localhost:3000"}
 	}
-	return &Server{config: cfg}
+	return &Server{config: cfg, idempotency: &idempotencyStore{records: make(map[string]idempotencyRecord)}}
 }
 
 func (s *Server) Handler() http.Handler {
@@ -212,7 +216,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/v1/workspaces/{id}/claims/{claim_id}/{action}", s.transitionClaimAPI)
 	mux.HandleFunc("GET /api/v1/workspaces/{id}/claims/contentions", s.listContentionsAPI)
 	mux.HandleFunc("POST /api/v1/workspaces/{id}/claims/contentions/{contention_id}/resolve", s.resolveContentionAPI)
-	return withLocalCORS(s, requestIDs(withSecurityPolicy(s, securityHeaders(jsonDefaults(mux)))))
+	return withLocalCORS(s, requestIDs(withIdempotency(s, withSecurityPolicy(s, securityHeaders(jsonDefaults(mux))))))
 }
 
 func (s *Server) originAllowed(origin string) bool {
@@ -612,6 +616,9 @@ func writeJSON(w http.ResponseWriter, status int, value any) {
 	_ = json.NewEncoder(w).Encode(value)
 }
 func WriteProblem(w http.ResponseWriter, r *http.Request, status int, code, title, detail string) {
+	WriteProblemDetails(w, r, status, code, title, detail, nil)
+}
+func WriteProblemDetails(w http.ResponseWriter, r *http.Request, status int, code, title, detail string, metadata map[string]any) {
 	w.Header().Set("Content-Type", "application/problem+json; charset=utf-8")
-	writeJSON(w, status, problem{Type: "https://roundtable.dev/problems/" + code, Title: title, Status: status, Detail: detail, Instance: r.URL.Path, RequestID: requestID(r.Context()), Code: code})
+	writeJSON(w, status, problem{Type: "https://roundtable.dev/problems/" + code, Title: title, Status: status, Detail: detail, Instance: r.URL.Path, RequestID: requestID(r.Context()), Code: code, Metadata: metadata})
 }

@@ -2011,6 +2011,7 @@ components:
         instance: {type: string}
         request_id: {type: string}
         code: {type: string}
+        metadata: {type: object, additionalProperties: true}
   responses:
     Problem:
       description: RFC 7807 problem details
