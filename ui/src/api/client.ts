@@ -12,7 +12,7 @@ export class APIClient {
   constructor(private readonly config: RuntimeConfig) {}
 
   async get<T>(path: string, signal?: AbortSignal): Promise<T> { return this.request<T>(path, { method: "GET", signal }); }
-  async post<T>(path: string, body: unknown, signal?: AbortSignal): Promise<T> { return this.request<T>(path, { method: "POST", body: JSON.stringify(body), signal }); }
+  async post<T>(path: string, body: unknown, signal?: AbortSignal, extraHeaders?: HeadersInit): Promise<T> { return this.request<T>(path, { method: "POST", body: JSON.stringify(body), signal, headers: extraHeaders }); }
   async patch<T>(path: string, body: unknown, signal?: AbortSignal): Promise<T> { return this.request<T>(path, { method: "PATCH", body: JSON.stringify(body), signal }); }
   async delete<T>(path: string, signal?: AbortSignal): Promise<T> { return this.request<T>(path, { method: "DELETE", signal }); }
 

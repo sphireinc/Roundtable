@@ -1,3 +1,10 @@
 export type ProblemDetails = { type: string; title: string; status: number; detail?: string; instance?: string; request_id: string; code?: string; metadata?: Record<string, unknown> };
 export type HealthComponent = { status: string; details?: Record<string, unknown> };
 export type NodeHealth = { status: "ok" | "degraded"; version: string; api_version: "v1"; time: string; request_id: string; components: Record<string, HealthComponent>; degraded_reasons?: string[] };
+export type Workspace = { id: string; display_name: string; root_alias?: string; canonical_repository_identity: string; status: string; default_branch?: string; created_at: string; last_opened_at?: string; revision: number };
+export type WorkspaceList = { items: Workspace[]; next_cursor: string | null };
+export type RepositoryChange = { path: string; index: string; worktree: string };
+export type RepositoryStatus = { workspace_id: string; root_alias?: string; branch: string; head_sha: string; dirty: boolean; ahead: number; behind: number; detached: boolean; remotes: { name: string; url: string }[]; index: RepositoryChange[]; protected_paths: { changed: number; paths?: string[] } };
+export type RepositoryBlocker = { code: string; message: string; count?: number };
+export type BranchSwitchPreflight = { workspace_id: string; target_branch: string; allowed: boolean; blockers: RepositoryBlocker[]; repository: RepositoryStatus };
+export type BranchSwitchResponse = { workspace: Workspace; before: RepositoryStatus; after: RepositoryStatus };

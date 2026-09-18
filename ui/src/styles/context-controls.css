@@ -1,0 +1,21 @@
+.context-controls { display: flex; align-items: center; flex-wrap: wrap; gap: var(--rt-space-3); min-width: 0; }
+.context-field { display: grid; gap: 4px; }
+.context-field label { color: var(--rt-color-text-muted); font-size: var(--rt-size-meta); }
+.context-field select, .context-field input { min-height: 34px; border: 1px solid var(--rt-color-border); border-radius: var(--rt-radius-sm); background: var(--rt-color-surface); color: var(--rt-color-text); padding: 6px 8px; }
+.context-field select { max-width: 190px; }
+.branch-control { display: flex; gap: 6px; }
+.branch-control input { width: 150px; }
+.repository-summary { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; color: var(--rt-color-text-muted); font: var(--rt-size-meta) var(--rt-font-mono); }
+.context-error, .context-error-block button { border: 1px solid var(--rt-color-danger); border-radius: var(--rt-radius-sm); background: transparent; color: var(--rt-color-danger); padding: 7px 9px; cursor: pointer; }
+.context-error-block { flex-basis: 100%; padding: 8px 10px; border: 1px solid var(--rt-color-danger); color: var(--rt-color-danger); font-size: var(--rt-size-meta); }
+.stream-status { display: inline-flex; align-items: center; }
+.dialog-backdrop { position: fixed; inset: 0; z-index: 10; display: grid; place-items: center; background: rgb(0 0 0 / 64%); padding: 20px; }
+.rt-dialog { width: min(520px, 100%); border: 1px solid var(--rt-color-border); border-radius: var(--rt-radius-md); background: var(--rt-color-surface); color: var(--rt-color-text); padding: 24px; box-shadow: var(--rt-shadow-raised); }
+.rt-dialog::backdrop { background: transparent; }
+.rt-dialog li { margin: 8px 0; }
+.dialog-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 20px; }
+.context-controls .notice { flex-basis: 100%; margin: 0; }
+.rt-status-connecting, .rt-status-reconnecting { color: var(--rt-color-warning); }
+.rt-status-connected { color: var(--rt-color-success); }
+.rt-status-disconnected { color: var(--rt-color-danger); }
+@media (max-width: 1000px) { .shell-topbar { align-items: flex-start; flex-direction: column; } .context-controls { width: 100%; } }
