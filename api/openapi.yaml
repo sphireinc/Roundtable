@@ -902,6 +902,29 @@ components:
       bearerFormat: local-agent-token
       description: Separate token for agent/MCP control surfaces. Never expose it to browser code.
   parameters:
+    Limit:
+      name: limit
+      in: query
+      required: false
+      description: Page size, capped at 200.
+      schema: {type: integer, minimum: 1, maximum: 200, default: 50}
+    Cursor:
+      name: cursor
+      in: query
+      required: false
+      description: Opaque cursor returned by the previous page.
+      schema: {type: string}
+    Sort:
+      name: sort
+      in: query
+      required: false
+      description: Endpoint-specific allowlisted sort field.
+      schema: {type: string}
+    Direction:
+      name: direction
+      in: query
+      required: false
+      schema: {type: string, enum: [asc, desc], default: desc}
     ActorID:
       name: X-Actor-ID
       in: header

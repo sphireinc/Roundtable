@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"net/http"
@@ -88,7 +89,7 @@ func (s *Server) repositoryEntities(w http.ResponseWriter, r *http.Request) {
 	}
 	var next *string
 	if end < len(filtered) {
-		value := strconv.Itoa(end)
+		value := encodeCursor(end)
 		next = &value
 	}
 	writeJSON(w, http.StatusOK, repositoryEntitiesResponse{Items: filtered[start:end], NextCursor: next})
@@ -242,9 +243,17 @@ func cursorOffset(value string) (int, error) {
 	if value == "" {
 		return 0, nil
 	}
-	n, err := strconv.Atoi(value)
+	decoded, err := base64.RawURLEncoding.DecodeString(value)
+	if err != nil {
+		return 0, errors.New("cursor must be an opaque base64url cursor")
+	}
+	n, err := strconv.Atoi(string(decoded))
 	if err != nil || n < 0 {
-		return 0, errors.New("cursor must be a non-negative integer")
+		return 0, errors.New("cursor is malformed")
 	}
 	return n, nil
+}
+
+func encodeCursor(offset int) string {
+	return base64.RawURLEncoding.EncodeToString([]byte(strconv.Itoa(offset)))
 }
