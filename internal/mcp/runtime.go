@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"roundtable/internal/claims"
@@ -31,6 +32,7 @@ type Runtime struct {
 	proposals *proposals.Service
 	security  *security.Service
 	indexer   *symbols.Indexer
+	turnMu    sync.Mutex
 }
 
 type CallRequest struct {
@@ -73,6 +75,12 @@ func OpenRuntime(root string) (*Runtime, func(), error) {
 
 func (r *Runtime) Call(ctx context.Context, tool string, args map[string]any) (map[string]any, error) {
 	switch tool {
+	case "agent.turn_request":
+		return r.agentTurnRequest(ctx, args)
+	case "agent.turn_start":
+		return r.agentTurnLifecycle(ctx, args, "agent.turn_started")
+	case "agent.turn_complete":
+		return r.agentTurnLifecycle(ctx, args, "agent.turn_completed")
 	case "table.get_state":
 		return r.tableGetState(ctx)
 	case "table.watch":
@@ -146,6 +154,194 @@ func (r *Runtime) Call(ctx context.Context, tool string, args map[string]any) (m
 	default:
 		return nil, fmt.Errorf("tool not implemented: %s", tool)
 	}
+}
+
+func (r *Runtime) agentTurnLifecycle(ctx context.Context, args map[string]any, eventType string) (map[string]any, error) {
+	r.turnMu.Lock()
+	defer r.turnMu.Unlock()
+	runID := stringArg(args, "run_id")
+	agentID := stringArg(args, "agent_id")
+	requestEventID := int64(intArgDefault(args, "request_event_id", 0))
+	if runID == "" || agentID == "" || requestEventID <= 0 {
+		return nil, errors.New("run_id, agent_id, and positive request_event_id are required")
+	}
+	run, err := r.store.GetRun(ctx, runID)
+	if err != nil {
+		return nil, err
+	}
+	if run.Status != "active" {
+		return nil, fmt.Errorf("run %s is %s and cannot accept turn lifecycle events", runID, run.Status)
+	}
+	events, err := r.store.ListEvents(ctx, runID)
+	if err != nil {
+		return nil, err
+	}
+	var request *db.Event
+	scheduled, started, completed := false, false, false
+	for i := range events {
+		event := &events[i]
+		if event.Type == "agent.turn_requested" && event.ID == requestEventID {
+			request = event
+		}
+		if event.Type != "agent.turn_scheduled" && event.Type != "agent.turn_started" && event.Type != "agent.turn_completed" {
+			continue
+		}
+		var payload struct {
+			RequestEventID int64  `json:"request_event_id"`
+			AgentID        string `json:"agent_id"`
+		}
+		if err := json.Unmarshal([]byte(event.PayloadJSON), &payload); err != nil {
+			return nil, fmt.Errorf("decode turn event %d: %w", event.ID, err)
+		}
+		if payload.RequestEventID != requestEventID {
+			continue
+		}
+		switch event.Type {
+		case "agent.turn_scheduled":
+			if payload.AgentID != agentID {
+				return nil, errors.New("turn request was scheduled for a different agent")
+			}
+			scheduled = true
+		case "agent.turn_started":
+			started = true
+		case "agent.turn_completed":
+			completed = true
+		}
+	}
+	if request == nil || request.ActorID != agentID {
+		return nil, errors.New("turn request not found for this agent")
+	}
+	if completed {
+		return nil, errors.New("turn request is already complete")
+	}
+	if eventType == "agent.turn_started" {
+		if !scheduled {
+			return nil, errors.New("turn request has not been scheduled by the Chair")
+		}
+		if started {
+			return nil, errors.New("turn request has already started")
+		}
+	} else if !started {
+		return nil, errors.New("turn request has not started")
+	}
+	body, err := json.Marshal(map[string]any{
+		"agent_id":         agentID,
+		"request_event_id": requestEventID,
+	})
+	if err != nil {
+		return nil, err
+	}
+	event, err := r.store.AppendEvent(ctx, db.Event{
+		RunID:       runID,
+		Type:        eventType,
+		ActorID:     agentID,
+		PayloadJSON: string(body),
+	})
+	if err != nil {
+		return nil, err
+	}
+	return map[string]any{"event": event, "request_event_id": requestEventID, "status": eventType}, nil
+}
+
+func (r *Runtime) agentTurnRequest(ctx context.Context, args map[string]any) (map[string]any, error) {
+	r.turnMu.Lock()
+	defer r.turnMu.Unlock()
+	runID := stringArg(args, "run_id")
+	agentID := stringArg(args, "agent_id")
+	reason := strings.TrimSpace(stringArg(args, "reason_md"))
+	if runID == "" || agentID == "" || reason == "" {
+		return nil, errors.New("run_id, agent_id, and reason_md are required")
+	}
+	if len([]rune(reason)) > 1000 {
+		return nil, errors.New("reason_md must be 1000 characters or fewer")
+	}
+	run, err := r.store.GetRun(ctx, runID)
+	if err != nil {
+		return nil, err
+	}
+	if run.Status != "active" {
+		return nil, fmt.Errorf("run %s is %s and cannot accept turn requests", runID, run.Status)
+	}
+	agent, err := r.store.GetAgent(ctx, agentID)
+	if err != nil {
+		return nil, err
+	}
+	if !agent.IsEnabled {
+		return nil, fmt.Errorf("agent %s is disabled", agentID)
+	}
+	events, err := r.store.ListEvents(ctx, runID)
+	if err != nil {
+		return nil, err
+	}
+	completed := make(map[int64]struct{})
+	for _, event := range events {
+		if event.Type == "agent.turn_completed" {
+			var payload struct {
+				RequestEventID int64 `json:"request_event_id"`
+			}
+			if err := json.Unmarshal([]byte(event.PayloadJSON), &payload); err != nil {
+				return nil, fmt.Errorf("decode completed turn %d: %w", event.ID, err)
+			}
+			completed[payload.RequestEventID] = struct{}{}
+		}
+	}
+	queued := make(map[string]int64)
+	for _, event := range events {
+		if event.Type != "agent.turn_requested" {
+			continue
+		}
+		if _, ok := completed[event.ID]; ok {
+			continue
+		}
+		if _, exists := queued[event.ActorID]; !exists {
+			queued[event.ActorID] = event.ID
+		}
+	}
+	if requestID, exists := queued[agentID]; exists {
+		return map[string]any{
+			"request_event_id": requestID,
+			"agent_id":         agentID,
+			"queued":           true,
+			"duplicate":        true,
+			"queue_position":   turnQueuePosition(queued, agentID),
+		}, nil
+	}
+	body, err := json.Marshal(map[string]any{
+		"agent_id":     agentID,
+		"reason_md":    reason,
+		"requested_at": time.Now().UTC().Format(time.RFC3339Nano),
+	})
+	if err != nil {
+		return nil, err
+	}
+	event, err := r.store.AppendEvent(ctx, db.Event{
+		RunID:       runID,
+		Type:        "agent.turn_requested",
+		ActorID:     agentID,
+		PayloadJSON: string(body),
+	})
+	if err != nil {
+		return nil, err
+	}
+	queued[agentID] = event.ID
+	return map[string]any{
+		"request_event_id": event.ID,
+		"agent_id":         agentID,
+		"queued":           true,
+		"duplicate":        false,
+		"queue_position":   turnQueuePosition(queued, agentID),
+	}, nil
+}
+
+func turnQueuePosition(queued map[string]int64, agentID string) int {
+	position := 1
+	requestID := queued[agentID]
+	for otherID, otherRequestID := range queued {
+		if otherID != agentID && otherRequestID < requestID {
+			position++
+		}
+	}
+	return position
 }
 
 func (r *Runtime) taskList(ctx context.Context) (map[string]any, error) {
@@ -239,6 +435,12 @@ func (r *Runtime) tableGetState(ctx context.Context) (map[string]any, error) {
 func (r *Runtime) tableWatch(ctx context.Context, args map[string]any) (map[string]any, error) {
 	runID := stringArg(args, "run_id")
 	limit := intArgDefault(args, "limit", 10)
+	if limit <= 0 {
+		limit = 10
+	}
+	if limit > 200 {
+		limit = 200
+	}
 	snapshot, err := state.LoadSnapshot(ctx, r.store)
 	if err != nil {
 		return nil, err
@@ -247,8 +449,34 @@ func (r *Runtime) tableWatch(ctx context.Context, args map[string]any) (map[stri
 	if err != nil {
 		return nil, err
 	}
-	if limit > 0 && len(events) > limit {
+	_, cursorProvided := args["after_event_id"]
+	afterEventID := int64(intArgDefault(args, "after_event_id", 0))
+	hasMoreEvents := false
+	if afterEventID < 0 {
+		return nil, errors.New("after_event_id must be zero or greater")
+	}
+	if cursorProvided {
+		filtered := make([]db.Event, 0, limit+1)
+		for _, event := range events {
+			if event.ID <= afterEventID {
+				continue
+			}
+			filtered = append(filtered, event)
+			if len(filtered) == limit+1 {
+				break
+			}
+		}
+		hasMoreEvents = len(filtered) > limit
+		if hasMoreEvents {
+			filtered = filtered[:limit]
+		}
+		events = filtered
+	} else if len(events) > limit {
 		events = events[len(events)-limit:]
+	}
+	nextAfterEventID := afterEventID
+	if len(events) > 0 {
+		nextAfterEventID = events[len(events)-1].ID
 	}
 	blockedTasks := make([]db.Task, 0)
 	for _, task := range snapshot.Tasks {
@@ -273,16 +501,18 @@ func (r *Runtime) tableWatch(ctx context.Context, args map[string]any) (map[stri
 		transactions = transactions[len(transactions)-limit:]
 	}
 	return map[string]any{
-		"run_id":             runID,
-		"events":             events,
-		"transactions":       transactions,
-		"blocked_tasks":      blockedTasks,
-		"pending_proposals":  pendingProposals,
-		"required_approvals": requiredApprovals,
-		"active_claims":      countClaimsByStatus(snapshot.Claims, "active"),
-		"suspended_claims":   countClaimsByStatus(snapshot.Claims, "suspended"),
-		"open_tasks":         countTasksByStatus(snapshot.Tasks, "open", "in_progress", "blocked"),
-		"active_agents":      countEnabledAgents(snapshot.Agents),
+		"run_id":              runID,
+		"events":              events,
+		"next_after_event_id": nextAfterEventID,
+		"has_more_events":     hasMoreEvents,
+		"transactions":        transactions,
+		"blocked_tasks":       blockedTasks,
+		"pending_proposals":   pendingProposals,
+		"required_approvals":  requiredApprovals,
+		"active_claims":       countClaimsByStatus(snapshot.Claims, "active"),
+		"suspended_claims":    countClaimsByStatus(snapshot.Claims, "suspended"),
+		"open_tasks":          countTasksByStatus(snapshot.Tasks, "open", "in_progress", "blocked"),
+		"active_agents":       countEnabledAgents(snapshot.Agents),
 	}, nil
 }
 
@@ -1033,6 +1263,8 @@ func intArgDefault(args map[string]any, key string, fallback int) int {
 		return int(v)
 	case int:
 		return v
+	case int64:
+		return int(v)
 	case json.Number:
 		n, err := v.Int64()
 		if err == nil {

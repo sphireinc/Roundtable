@@ -1,89 +1,51 @@
 # Roundtable
 
-Roundtable is a local-first shared-state agentic development orchestrator.
+Roundtable is a shared-state agentic development management system. Multiple agents deliberate around one project state; repository changes are intended to flow through resource claims, patch proposals, policy/review gates, and a transaction manager instead of independent agents writing to divergent copies.
 
-Multiple AI agents deliberate together, claim resources, propose patches, vote under policy-weighted governance, and mutate one authoritative repository only through a transaction manager.
+The implementation has three distinct surfaces: a Go coordinator/MCP/TUI runtime, a standalone Go HTTP API, and a Next.js administration UI. Their current capabilities and unfinished boundaries are described in the [documentation site](docs/index.md); do not infer that every planned UI or agent-execution feature is complete just because it appears in a design or task specification.
 
-Roundtable is not parallel AI coding in silos. It is many agents at one table, one computer, one repo, one governed stream of changes.
+## Quick start
 
-## Category
+With Go installed, from the repository root:
 
-Shared-State Agentic Development
-
-## Core model
-
-> Model C: Many agents deliberate together, but mutate one shared repo through a transaction manager.
-
-## Primary goals
-
-- Coordinate existing CLI coding agents such as Codex CLI, Claude Code, Gemini CLI, OpenCode, Cursor CLI, and generic shell agents.
-- Force all agents through a local MCP-compatible tool surface.
-- Keep the repository read-only to agents.
-- Require patch-only proposals.
-- Apply patches only through the orchestrator after claim validation, consensus, policy gates, and human approval where required.
-- Maintain a literal live SQLite-backed consensus table.
-- Support file, directory, symbol, command, schema, endpoint, and other resource claims.
-- Provide a Bubble Tea TUI with live table, watch feed, human terminal, and inspector panes.
-- Persist agent sessions so runs can be resumed, including adapter-specific resume commands such as `codex resume <session-id>`.
-- Maintain persistent team memory through a Memory Oracle agent.
-
-## Initial CLI flow
-
-```bash
-roundtable init
-roundtable run --goal "Refactor auth to support refresh-token rotation without breaking login"
+```sh
+go run ./cmd/roundtable init --root .
+go run ./cmd/roundtable run --root . --goal "Describe the work to coordinate"
 ```
 
-`roundtable init` creates the project scaffolding, including `.roundtable/mcp/*` files.
+The default runtime creates `.roundtable/config.yaml`, a SQLite database, MCP assets, and starter governance/project files. Interactive mode runs the local MCP socket, TUI, and coordinator loop. Agent CLI process launch is not yet connected; agents can use the MCP surface when separately attached. For a single coordinator cycle without the socket or TUI, add `--headless`.
 
-`roundtable run` starts the MCP server, launches/resumes agents, brings up the TUI, and starts orchestration.
+## Documentation
 
-## Important commands
+- [Quickstart](docs/QUICKSTART.md)
+- [CLI reference](docs/CLI.md)
+- [Configuration reference](docs/CONFIGURATION.md)
+- [Architecture](docs/ARCHITECTURE.md)
+- [Agent protocol](AGENTS.ROUNDTABLE.md)
+- [Governance policy](POLICIES.ROUNDTABLE.md)
+- [HTTP API and OpenAPI guide](api/README.md)
+- [Deployment](docs/DEPLOYMENT.md)
 
-```bash
-roundtable init
-roundtable run --goal "..."
-roundtable run --task TASKS.ROUNDTABLE/0001-bootstrap.md
-roundtable tui
-roundtable watch
-roundtable table
-roundtable mcp serve
-roundtable mcp inspect
-roundtable mcp inspect --write
-roundtable agents
-roundtable claims
-roundtable proposals
-roundtable approve P-0001
-roundtable reject P-0001 --reason "..."
-roundtable veto P-0001 --reason "..."
-roundtable resume
-roundtable resume --agent implementer-1
-roundtable sessions
-roundtable memory query "why did we avoid Redis?"
+Build the uniform grouped documentation site locally:
+
+```sh
+python -m pip install -r requirements-docs.txt
+python scripts/prepare-docs.py
+python -m mkdocs build --strict
 ```
 
-## Repository layout
+## Repository areas
 
-```text
-cmd/roundtable/             CLI entrypoint
-internal/tui/               Bubble Tea application and panes
-internal/db/                SQLite, migrations, repositories, event log
-internal/mcp/               MCP-compatible server and tool registry
-internal/agents/            Role prompts, chair loop, orchestration policies
-internal/adapters/          CLI adapters for codex/claude/gemini/opencode/generic
-internal/repo/              Git integration, read-only workspace, patch validation/apply
-internal/symbols/           Tree-sitter parsing and symbol index
-internal/policy/            Consensus, risk, human approval, security gates
-internal/memory/            Memory Oracle and durable memory store
-internal/security/          Secret scanning, dangerous command/path checks
-internal/events/            Pub/sub event bus for TUI/watch feed
-migrations/                 SQLite migrations
-TASKS.ROUNDTABLE/           Bite-size task files
-.roundtable/                Local runtime state
-```
+| Path | Purpose |
+| --- | --- |
+| `cmd/roundtable/` | Go executable entry point. |
+| `internal/` | Runtime packages: config, database, MCP, orchestration, claims, proposals, policies, sessions, symbols, TUI. |
+| `api/` | HTTP API server, OpenAPI contract, generated endpoint documentation, and Compose definition. |
+| `ui/` | Next.js browser client for the API. |
+| `docs/` | Detailed Go runtime, operator, and feature documentation. |
+| `TASKS.ROUNDTABLE/` | Project and API/UI task specifications; not part of the published docs site. |
+| `.roundtable/` | Local database, configuration, generated MCP assets, and runtime artifacts. Keep local state and secrets out of source control. |
 
-## Non-negotiable rule
+## Project invariant
 
-Agents never directly write to the authoritative repository.
-
-Agents may read, discuss, claim resources, propose patches, vote, review, test, and query memory. The orchestrator alone applies mutations.
+The database-backed shared state is authoritative. Agent conversation history and local CLI session state may help resume work, but do not replace the persisted task, claim, proposal, vote, approval, decision, transaction, or event records. Read the [Agent Protocol](AGENTS.ROUNDTABLE.md) before integrating an agent.

@@ -108,6 +108,10 @@ func runRoundtable(ctx context.Context, args []string, stdout io.Writer) error {
 	goal := fs.String("goal", "", "goal description")
 	resume := fs.Bool("resume", false, "resume an existing run")
 	headless := fs.Bool("headless", false, "initialize run state without starting MCP server or TUI")
+	interval := fs.Duration("interval", time.Second, "orchestration polling interval")
+	retryBackoff := fs.Duration("retry-backoff", 250*time.Millisecond, "delay before retrying a failed orchestration cycle")
+	maxErrors := fs.Int("max-consecutive-errors", 5, "stop after this many consecutive orchestration errors")
+	maxIterations := fs.Int("max-iterations", 0, "stop after this many cycles; zero runs until convergence")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -136,12 +140,26 @@ func runRoundtable(ctx context.Context, args []string, stdout io.Writer) error {
 	if err != nil {
 		return err
 	}
-	if err := chair.Tick(ctx, activeRun.ID); err != nil {
-		return err
-	}
 	if err := writeGeneratedMCPAssets(*root, cfg); err != nil {
 		return err
 	}
+	loopOptions := orchestrator.LoopOptions{
+		Interval:             *interval,
+		RetryBackoff:         *retryBackoff,
+		MaxConsecutiveErrors: *maxErrors,
+		MaxIterations:        *maxIterations,
+	}
+	if *headless {
+		if loopOptions.MaxIterations == 0 {
+			loopOptions.MaxIterations = 1
+		}
+		_, loopErr := chair.Run(ctx, activeRun.ID, loopOptions)
+		if loopErr != nil && !errors.Is(loopErr, orchestrator.ErrIterationLimit) {
+			return loopErr
+		}
+		return insertRunSnapshot(ctx, store, activeRun.ID)
+	}
+
 	if err := insertRunSnapshot(ctx, store, activeRun.ID); err != nil {
 		return err
 	}
@@ -153,34 +171,53 @@ func runRoundtable(ctx context.Context, args []string, stdout io.Writer) error {
 	if err != nil {
 		return err
 	}
-	if *headless {
-		return nil
-	}
-
 	server := mcp.NewServer(*root, resolveSocketPath(*root, cfg.MCP.SocketPath), mcp.DefaultRegistry())
 	if err := server.Start(ctx); err != nil {
 		return err
 	}
 	defer server.Close()
 
-	return tui.Run(ctx, stdout, tui.Options{
-		Goal:       activeRun.Goal,
-		SocketPath: cfg.MCP.SocketPath,
-		RunID:      activeRun.ID,
-		Snapshot:   snapshot,
-		WatchFeed:  watchFeed,
-		Refresh: func(refreshCtx context.Context) (state.Snapshot, []string, error) {
-			nextSnapshot, err := state.LoadSnapshot(refreshCtx, store)
-			if err != nil {
-				return state.Snapshot{}, nil, err
-			}
-			nextWatchFeed, err := loadWatchFeed(refreshCtx, store, activeRun.ID, cfg.MCP.SocketPath, 6)
-			if err != nil {
-				return state.Snapshot{}, nil, err
-			}
-			return nextSnapshot, nextWatchFeed, nil
-		},
-	})
+	loopCtx, cancelLoop := context.WithCancel(ctx)
+	defer cancelLoop()
+	loopDone := make(chan error, 1)
+	go func() {
+		_, err := chair.Run(loopCtx, activeRun.ID, loopOptions)
+		if errors.Is(err, context.Canceled) && loopCtx.Err() != nil {
+			err = nil
+		}
+		loopDone <- err
+	}()
+	tuiDone := make(chan error, 1)
+	go func() {
+		tuiDone <- tui.Run(loopCtx, stdout, tui.Options{
+			Goal:       activeRun.Goal,
+			SocketPath: cfg.MCP.SocketPath,
+			RunID:      activeRun.ID,
+			Snapshot:   snapshot,
+			WatchFeed:  watchFeed,
+			Refresh: func(refreshCtx context.Context) (state.Snapshot, []string, error) {
+				nextSnapshot, err := state.LoadSnapshot(refreshCtx, store)
+				if err != nil {
+					return state.Snapshot{}, nil, err
+				}
+				nextWatchFeed, err := loadWatchFeed(refreshCtx, store, activeRun.ID, cfg.MCP.SocketPath, 6)
+				if err != nil {
+					return state.Snapshot{}, nil, err
+				}
+				return nextSnapshot, nextWatchFeed, nil
+			},
+		})
+	}()
+	select {
+	case err := <-loopDone:
+		cancelLoop()
+		if err != nil {
+			return err
+		}
+		return nil
+	case err := <-tuiDone:
+		return err
+	}
 }
 
 func runMCP(args []string, stdout io.Writer) error {
@@ -866,7 +903,11 @@ func writeJSON(w io.Writer, value any) error {
 func ensureRunState(ctx context.Context, store *db.Store, runID, goal string, resume bool) (db.Run, error) {
 	if resume {
 		if runID != "" {
-			return store.GetRun(ctx, runID)
+			run, err := store.GetRun(ctx, runID)
+			if err != nil {
+				return db.Run{}, err
+			}
+			return reactivateRun(ctx, store, run)
 		}
 		runs, err := store.ListRuns(ctx)
 		if err != nil {
@@ -882,7 +923,7 @@ func ensureRunState(ctx context.Context, store *db.Store, runID, goal string, re
 				break
 			}
 		}
-		return selected, nil
+		return reactivateRun(ctx, store, selected)
 	}
 
 	if runID == "" {
@@ -897,6 +938,18 @@ func ensureRunState(ctx context.Context, store *db.Store, runID, goal string, re
 		return db.Run{}, err
 	}
 	return store.GetRun(ctx, runID)
+}
+
+func reactivateRun(ctx context.Context, store *db.Store, run db.Run) (db.Run, error) {
+	if run.Status == "active" && run.EndedAt == "" {
+		return run, nil
+	}
+	run.Status = "active"
+	run.EndedAt = ""
+	if err := store.UpsertRun(ctx, run); err != nil {
+		return db.Run{}, err
+	}
+	return store.GetRun(ctx, run.ID)
 }
 
 func writeGeneratedMCPAssets(root string, cfg config.Config) error {

@@ -78,6 +78,10 @@ func TestMCPInspectWritesGeneratedRegistryAssets(t *testing.T) {
 	if !strings.Contains(written, `"name": "table.watch"`) {
 		t.Fatalf("expected registry-generated schema to include table.watch, got: %s", written)
 	}
+	manifest := mustReadFile(t, filepath.Join(root, ".roundtable/mcp/AGENT_MCP_MANIFEST.md"))
+	if !strings.Contains(manifest, "not a standards-complete MCP transport") {
+		t.Fatalf("expected generated manifest to state the socket protocol boundary, got: %s", manifest)
+	}
 	if !strings.Contains(output.String(), "proposal.create") {
 		t.Fatalf("expected inspect output to list tool names, got: %s", output.String())
 	}

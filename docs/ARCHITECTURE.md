@@ -1,143 +1,65 @@
 # Architecture
 
-## Runtime components
+Roundtable's target model is many agents deliberating over one shared project state, with repository mutation governed by proposal review and a transaction path. The implementation is split into three executable surfaces; they share concepts and SQLite storage but are not one monolithic process.
 
-```text
-Human
-  │
-  ▼
-Bubble Tea TUI ───────────────┐
-  │                            │
-  ▼                            ▼
-Roundtable Orchestrator ── SQLite WAL
-  │                            ▲
-  │                            │
-  ├── MCP Server ──────────────┘
-  │     ▲
-  │     │
-  │  CLI Agents
-  │
-  ├── Policy Engine
-  ├── Claim Manager
-  ├── Patch Transaction Manager
-  ├── Git/Repo Manager
-  ├── Symbol Indexer
-  ├── Memory Oracle
-  └── Event Bus
-```
+## Components
 
-## Principles
+| Component | Source | Responsibility | Current boundary |
+| --- | --- | --- | --- |
+| Go CLI/runtime | `cmd/roundtable`, `internal/` | Initialization, local SQLite-backed state, MCP tools/server, orchestration loop, claims/proposals/policy, terminal table/watch/TUI. | Does not launch agent CLI processes. |
+| HTTP API | `api/cmd/server`, `api/internal/httpapi` | Versioned REST/WebSocket control plane, API-specific auth/CORS/workspace enforcement, dashboard and administration surfaces. | Separate server process; contract is `api/openapi.yaml`. |
+| Web UI | `ui/src` | Browser admin shell and API client. | Dashboard is the only wired product page; many shell links represent unfinished task-pack scope. |
 
-1. One authoritative repository.
-2. Agents receive a read-only view of the repo.
-3. Agents propose patches; they do not apply patches.
-4. Claims protect resources before proposals.
-5. Consensus and policy gates decide whether patches may be applied.
-6. The transaction manager applies patches and records audit trails.
-7. SQLite is the durable source of truth.
-8. The TUI is a live projection of SQLite state and the event stream.
-9. External CLI session state is resumable, but non-authoritative.
+## Go runtime package map
 
-## Main packages
+- `internal/app`: command parsing and composition of runtime services.
+- `internal/config`: defaults and supported `.roundtable/config.yaml` scalar parser.
+- `internal/db`: SQLite connection, WAL/foreign-key/busy-timeout pragmas, schema migration, persistence repositories.
+- `internal/state`: read-model snapshot assembled from persisted tables.
+- `internal/mcp`: central tool registry, local runtime handlers, generated tool schema/manifest, Unix socket server.
+- `internal/orchestrator`: agent-record synchronization, task assignment, proposal review requests, FIFO agent turn scheduling, retrying run loop, convergence decisions.
+- `internal/claims`: resource normalization, overlap/conflict checks, TTL, transitions, and stale-session reconciliation.
+- `internal/symbols`: Go AST parsing and structural TypeScript/Python extraction for symbol resources.
+- `internal/proposals`, `internal/repo`: proposal lifecycle, patch parsing/validation/application, resource checks, and transaction records.
+- `internal/policy`, `internal/security`: policy loading/evaluation and security-review records/checks used by proposal governance.
+- `internal/sessions`, `internal/adapters`: session persistence/briefings and adapter metadata/command plans.
+- `internal/events`: in-process event publication/subscription primitives.
+- `internal/tui`: terminal projection of coordinator snapshots/watch feed.
 
-```text
-cmd/roundtable
-  CLI entrypoint using Cobra or urfave/cli.
+These package roles are not equivalent to full automatic agent execution: in particular adapter command plans are not a process supervisor, and the TUI is not the browser UI. Details and limitations are documented per feature in the navigation.
 
-internal/tui
-  Bubble Tea model/update/view architecture.
+## State and data flow
 
-internal/db
-  SQLite connection, WAL mode, migrations, repositories.
+SQLite is the durable store for runs, agents/sessions, tasks, resources/claims, proposals/patches, votes/decisions, approvals/security reviews, test-run records, memory, and events. `db.Open` enables WAL, foreign keys, and a 5-second busy timeout before migrations. The optional config field `storage.wal` is currently parsed but does not turn WAL on/off.
 
-internal/mcp
-  MCP-compatible server, generated manifest, tool registry.
+The implemented high-level agent workflow is:
 
-internal/agents
-  role definitions, chair loop, task assignment, prompt composition.
+1. The coordinator exposes state and tools over MCP.
+2. Agents read/search repository context, record tasks or claims, and submit proposals/patch artifacts through tools.
+3. Runtime services validate proposals, claims, votes/reviews, and policy gates against current shared state.
+4. Eligible patch application is performed by the Roundtable service path, which records transaction status and events.
+5. The UI/TUI/CLI project persisted state; projections are not authoritative mutations.
 
-internal/adapters
-  external CLI agent process management.
+The exact gate sequence and failure semantics depend on proposal status, policy, approval, and patch validation. See [Proposals and Transactions](TRANSACTIONS.md); do not infer the aspirational end-to-end flow in task specs as universally automatic today.
 
-internal/repo
-  git status, git hash, read-only workspace, patch validation, patch apply.
+## Event and turn coordination
 
-internal/symbols
-  tree-sitter parsing and symbol index.
+Durable domain events are persisted in SQLite and used by snapshots/watch queries. Agent turn requests are represented as durable scheduling events: outstanding requests are ordered FIFO, an agent starts its scheduled turn, and explicit completion permits the next request to be scheduled. Requests are deduplicated while outstanding. This is coordination metadata and does not itself execute the requested work.
 
-internal/policy
-  risk classification, consensus thresholds, human approval requirements.
+The Go event bus provides in-process fanout; the standalone API has its own WebSocket/event snapshot implementation. Those are separate delivery paths and should not be assumed to share one process-local subscription.
 
-internal/memory
-  persistent memory entries, Oracle behavior, summaries.
+## Trust boundaries
 
-internal/security
-  secret scanning, dangerous commands, high-risk resources.
+- The project database and policy files are authoritative local state.
+- Agent-facing MCP operations do not grant agents direct authority to write the repository; proposals are the intended write boundary.
+- The HTTP API enforces workspace roots and human/agent control surfaces independently of the local MCP runtime.
+- Browser configuration is public build-time configuration. No privileged bearer token belongs in a `NEXT_PUBLIC_*` variable.
+- A Unix socket is a local trust boundary, not a network authentication protocol.
 
-internal/events
-  append-only events and pub/sub fanout.
-```
+## Related references
 
-## Orchestration loop
-
-1. Load config, policies, project docs, and tasks.
-2. Start SQLite and event bus.
-3. Start MCP server.
-4. Generate MCP manifest and schemas.
-5. Start TUI.
-6. Chair decomposes/assigns tasks.
-7. Agents query table/memory.
-8. Agents claim resources.
-9. Implementers propose patches.
-10. Reviewers, Architect, Tester, Security vote/review.
-11. Policy engine evaluates consensus.
-12. Human approves high-risk changes.
-13. Transaction manager validates and applies patch.
-14. Tests run.
-15. Memory Oracle records durable decisions.
-16. TUI and watch feed update.
-
-## Data flow for a patch
-
-```text
-Agent intent
-  → resource.claim
-  → proposal.create
-  → patch.validate
-  → vote.cast
-  → policy.evaluate
-  → human.request_approval if needed
-  → patch.apply
-  → transaction recorded
-  → tests run
-  → decision/memory updated
-```
-
-## Read-only repo strategy
-
-Adapters should prefer one of:
-
-- bind mount read-only directory into sandbox/container
-- copy repo to temporary read-only workspace
-- use filesystem permissions to prevent writes
-- allow sandbox writes but export only patch artifacts
-
-The authoritative repo is mutated only by the orchestrator.
-
-## Event sourcing
-
-Every meaningful action writes an event:
-
-- agent started
-- table queried
-- task created/assigned
-- resource claimed/released
-- proposal created
-- vote cast
-- decision recorded
-- patch validated/applied/rejected
-- test run started/completed
-- human approval requested/granted/denied
-- memory entry recorded/staled
-
-Materialized tables make UI queries fast.
+- [Configuration](CONFIGURATION.md) documents actual parser keys and defaults.
+- [MCP Tools](MCP_TOOLS.md) inventories agent-callable tools.
+- [Database](DATABASE.md) documents schema and persistence.
+- [HTTP API](../api/README.md) covers service deployment and links to OpenAPI.
+- [Web UI](UI.md) distinguishes current pages from planned navigation.
