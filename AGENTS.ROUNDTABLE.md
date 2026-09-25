@@ -32,6 +32,12 @@ Your external CLI session memory is helpful but not authoritative. On startup or
 9. Revise only if asked.
 10. Release claims after completion.
 
+## Priority turn requests
+
+When you have a pressing update or action that should be handled before other queued work, call the MCP tool `agent.turn_request` with the active `run_id`, your `agent_id`, and a concise `reason_md`. The coordinator records the request durably, deduplicates it while outstanding, queues it FIFO, and records `agent.turn_scheduled` when the Chair schedules your turn. MCP is request/response, so poll `table.watch` with this `run_id` and an `after_event_id` cursor; start at 0 and continue from each response's `next_after_event_id` until you find a schedule event whose `request_event_id` matches yours. Then call `agent.turn_start` with that ID, perform the scheduled work through the normal MCP tools, and call `agent.turn_complete` with the same ID. Lifecycle tools require a positive integer request event ID. Do not send repeated requests while yours is outstanding. Turn scheduling does not interrupt an external process or bypass the normal resource-claim, proposal, review, policy, or human-approval rules.
+
+The turn queue coordinates tool use and shared work; it does not launch agent CLI processes. Adapter command execution and automatic session capture are separate unfinished runtime capabilities.
+
 ## Role descriptions
 
 ### Chair / Moderator

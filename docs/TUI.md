@@ -1,93 +1,19 @@
-# TUI Design
+# Terminal UI and Watch View
 
-Roundtable uses Bubble Tea and Bubbles.
+`internal/tui` is a Bubble Tea view started by interactive `roundtable run`. It is a snapshot dashboard, not an interactive command terminal or full-featured table inspector.
 
-## Main layout
+## Layout and displayed data
 
-```text
-┌───────────────────────────────────────────────┬───────────────────────────────────────────────┐
-│ LIVE TABLE                                    │ WATCH FEED                                    │
-│ - active claims                               │ - messages                                    │
-│ - proposals                                   │ - votes                                       │
-│ - consensus state                             │ - tool calls                                  │
-│ - blocked tasks                               │ - test results                                │
-├───────────────────────────────────────────────┼───────────────────────────────────────────────┤
-│ COMMAND / HUMAN TERMINAL                      │ INSPECTOR                                     │
-│ > ask chair ...                               │ selected task/proposal/claim/agent/memory     │
-│ > approve P-12                                │ diff preview / vote detail / test log         │
-│ > veto P-13                                   │                                               │
-└───────────────────────────────────────────────┴───────────────────────────────────────────────┘
-```
+The view draws four bordered panes: Live Table (run status/goal, task and claim counts, enabled agent count, pending proposals, requested approvals, latest transactions), Watch Feed (provided activity lines or socket placeholder), Command/Human Terminal (static example commands), and Inspector (latest proposal, transaction, approval summary). The last two panes are illustrative text; commands are not parsed and the inspector does not track keyboard-selected entities.
 
-## Pane 1: Live Table
+Pane widths/heights derive from terminal size and have a minimum width/height. At narrow sizes content is clipped by rune count rather than adaptively reflowed, so the current view is not guaranteed to be usable at all terminal sizes.
 
-Displays:
+## Refresh and keys
 
-- current run
-- current goal
-- active tasks
-- active agents
-- active/suspended claims
-- pending proposals
-- consensus state
-- blocked tasks
-- required human approvals
-- latest transaction ids
+The run command supplies a callback that reloads a database snapshot and recent event feed. The TUI schedules refreshes every two seconds by default. Successful refreshes replace the displayed snapshot/feed; refresh errors are currently discarded and the last successful view remains visible without a dedicated stale/error indicator. This is periodic polling, not an event subscription.
 
-## Pane 2: Watch Feed
+Press `q` or `Ctrl+C` to quit the UI. The process context also controls shutdown. No other keys, mouse navigation, command submission, approval, proposal editing, or transaction rollback are implemented in this TUI.
 
-Streaming chronological feed of:
+## Related monitoring surfaces
 
-- agent messages
-- MCP calls
-- claims
-- releases
-- proposals
-- votes
-- decisions
-- security warnings
-- human approvals
-- test results
-- transactions
-- memory updates
-
-## Pane 3: Human Command Terminal
-
-Accepts commands:
-
-```text
-ask chair <message>
-approve P-0001
-reject P-0001 --reason "..."
-veto P-0001 --reason "..."
-pause
-resume
-claim revoke C-0001
-memory query <query>
-show proposal P-0001
-show tx TX-0001
-```
-
-## Pane 4: Inspector
-
-Shows details for the selected item.
-
-Inspector modes:
-
-- Diff
-- Task
-- Agent
-- Claim
-- Vote
-- Test Run
-- Memory
-- Security
-- Transaction
-
-## Bubble Tea guidance
-
-- Use a root Elm model.
-- Use child models for panes.
-- Use Bubbles list/table/textinput/viewport/spinner/help/key components where appropriate.
-- Avoid raw terminal output management.
-- Keep rendering deterministic and testable.
+`roundtable table` prints a compact summary; `roundtable watch` displays feed snapshots and optionally polls with `--follow`. The browser administration UI is a separate application; its current scope is in [Web UI](UI.md).

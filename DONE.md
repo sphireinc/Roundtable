@@ -53,3 +53,4 @@
   - Tree-sitter-grade symbol engine if you want to match the original spec more literally
   - Add live subscriptions/refresh to the TUI and watch path instead of snapshot-first rendering.
   - Expand acceptance coverage for failure paths, long-running session behavior, interrupted transactions, and concurrent-agent contention.
+  - Turn the orchestrator from a single sync + tick pass into a continuous multi-agent loop with real iteration, retries, and convergence logic; add FIFO MCP agent turn requests and durable scheduled/started/completed events.

@@ -1,145 +1,29 @@
-# CLI Agent Adapters
+# Agent Adapter Capabilities
 
-Roundtable uses existing CLI coding agents where possible.
+The adapter package currently represents adapter configuration, capability metadata, and command/resume plans. It is not yet a process supervisor: the orchestrator does not start, monitor, stream output from, stop, or automatically resume Codex, Claude, Gemini, OpenCode, or generic shell processes. Installations of those CLIs alone do not make agents execute.
 
-## Adapter interface
+## Configuration
 
-```go
-type Adapter interface {
-    Name() string
-    Capabilities(ctx context.Context) AdapterCapabilities
-    Start(ctx context.Context, req StartAgentRequest) (*AgentSession, error)
-    Resume(ctx context.Context, req ResumeAgentRequest) (*AgentSession, error)
-    Stop(ctx context.Context, sessionID string) error
-}
-```
+Adapter entries live under `adapters` in `.roundtable/config.yaml`. Supported fields are `command`, `supports_resume`, `resume_pattern`, `supports_mcp`, `supports_readonly_workspace`, and `captures_session_id`. Defaults for built-in names are fully enumerated in [Configuration Reference](CONFIGURATION.md).
 
-## Required capabilities
+| Adapter | Default command | Resume pattern | MCP | Read-only workspace metadata | Captures session ID metadata |
+| --- | --- | --- | --- | --- | --- |
+| `codex` | `codex` | `codex resume {{external_session_id}}` | yes | yes | yes |
+| `claude` | `claude` | `claude --resume {{external_session_id}}` | yes | yes | yes |
+| `gemini` | `gemini` | `gemini resume {{external_session_id}}` | yes | yes | yes |
+| `opencode` | `opencode` | none | yes | yes | no |
+| `generic` | `sh` | none | no | yes | no |
 
-```go
-type AdapterCapabilities struct {
-    SupportsResume            bool
-    SupportsMCP               bool
-    SupportsReadOnlyWorkspace bool
-    SupportsSessionCapture    bool
-}
-```
+Capability values are persisted in `adapter_capabilities` and exposed by API diagnostics/configuration surfaces. They are declarations, not runtime enforcement. In particular, `supports_readonly_workspace: true` does not itself create a sandbox or mount the project read-only.
 
-## Adapter config example
+## Sessions and command plans
 
-```yaml
-adapters:
-  codex:
-    command: "codex"
-    supports_resume: true
-    resume_pattern: "codex resume {{external_session_id}}"
-    supports_mcp: true
-    supports_readonly_workspace: true
-    captures_session_id: true
+Session records are created/updated through the sessions CLI/API/MCP-related workflows and store adapter name, provider/model, external session ID, resume command, working directory, MCP socket, state, timestamps, and metadata. If `sessions register` receives no explicit resume command and the configured adapter has a nonempty pattern plus external session ID, the CLI replaces `{{external_session_id}}` and persists the result.
 
-  claude:
-    command: "claude"
-    supports_resume: true
-    resume_pattern: "claude --resume {{external_session_id}}"
-    supports_mcp: true
-    supports_readonly_workspace: true
-    captures_session_id: true
+`roundtable resume` produces a database-derived briefing and reconciles stale claims. It does not execute the saved resume command. External session identifiers, command lines, working directories, and metadata should be protected as operational data and scrubbed from public logs.
 
-  gemini:
-    command: "gemini"
-    supports_resume: true
-    resume_pattern: "gemini resume {{external_session_id}}"
-    supports_mcp: true
-    supports_readonly_workspace: true
-    captures_session_id: true
+## Intended integration contract (not yet implemented)
 
-  opencode:
-    command: "opencode"
-    supports_resume: false
-    supports_mcp: true
-    supports_readonly_workspace: true
-    captures_session_id: false
+A real process adapter will need to define executable resolution, argument construction without unsafe shell interpolation, environment allowlisting, working-directory and filesystem isolation, process start/stop/cancellation, stdout/stderr streaming and redaction, exit-state mapping, external session ID capture, heartbeat ownership, MCP endpoint injection, and idempotent resume behavior. It must export changes as proposal artifacts rather than write to the authoritative repository. Tests should cover missing executables, cancellation, output limits, secrets, stale sessions, and crash/restart recovery before claiming the adapter feature complete.
 
-  generic:
-    command: "sh"
-    supports_resume: false
-    supports_mcp: false
-    supports_readonly_workspace: true
-    captures_session_id: false
-```
-
-## Launch contract
-
-Each agent receives:
-
-- role-specific prompt
-- `AGENTS.ROUNDTABLE.md`
-- `PROJECT.ROUNDTABLE.md`
-- `POLICIES.ROUNDTABLE.md`
-- `.roundtable/mcp/AGENT_MCP_MANIFEST.md`
-- current task
-- current table snapshot
-- memory briefing
-- read-only repository path
-
-## Mutation contract
-
-Agents may not directly mutate the repo.
-
-Agents must submit unified diffs to `proposal.create`.
-
-The adapter must either:
-
-1. provide a read-only repo mount, or
-2. sandbox the agent and export only a patch artifact, or
-3. detect and reject unauthorized writes before anything reaches the authoritative repo.
-
-## Session capture
-
-Adapters should capture external session ids when visible in stdout/stderr, command output, metadata files, or adapter integration APIs.
-
-Persist:
-
-- agent id
-- adapter name
-- external session id
-- external resume command
-- run id
-- task id
-- role
-- working directory
-- MCP socket
-- last heartbeat
-
-## Resume briefing
-
-On resume, Roundtable injects a canonical briefing. External session context is not authoritative.
-
-Example:
-
-```md
-# Roundtable Resume Briefing
-
-You are resuming as Implementer-1.
-
-Run: RUN-20260706-0142
-External session: 019edf2b-3879-7160-8625-c8e80205ccd5
-
-Current task:
-T-0007 Add refresh-token rotation
-
-Your active claims:
-- symbol:src/auth/session.go#ValidateRefreshToken
-- file:tests/auth/session_test.go
-
-Pending proposals:
-- P-0012 from you: needs revision
-  Reason: Security vetoed raw token logging.
-
-Latest decisions:
-- D-0008: Tokens must never be logged.
-- D-0009: Login response shape must remain unchanged.
-
-Required next action:
-Revise P-0012 to remove token logging, update tests, and resubmit.
-```
+Current unfinished scope is tracked in `TODO.md`: actual external process execution and session capture.

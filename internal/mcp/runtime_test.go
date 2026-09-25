@@ -144,6 +144,200 @@ func TestRuntimeTaskAndMemoryFlow(t *testing.T) {
 	}
 }
 
+func TestAgentTurnRequestsAreValidatedDeduplicatedAndQueued(t *testing.T) {
+	root := newRuntimeRoot(t)
+	rt, cleanup, err := OpenRuntime(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer cleanup()
+	ctx := context.Background()
+	if err := rt.store.UpsertRun(ctx, db.Run{ID: "RUN-TURNS", Status: "active"}); err != nil {
+		t.Fatal(err)
+	}
+	for _, agentID := range []string{"reviewer-1", "implementer-1"} {
+		if err := rt.store.UpsertAgent(ctx, db.Agent{ID: agentID, Role: "agent", Name: agentID, Adapter: "generic", IsEnabled: true}); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	first, err := rt.Call(ctx, "agent.turn_request", map[string]any{
+		"run_id":    "RUN-TURNS",
+		"agent_id":  "reviewer-1",
+		"reason_md": "Found a blocking review issue",
+	})
+	if err != nil {
+		t.Fatalf("first turn request failed: %v", err)
+	}
+	if first["queue_position"] != 1 || first["duplicate"] != false {
+		t.Fatalf("unexpected first turn request: %+v", first)
+	}
+	second, err := rt.Call(ctx, "agent.turn_request", map[string]any{
+		"run_id":    "RUN-TURNS",
+		"agent_id":  "implementer-1",
+		"reason_md": "Need to report a blocker",
+	})
+	if err != nil {
+		t.Fatalf("second turn request failed: %v", err)
+	}
+	if second["queue_position"] != 2 {
+		t.Fatalf("expected second request at queue position 2, got %+v", second)
+	}
+	duplicate, err := rt.Call(ctx, "agent.turn_request", map[string]any{
+		"run_id":    "RUN-TURNS",
+		"agent_id":  "reviewer-1",
+		"reason_md": "Repeated request",
+	})
+	if err != nil {
+		t.Fatalf("duplicate turn request failed: %v", err)
+	}
+	if duplicate["duplicate"] != true || duplicate["request_event_id"] != first["request_event_id"] || duplicate["queue_position"] != 1 {
+		t.Fatalf("expected existing outstanding request to be returned, got %+v", duplicate)
+	}
+	events, err := rt.store.ListEvents(ctx, "RUN-TURNS")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(events) != 2 || events[0].ActorID != "reviewer-1" || events[1].ActorID != "implementer-1" {
+		t.Fatalf("duplicate request should not append an event: %+v", events)
+	}
+	requestID := int64(first["request_event_id"].(int64))
+	if _, err := rt.store.AppendEvent(ctx, db.Event{
+		RunID:       "RUN-TURNS",
+		Type:        "agent.turn_scheduled",
+		ActorID:     "chair-1",
+		PayloadJSON: fmt.Sprintf(`{"request_event_id":%d,"agent_id":"reviewer-1"}`, requestID),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	_, err = rt.Call(ctx, "agent.turn_start", map[string]any{
+		"run_id": "RUN-TURNS", "agent_id": "reviewer-1", "request_event_id": requestID,
+	})
+	if err != nil {
+		t.Fatalf("scheduled turn start failed: %v", err)
+	}
+	if _, err := rt.Call(ctx, "agent.turn_complete", map[string]any{
+		"run_id": "RUN-TURNS", "agent_id": "reviewer-1", "request_event_id": requestID,
+	}); err != nil {
+		t.Fatalf("turn completion failed: %v", err)
+	}
+	events, err = rt.store.ListEvents(ctx, "RUN-TURNS")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if events[len(events)-2].Type != "agent.turn_started" || events[len(events)-1].Type != "agent.turn_completed" {
+		t.Fatalf("expected durable turn lifecycle events, got %+v", events)
+	}
+}
+
+func TestTurnLifecycleToolsRequireRequestEventID(t *testing.T) {
+	registry := DefaultRegistry()
+	for _, name := range []string{"agent.turn_start", "agent.turn_complete"} {
+		var selected *Tool
+		for _, candidate := range registry.Tools() {
+			if candidate.Name == name {
+				selected = &candidate
+				break
+			}
+		}
+		if selected == nil {
+			t.Fatalf("tool %s not registered", name)
+		}
+		required, ok := selected.InputSchema["required"].([]string)
+		if !ok {
+			t.Fatalf("tool %s has malformed required fields: %#v", name, selected.InputSchema["required"])
+		}
+		found := false
+		for _, field := range required {
+			found = found || field == "request_event_id"
+		}
+		if !found {
+			t.Fatalf("tool %s must require request_event_id, got %v", name, required)
+		}
+		properties := selected.InputSchema["properties"].(map[string]any)
+		if properties["request_event_id"].(map[string]any)["type"] != "integer" {
+			t.Fatalf("tool %s request_event_id must be an integer", name)
+		}
+	}
+}
+
+func TestTableWatchSupportsIncrementalEventCursor(t *testing.T) {
+	root := newRuntimeRoot(t)
+	rt, cleanup, err := OpenRuntime(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer cleanup()
+	ctx := context.Background()
+	for i := 0; i < 4; i++ {
+		if _, err := rt.store.AppendEvent(ctx, db.Event{
+			RunID: "RUN-WATCH", Type: fmt.Sprintf("event.%d", i), PayloadJSON: "{}",
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	first, err := rt.Call(ctx, "table.watch", map[string]any{
+		"run_id": "RUN-WATCH", "after_event_id": int64(0), "limit": 2,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	firstEvents := first["events"].([]db.Event)
+	if len(firstEvents) != 2 || first["has_more_events"] != true {
+		t.Fatalf("expected first bounded event page, got %+v", first)
+	}
+	firstCursor := first["next_after_event_id"].(int64)
+	if firstCursor != firstEvents[1].ID {
+		t.Fatalf("expected cursor to advance to last returned event, got %+v", first)
+	}
+
+	second, err := rt.Call(ctx, "table.watch", map[string]any{
+		"run_id": "RUN-WATCH", "after_event_id": firstCursor, "limit": 2,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	secondEvents := second["events"].([]db.Event)
+	if len(secondEvents) != 2 || second["has_more_events"] != false || secondEvents[0].ID <= firstCursor {
+		t.Fatalf("expected remaining event page without a gap, got %+v", second)
+	}
+	if _, err := rt.Call(ctx, "table.watch", map[string]any{"run_id": "RUN-WATCH", "after_event_id": -1}); err == nil {
+		t.Fatal("expected negative event cursor to be rejected")
+	}
+}
+
+func TestAgentTurnRequestRejectsDisabledAgentAndInactiveRun(t *testing.T) {
+	root := newRuntimeRoot(t)
+	rt, cleanup, err := OpenRuntime(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer cleanup()
+	ctx := context.Background()
+	if err := rt.store.UpsertAgent(ctx, db.Agent{ID: "disabled", Role: "agent", Name: "disabled", Adapter: "generic", IsEnabled: false}); err != nil {
+		t.Fatal(err)
+	}
+	if err := rt.store.UpsertRun(ctx, db.Run{ID: "RUN-CLOSED", Status: "completed"}); err != nil {
+		t.Fatal(err)
+	}
+	_, err = rt.Call(ctx, "agent.turn_request", map[string]any{
+		"run_id": "RUN-CLOSED", "agent_id": "disabled", "reason_md": "help",
+	})
+	if err == nil || !strings.Contains(err.Error(), "completed") {
+		t.Fatalf("expected inactive run rejection, got %v", err)
+	}
+	if err := rt.store.UpsertRun(ctx, db.Run{ID: "RUN-OPEN", Status: "active"}); err != nil {
+		t.Fatal(err)
+	}
+	_, err = rt.Call(ctx, "agent.turn_request", map[string]any{
+		"run_id": "RUN-OPEN", "agent_id": "disabled", "reason_md": "help",
+	})
+	if err == nil || !strings.Contains(err.Error(), "disabled") {
+		t.Fatalf("expected disabled agent rejection, got %v", err)
+	}
+}
+
 func TestRuntimeMemorySummarizeAndMarkStale(t *testing.T) {
 	root := newRuntimeRoot(t)
 	rt, cleanup, err := OpenRuntime(root)

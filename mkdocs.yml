@@ -1,0 +1,66 @@
+site_name: Roundtable Documentation
+site_description: Product, runtime, API, and operations documentation for Roundtable.
+docs_dir: .docs-build
+site_dir: site
+use_directory_urls: true
+
+theme:
+  name: material
+  features:
+    - navigation.sections
+    - navigation.indexes
+    - navigation.top
+    - toc.follow
+    - content.code.copy
+
+markdown_extensions:
+  - admonition
+  - attr_list
+  - def_list
+  - tables
+  - toc:
+      permalink: true
+  - pymdownx.details
+  - pymdownx.superfences
+  - pymdownx.tabbed:
+      alternate_style: true
+
+nav:
+  - Home: docs/index.md
+  - Product:
+      - Project Overview: README.md
+      - Product Model: PROJECT.ROUNDTABLE.md
+      - Architecture: docs/ARCHITECTURE.md
+      - Agent Protocol: AGENTS.ROUNDTABLE.md
+      - Governance Policies: POLICIES.ROUNDTABLE.md
+  - Getting Started:
+      - Quickstart: docs/QUICKSTART.md
+      - CLI Reference: docs/CLI.md
+      - Configuration Reference: docs/CONFIGURATION.md
+  - Runtime:
+      - Orchestration: docs/ORCHESTRATION.md
+      - Claims: docs/CLAIMS.md
+      - Symbols: docs/SYMBOLS.md
+      - Proposals and Transactions: docs/TRANSACTIONS.md
+      - Sessions and Resume: docs/SESSIONS.md
+      - Agent Adapters: docs/ADAPTERS.md
+      - TUI and Watch: docs/TUI.md
+      - Database:
+          - Persistence Overview: docs/DATABASE.md
+          - Final and Control-Plane Schema: docs/DATABASE_SCHEMA.md
+      - Memory Oracle: docs/MEMORY_ORACLE.md
+  - Agent Interface:
+      - MCP Tools: docs/MCP_TOOLS.md
+  - HTTP API:
+      - API Overview: api/README.md
+      - Endpoint Guide: api/docs/admin-api-guide.md
+      - Schema Reference: api/docs/schema-reference.md
+      - Error Semantics: api/docs/error-semantics.md
+      - Pagination and Search: api/docs/pagination.md
+      - Maintenance: api/docs/maintenance.md
+  - Web UI:
+      - UI Architecture and Scope: docs/UI.md
+  - Operations:
+      - Deployment: docs/DEPLOYMENT.md
+      - Troubleshooting: docs/TROUBLESHOOTING.md
+      - Resume Briefing Example: examples/resume-briefing.md

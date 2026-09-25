@@ -2,6 +2,7 @@ package integration
 
 import (
 	"context"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -10,8 +11,10 @@ import (
 	"time"
 
 	"roundtable/internal/app"
+	"roundtable/internal/config"
 	"roundtable/internal/db"
 	"roundtable/internal/mcp"
+	"roundtable/internal/orchestrator"
 )
 
 func TestAcceptanceNormalPatchLifecycle(t *testing.T) {
@@ -520,6 +523,103 @@ func TestAcceptanceInterruptedApplyDoesNotPersistTransaction(t *testing.T) {
 	}
 }
 
+func TestAcceptanceContinuousOrchestratorMCPTurnLifecycle(t *testing.T) {
+	root := t.TempDir()
+	var output strings.Builder
+	must(t, app.Run(context.Background(), []string{"init", "--root", root}, &output, &output))
+
+	projectConfig, err := config.Load(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	opened := openStore(t, root)
+	defer opened.close(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	if err := opened.store.UpsertRun(ctx, db.Run{ID: "RUN-LOOP", Goal: "continuous loop", Status: "active"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := opened.store.UpsertTask(ctx, db.Task{ID: "T-LOOP", Title: "Long running task", BodyMD: "body", Status: "in_progress", AssignedAgentID: "implementer-1"}); err != nil {
+		t.Fatal(err)
+	}
+	chair, err := orchestrator.NewService(root, projectConfig, opened.store)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := chair.SyncAgents(ctx); err != nil {
+		t.Fatal(err)
+	}
+	runtime, cleanup, err := mcp.OpenRuntime(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer cleanup()
+
+	runDone := make(chan struct {
+		outcome orchestrator.RunOutcome
+		err     error
+	}, 1)
+	go func() {
+		outcome, err := chair.Run(ctx, "RUN-LOOP", orchestrator.LoopOptions{Interval: 5 * time.Millisecond})
+		runDone <- struct {
+			outcome orchestrator.RunOutcome
+			err     error
+		}{outcome: outcome, err: err}
+	}()
+
+	request, err := runtime.Call(ctx, "agent.turn_request", map[string]any{
+		"run_id":    "RUN-LOOP",
+		"agent_id":  "implementer-1",
+		"reason_md": "I have a blocker to report before continuing",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	requestEventID := int64(request["request_event_id"].(int64))
+	waitUntil(t, 3*time.Second, func() (bool, error) {
+		events, err := opened.store.ListEvents(ctx, "RUN-LOOP")
+		if err != nil {
+			return false, err
+		}
+		for _, event := range events {
+			if event.Type != "agent.turn_scheduled" {
+				continue
+			}
+			var payload struct {
+				RequestEventID int64 `json:"request_event_id"`
+			}
+			if err := json.Unmarshal([]byte(event.PayloadJSON), &payload); err != nil {
+				return false, err
+			}
+			if payload.RequestEventID == requestEventID {
+				return true, nil
+			}
+		}
+		return false, nil
+	})
+	if _, err := runtime.Call(ctx, "agent.turn_start", map[string]any{
+		"run_id": "RUN-LOOP", "agent_id": "implementer-1", "request_event_id": requestEventID,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := runtime.Call(ctx, "agent.turn_complete", map[string]any{
+		"run_id": "RUN-LOOP", "agent_id": "implementer-1", "request_event_id": requestEventID,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := runtime.Call(ctx, "task.update_status", map[string]any{"task_id": "T-LOOP", "status": "completed"}); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case result := <-runDone:
+		if result.err != nil || result.outcome.Status != "completed" {
+			t.Fatalf("continuous loop did not converge: outcome=%+v err=%v", result.outcome, result.err)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("timed out waiting for continuous orchestration to converge")
+	}
+}
+
 func openRuntime(t *testing.T, root string) (*mcp.Runtime, func()) {
 	t.Helper()
 	rt, cleanup, err := mcp.OpenRuntime(root)
@@ -567,6 +667,22 @@ func (s testStore) close(t *testing.T) {
 	if err := s.db.Close(); err != nil {
 		t.Fatal(err)
 	}
+}
+
+func waitUntil(t *testing.T, timeout time.Duration, check func() (bool, error)) {
+	t.Helper()
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		ok, err := check()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if ok {
+			return
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	t.Fatal("condition was not met before timeout")
 }
 
 func filePatch(path, before, after string) string {
