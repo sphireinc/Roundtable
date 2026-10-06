@@ -16,6 +16,25 @@ The HTTP API is a standalone Go control-plane server under `api/`. It serves the
 
 The OpenAPI contract is substantially broader than the current browser implementation; see [UI scope](../docs/UI.md). The API's existence does not mean a corresponding page is finished or the Go CLI runtime automatically performs the operation.
 
+## Reading Map
+
+Use the generated endpoint/schema guides for declared shapes and the references below for actual handler behavior. A contract permission, readiness label, accepted request, or persisted status is not independent evidence of runtime execution or privilege isolation.
+
+| Topic | Detailed reference |
+| --- | --- |
+| Native/container setup | [Compose](#start-with-docker-compose), [flags/environment](#process-flags-and-environment), [startup/lifecycle](#startup-bind-and-process-lifecycle-details), [embedded configuration](#embedded-server-configuration). |
+| Credentials and browser access | [Authorization](#authentication-and-authorization), [Origin/CORS](#browser-origin-and-request-conventions), [security discovery](#security-capability-discovery), [decoder/actor/retry boundaries](docs/error-semantics.md). |
+| Workspace and repository | [Registry/lifecycle](#workspace-registry-and-lifecycle), [status/branch switching](#repository-status-and-branch-control), [repository entities/symbols](../docs/SYMBOLS.md#http-repository-entity-discovery). |
+| Deliberation | [Creation/lifecycle/messages](#deliberation-administration), [transcript](#deliberation-transcript-projection), [runtime turns and run controls](../docs/ORCHESTRATION.md). |
+| Agent and session administration | [Adapters/diagnostics](../docs/ADAPTERS.md), [session controls/observability](../docs/SESSIONS.md). |
+| Governance and proposals | [Policy/evaluation/votes](../POLICIES.ROUNDTABLE.md), [claims/contentions](../docs/CLAIMS.md), [approvals](../docs/HUMAN_APPROVALS.md), [proposals/patches/transactions/recovery](../docs/TRANSACTIONS.md), [validation stages](../docs/TEST_EXECUTION.md). |
+| Memory | [Search, lifecycle, revisions, provenance, and merge](../docs/MEMORY_ORACLE.md). |
+| Current-state displays | [Health](#health-and-readiness-boundaries), [dashboard](#dashboard-summary-semantics), [activity](#activity-feed-projection), [analytics](#consensus-analytics). |
+| Streaming and notifications | [Snapshot/WebSocket protocol](#event-snapshot-and-websocket-protocol), [notification selection/counts/acknowledgment](docs/notifications.md). |
+| Logs, audit, and instrumentation | [Operational logs/audit export](#operational-logs-and-audit-exports), [HTTP logs/metrics](#request-logging-and-metrics). |
+| Configuration and database operations | [Workspace settings](docs/settings.md), [maintenance](docs/maintenance.md), [persistence](../docs/DATABASE.md). |
+| Integration and documentation | [Pagination/search](docs/pagination.md), [endpoint guide](docs/admin-api-guide.md), [schema reference](docs/schema-reference.md), [generation/checks](#documentation-maintenance), [browser scope](../docs/UI.md). |
+
 ## Start with Docker Compose
 
 From repository root:
