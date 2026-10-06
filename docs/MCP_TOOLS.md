@@ -1,6 +1,6 @@
 # MCP Tool Reference
 
-The local agent tool surface is declared in `internal/mcp/registry.go` and dispatched by `internal/mcp/runtime.go`. The registry currently contains **39 tools**. Use the generated `.roundtable/mcp/tools.schema.json` for machine-readable JSON schemas; regenerate generated MCP assets with `roundtable mcp inspect --write` after registry changes.
+The local agent tool surface is declared in `internal/mcp/registry.go` and dispatched by `internal/mcp/runtime.go`. The registry currently contains **39 advertised tools**; **38 have runtime dispatch handlers**. `repo.dependency_context` is declared but not implemented. Registry membership is not proof of executable support. Use the generated `.roundtable/mcp/tools.schema.json` for machine-readable JSON schemas; regenerate generated MCP assets with `roundtable mcp inspect --write` after registry changes.
 
 The runtime uses a local Unix-domain socket by default. Its registry/schema are MCP-inspired, but the socket is a Roundtable-specific newline-delimited JSON protocol, not a standards-complete MCP/JSON-RPC transport. It does not expose per-tool HTTP auth or a cryptographic agent identity on the socket; `agent_id` and actor fields are tool arguments, not proof of identity. Protect the socket and project account. Do not treat capability flags or a read-only tool name as a complete OS sandbox.
 
@@ -66,7 +66,31 @@ Most string helpers accept only actual JSON strings and default only for missing
 | `repo.read_file` | `path` | Reads through the repository tool boundary; it is not a write API. |
 | `repo.search` | `query` | `path` narrows the search. |
 | `repo.symbols` | none | Optional `path`, `language`; parser support/limitations are in [Symbol Index](SYMBOLS.md). |
-| `repo.dependency_context` | `path` | Returns read-only dependency context for a manifest/path. |
+| `repo.dependency_context` | `path` | Advertised only; no runtime handler. Calls fail with `tool not implemented: repo.dependency_context`. |
+
+#### Dependency context availability
+
+There is currently no local dependency-context parser, manifest discovery, lockfile resolution, transitive dependency graph, package-version lookup, or vulnerability scan behind `repo.dependency_context`. Supplying a valid manifest path does not change the result: the runtime reaches its unimplemented-tool fallback before any path inspection. Over the socket, this becomes `{"ok":false,"error":"tool not implemented: repo.dependency_context"}`; `roundtable mcp call` reports the tool error rather than returning dependency data. The name remains present in inspection output and generated schemas.
+
+For current work, read known manifests and lockfiles using `repo.read_file` and inspect relevant imports with `repo.search` or `repo.symbols`. Those tools expose file content or declarations, not a resolved dependency graph. Clearly distinguish direct manifest declarations from lockfile-resolved versions and transitive dependencies in any agent summary. Do not infer installed packages, successful dependency resolution, compatibility, or security status merely from a manifest. External package-manager commands are separate operations with their own trust and execution boundaries; see [Tests and Evidence](TEST_EXECUTION.md).
+
+#### File reads and explicit-path boundary
+
+`repo.read_file` requires a nonempty string `path`. Relative paths resolve against the runtime repository root, not the calling agent's working directory. Absolute paths are accepted when the resolved target remains inside that root. The guard resolves the root's symlinks, attempts to resolve the candidate's symlinks, and rejects a resolved relative path equal to `..` or beginning with `../` (using platform separators). If candidate symlink evaluation fails, it checks the unresolved absolute candidate instead; the subsequent file read may then fail. This is a path check, not an operating-system sandbox or protection against concurrent symlink replacement.
+
+The response is `{path, content}`. Its `path` is the caller's path with slash conversion, not necessarily the canonical path that was read. The entire file is read into memory and returned as a string; there is no line range, byte limit, pagination, binary-file filter, encoding detector, secret redaction, or ignore-file check. Hidden files inside the repository, including local configuration, are not excluded by this handler. Read failures return tool errors rather than an empty content value.
+
+#### Content search
+
+`repo.search` requires a nonempty string `query`. It lowercases both the query and each line and performs literal substring matching; it does not trim the query, interpret regular expressions/globs, rank results, or search across line boundaries. Whitespace-only queries are literal queries. Each matching line produces one result even if the substring occurs multiple times on that line.
+
+With an explicit `path`, the same path guard used by file reads is applied and only that single path is read. A directory path is not recursively expanded: its read fails and is silently skipped, yielding no matches. Without `path`, the handler walks the repository tree and skips directories named `.git` or `.roundtable` at any depth. It does not honor `.gitignore`, exclude dependencies/build outputs, or filter by language, extension, hidden-file status, or binary content. Walk errors abort the operation; individual file-read errors are silently skipped.
+
+**Symlink limitation:** the full-tree walk does not descend through directory symlinks, but collected file paths are read without reapplying the explicit-path guard. A file symlink within the tree can therefore expose content from outside the repository. Do not treat full-tree search as a secure read boundary in an untrusted checkout. Explicit-path checks also have a check/read race and are not a substitute for filesystem isolation.
+
+The response is `{matches: [...]}` with each match containing a slash-normalized repository-relative `path`, one-based `line`, and original line `content`. Empty results may be JSON `null`, because the handler builds a nil slice until a match is found. There is no maximum result count, context-line option, output-size cap, or cancellation check inside the scan. Large dependency trees and files can consume substantial memory and produce large responses. Supply an explicit file path when possible and avoid publishing responses that may contain local secrets.
+
+`repo.symbols` also uses the explicit-path guard, but its returned paths use the resolved indexer input rather than the caller's path. Despite the advertised optional property, the handler requires `path`; see [Symbol Index](SYMBOLS.md) for parser and identifier details.
 
 ### Resources and claims
 

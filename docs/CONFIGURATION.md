@@ -76,7 +76,25 @@ Unspecified values retain defaults. Boolean values must parse using Go's `strcon
 
 ## Validation and limitations
 
-The loader rejects unknown ordinary keys, invalid nesting, odd indentation, invalid booleans, and invalid integers. It does not currently validate the supported version value or transport value, and it does not perform comprehensive semantic validation: for example, a syntactically valid but unknown adapter reference may survive loading and fail later when agent capabilities are synchronized. Review both [CLI behavior](CLI.md) and [adapter behavior](ADAPTERS.md) when changing configuration.
+The loader rejects unknown ordinary scalar keys, invalid nesting, odd indentation, invalid booleans, and invalid integers. It does not currently validate the supported version value or transport value, and it does not perform comprehensive semantic validation. An unknown agent adapter reference survives loading; capability synchronization writes configured adapter entries without checking agent references, and orchestrator command lookup for an unknown name yields an empty command string. Do not rely on loading or synchronization to detect that typo. Review both [CLI behavior](CLI.md) and [adapter behavior](ADAPTERS.md) when changing configuration.
+
+## Loading and effective values
+
+`config.Load(root)` reads exactly `<root>/.roundtable/config.yaml`. It does not search parent directories, merge another file, expand environment variables, interpolate placeholders generally, or fall back to defaults when the file cannot be read. A missing or unreadable file returns a `read config` error. Defaults are applied only after the file has been successfully read; a readable empty file produces the default configuration. Use `roundtable init` to create the normal initial file.
+
+Each load starts from a fresh built-in configuration and applies scalar assignments in file order. This differs from policy-profile replacement: overriding one built-in adapter field preserves that adapter's other default fields. A new custom adapter begins with empty strings and false booleans. An empty custom-adapter section without a scalar child does not add an entry to the map. There is no syntax for deleting a built-in adapter from the default map.
+
+The parser has no automatic environment-variable override layer. Strings containing `$HOME`, `~`, or other shell syntax remain literal strings at this stage. Command-specific flags are separate controls; see [CLI Reference](CLI.md). A running orchestrator holds its loaded configuration and does not watch this file for changes. Editing the file does not update that service's in-memory role/pool configuration automatically; restart the relevant runtime when changing startup configuration.
+
+### Scalar values and practical hazards
+
+Accepted boolean spellings are exactly Go's `strconv.ParseBool` forms: `1`, `t`, `T`, `TRUE`, `true`, `True`, `0`, `f`, `F`, `FALSE`, `false`, and `False`. Values such as `yes`, `no`, `on`, and `off` fail. Integers use `strconv.Atoi`: signed decimal values are accepted within the platform's `int` range, but fractional values, hexadecimal notation, underscores, and overflow fail. Quoting a value does not prevent numeric/boolean conversion for a typed field.
+
+The parser treats `null`, `~`, `[]`, and `{}` as literal strings rather than YAML null/list/map values when they appear in string fields. For integer/boolean fields, these values fail conversion. To assign an empty string, use `""`; a bare `key:` is a section header and does not overwrite its default. Single-quoted strings retain their quote characters. These distinctions matter for executable names, paths, and adapter references.
+
+No loader checks enforce nonempty project names, paths, commands, model names, or role names. Pool counts have no configured lower or upper bound. Zero counts omit that pool from generated agent specifications. Negative counts are accepted by the parser and should not be used: in particular, the orchestrator allocates its implementer-ID slice with the configured count as capacity, so a negative implementer count can panic during assignment. Very large counts can cause excessive allocations and database work. Configure nonnegative, operationally bounded counts rather than treating parse success as safety validation.
+
+Single-agent IDs/names remain fixed (`chair-1`, `architect-1`, `tester-1`, `security-1`, `memory-oracle-1`) even when their configured role strings change. Pool agents use sequential IDs (`implementer-1`, `reviewer-1`, and so on) and hard-coded `Implementer`/`Reviewer` roles. Changing a role label can affect exact role-name checks elsewhere; it is not a general role-definition mechanism. Agent model fields are loaded configuration values but are not added to the orchestrator's agent-spec command string; adapter planning and session metadata are separate surfaces.
 
 ## Parser edge behavior
 

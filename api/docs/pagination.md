@@ -1,18 +1,47 @@
 # Pagination and search conventions
 
-Collection endpoints use `limit` (default 50, maximum 200) and an opaque
-base64url `cursor`. A response includes `next_cursor: null` when there is no
-next page. Clients must treat cursors as opaque values and must not construct,
-decode, or persist assumptions about their internal representation.
+Many collection endpoints use `limit` (default 50, accepted range 1-200) and
+`cursor`, but this is not universal. Cursor formats and ordering are
+endpoint-specific. Copy the returned `next_cursor` unchanged into the next
+request to the same endpoint with the same workspace and filters. A null
+continuation means that response has no next page, not that new records cannot
+arrive later.
 
-History and high-volume resources use stable ordering with a deterministic
-tie-breaker: the primary timestamp or sequence is followed by the immutable
-row ID. Invalid cursors and limits return typed `400` problems. Text search is
-bounded by the same page limit; callers should narrow by workspace and related
-entity before requesting subsequent pages.
+Some histories use timestamp/ID or sequence ordering; other lists paginate
+an in-memory filtered result by offset. Invalid cursors and limits return
+typed `400` problems where those parameters are implemented. Page limits
+bound returned items, not necessarily the number of rows/files read to
+construct the list.
 
 When a list exposes sorting or filtering, the accepted field names are
 endpoint-defined allowlists. Unknown sort fields, unsupported directions, and
-invalid enum filters are rejected rather than interpolated into SQL. Query
+invalid enum filters are rejected where the handler validates them; not every
+handler rejects every unknown query parameter or arbitrary filter value. Query
 parameters use `query`, `sort`, `direction`, `from`, `to`, and related entity
 IDs only where declared by the endpoint contract.
+
+## Implemented cursor families
+
+| Surface | Cursor and ordering behavior |
+| --- | --- |
+| Agent/session and shared offset-based lists | Raw base64url encoding of a nonnegative decimal offset into the current result. An offset beyond the current list clamps to its end and returns an empty page. |
+| Memory list | Raw base64url encoding of creation timestamp plus ID; ascending `created_at`, then ID. Continuation selects tuples strictly greater than the previous final item. |
+| Notification list | Timestamp/ID cursor, descending `created_at`, then ID. Continuation selects tuples strictly less than the previous final item. |
+| Operational logs/audit lists | Positive decimal event/audit ID string, not base64url; descending ID with continuation strictly below that ID. |
+| Workspace list | Returns all workspace rows with `next_cursor: null`; the current handler does not parse `limit` or `cursor`. |
+
+Treat these implementation representations as diagnostics, not a client encoding API. Cursors are not signed authorization tokens, encrypted state, or proof that an item exists. Timestamp/ID decoding checks shape/nonempty fields rather than verifying a corresponding row or a canonical timestamp. Offset parsing accepts a decoded integer, not a dataset snapshot identifier. Cursor contents do not bind to workspace, actor, filter, or sort configuration; switching those settings requires restarting pagination rather than reusing a previous continuation.
+
+## Consistency between requests
+
+Lists are reevaluated on each request without a cross-request read snapshot. Inserts, deletes, status changes, filtering changes, and reordered data can cause offset pagination to repeat or skip items. Timestamp/ID keyset pagination avoids offset shifts, but still does not freeze the dataset or guarantee every concurrent update is observed. Newer records on a descending history generally require a fresh first-page request; continuing toward older records is not a live event subscription.
+
+Store entity IDs to deduplicate when building a client-side collection. Do not compare cursor strings lexically, assume one endpoint accepts another endpoint's cursor, or infer total count from one page. An empty page is not evidence that a workspace has no related records under another status/filter. Event replay cursors (`last_event_id` or MCP `after_event_id`) are separate protocols from these REST collection cursors.
+
+## Search and filter differences
+
+Parameter names are not interchangeable. The memory implementation searches using trimmed `q`, not a universal `query` field. It applies SQL `LIKE` to title/body with surrounding `%`; user `%` and `_` retain SQL wildcard meaning rather than literal-substring escaping. Scope/kind/status are exact SQL filters and are not enum-validated there. Memory listing always excludes exact `archived` status, so requesting `status=archived` does not override that exclusion. It includes rows in the selected workspace plus legacy rows with a null workspace association.
+
+Notifications trim recipient/category/severity values. Recipient defaults to `X-Actor-ID` when omitted; when both are empty, no recipient predicate is added. `unread` and `actionable` enable their predicates only for exact string `true`; values such as `True` do not. Actionable selection additionally requires unresolved state. These are current filtering semantics, not a general boolean-query parser or recipient authorization guarantee.
+
+Other endpoints have their own allowed sort/search/filter fields and error behavior. Consult the [Endpoint Guide](admin-api-guide.md), [Schema Reference](schema-reference.md), and handler behavior before introducing a reusable client abstraction. The local MCP memory query uses a different substring-scoring implementation; REST search results must not be assumed to use that ranking.

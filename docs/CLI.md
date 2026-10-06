@@ -94,6 +94,26 @@ roundtable mcp call [--root DIR] --tool NAME [--args-file JSON_FILE] [--socket]
 
 `inspect` prints registered tool names; `--write` regenerates the manifest, tool schema, and server configuration under `.roundtable/mcp/`. `serve` listens on the configured local transport until its context ends. `call` reads optional JSON object arguments from `--args-file` and invokes the tool directly against the local runtime; with `--socket`, it sends the call to the running Unix socket. See [MCP Tools](MCP_TOOLS.md).
 
+### Inspection and generated assets
+
+All MCP subcommands default `--root` to `.`. `inspect` loads configuration even without `--write`; a missing or malformed file prevents inspection. It prints one advertised tool name per line alphabetically, not schemas or a health report. Advertised names include the unimplemented `repo.dependency_context`.
+
+`inspect --write` overwrites `AGENT_MCP_MANIFEST.md`, `tools.schema.json`, then `server.json` under `.roundtable/mcp`. It does not create missing parent directories, require `--force`, back up contents, or replace all files atomically. A later failure can leave earlier assets refreshed. New files request mode `0644`, subject to umask. It does not rewrite policy/configuration or start a listener. Generated-asset refresh during `run` instead uses the scaffold helper, which ensures runtime directories first.
+
+### Call arguments and execution modes
+
+`--tool` must be nonempty. `--args-file` resolves from the process working directory, not automatically under `--root`, and is read without the agent path guard. Supply the tool's argument object, not a complete `{tool, args}` envelope. JSON `null` decodes to a nil map; arrays and scalar strings fail. Omission supplies an empty map. There is no inline-JSON flag, stdin argument mode, file-size cap, or schema-validation step.
+
+A direct call opens its own runtime/database, initializes schema, loads policy, executes the handler, and closes the handle. It is not a dry run: write tools can mutate state or apply eligible patches, and `test.run` can execute a command. It does not require a socket, tick the coordinator, or share the coordinator's in-memory synchronization objects.
+
+Socket mode loads configuration to locate the listener. It has no explicit dial/read/write deadline, reconnect, or automatic retry. A server that does not return a newline can leave the response read waiting. Lost output is not proof that a mutation did not occur; inspect authoritative state before retrying non-idempotent tools.
+
+Both modes print successful results as indented JSON plus a newline, without the socket's outer `ok`/`result` envelope. Tool errors become CLI errors rather than successful result objects. Redirected output can contain sensitive file content and metadata.
+
+### Standalone cancellation boundary
+
+Standalone `mcp serve` starts no coordinator or TUI. Its startup message displays the configured transport label, but the server binds a Unix listener. The dispatcher passes `context.Background()` to standalone serving, and direct calls also use a background context. These command paths do not inherit the application's caller cancellation context and expose no timeout flag. Process termination is not a guarantee of graceful context-driven cleanup or rollback. The server type's context-aware lifecycle and interactive `run` composition are separate behaviors.
+
 ## Exit behavior
 
 Command errors are returned to the process entrypoint and produce a non-zero exit status. Invalid commands, flags, required fields, configuration, storage operations, and MCP calls are not converted into a successful empty result. For production scripting, treat output as human-readable unless a command explicitly emits JSON; `mcp call` returns JSON.

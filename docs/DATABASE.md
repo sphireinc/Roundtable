@@ -16,6 +16,28 @@ PRAGMA foreign_keys = ON;
 PRAGMA busy_timeout = 5000;
 ```
 
+## Connection and startup behavior
+
+`db.Open(path)` creates the parent directory with requested mode `0755`, passes the path directly to the `sqlite3` driver, executes the three pragmas above, and runs schema initialization before returning the handle. It does not explicitly set database-file permissions, encrypt data, install a connection hook, cap open/idle connections, set connection lifetimes, or configure synchronous/checkpoint/cache settings. Actual directory permissions also depend on the process umask and existing directories; existing permissions are not tightened. Protect the database directory using the operating-system account and filesystem boundary rather than assuming initialization makes it private.
+
+The pragmas are executed through `sql.DB`, which is a connection pool, not a pinned connection. There is no code here that reapplies connection-local settings to every subsequently opened driver connection. In particular, startup success must not be interpreted as proof that every concurrent pooled connection has foreign-key enforcement and the same busy timeout. The startup checks exercise the initial connection behavior, not every future connection. WAL initialization is unconditional regardless of `storage.wal`; a requested pragma is not a guarantee of the resulting mode for every possible SQLite target, such as an in-memory database.
+
+The configured busy timeout is 5,000 milliseconds, not an application-wide operation deadline or a retry policy for every failed statement. Opening and migrating use non-context database calls. This layer does not supply its own startup timeout, cancellation, backoff loop, or concurrent-migration lock. An error closes the opened handle before returning, but does not roll back schema statements that already succeeded.
+
+## Migration and recovery boundaries
+
+Every open runs the schema-ensure sequence rather than selecting an isolated migration exclusively by a stored version number. It creates missing tables, inspects columns with `PRAGMA table_info`, adds missing columns, creates indexes, and records initialized versions using `INSERT OR IGNORE`. Version rows are bookkeeping, not a rollback mechanism or complete schema fingerprint. A version row alone does not establish that every expected column/index is intact or that an older binary can safely operate on the file.
+
+The initialization sequence is not enclosed in one database transaction. A failure can leave a partially advanced schema, and two processes opening a previously unmigrated database can race between a missing-column check and its `ALTER TABLE`. Idempotent sequential reopens are not proof of safe concurrent startup. Initialize a shared database with one process before starting other writers, and retain a recoverable backup before upgrades. There is no downgrade command, automatic restoration of the previous schema, or general migration rollback in this layer.
+
+### State and artifact backup boundary
+
+The SQLite file is only part of the local runtime state. Proposal patches, rollback artifacts when present, test logs, policy/configuration files, generated integration assets, and the authoritative Git checkout live outside SQLite. Database rows can refer to files that are missing, changed, or from a different repository revision. A database-only restore does not restore repository contents or repair those references automatically.
+
+For a quiescent offline copy, stop all API/runtime writers and any running test commands first, ensure database connections are closed, and preserve the associated repository and `.roundtable` artifacts together. Do not delete WAL/SHM files to force apparent cleanliness, and do not assume copying only the main file while writers are active captures committed WAL data. A live SQLite backup mechanism would need separate implementation/tooling and verification; Roundtable does not provide a general backup/restore CLI here.
+
+Keep backups out of the public documentation tree and source commits. Session metadata, command output, task bodies, patch contents, approvals, and memory may contain sensitive operational data. Restoring historical state is not an authorization to execute historical resume commands or apply historical patches: recheck current claims, policy, repository revision, and external process state.
+
 ## Initial schema
 
 The following DDL documents the original/base table declarations. Later initialization steps add fields to some of these tables; it is not a complete dump of the final schema for a newly initialized database. See [Final and Control-Plane Schema](DATABASE_SCHEMA.md) for every added column and the complete control-plane table definitions, keys, and indexes.

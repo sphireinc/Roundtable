@@ -61,6 +61,8 @@ nav:
       - Schema Reference: api/docs/schema-reference.md
       - Error Semantics: api/docs/error-semantics.md
       - Pagination and Search: api/docs/pagination.md
+      - Workspace Settings: api/docs/settings.md
+      - Notifications: api/docs/notifications.md
       - Maintenance: api/docs/maintenance.md
   - Web UI:
       - UI Architecture and Scope: docs/UI.md
