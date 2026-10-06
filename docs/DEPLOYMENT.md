@@ -54,6 +54,14 @@ Preparation determines the repository root from the script's own location. It de
 
 This is a curated source pipeline, not an automatic secret scanner. Any Markdown added under either copied documentation tree becomes a build input, even without a navigation entry. Keep runtime dumps, credentials, private notes, and generated operational data outside those trees. Missing explicitly copied files or copy errors fail preparation after any earlier staging work; the staging tree is not atomically replaced.
 
+### Dependency and Build Environment
+
+`requirements-docs.txt` pins the top-level theme package to `mkdocs-material==9.7.7`. It does not separately pin MkDocs, Markdown, PyYAML, or other transitive packages, include hashes, or constitute a full dependency lock. A fresh installation can therefore resolve different permitted transitive versions. Python packages are acquired by pip; API generation/verification additionally needs Ruby and its standard-library YAML/JSON support. These tools are not installed by the preparation script. Prefer an isolated Python environment rather than altering a shared interpreter, and record actual versions when diagnosing differing builds.
+
+The workflow selects Python 3.12 with `actions/setup-python@v5`, but does not install or pin Ruby explicitly; it relies on the `ubuntu-latest` runner environment. Checkout uses `actions/checkout@v4`; Pages configuration/upload/deploy use major action versions v5/v4/v4 respectively, not immutable commit-SHA pins. There is no dependency cache, matrix of Python/platform versions, browser installation, application-service startup, or deployment smoke test in this workflow. It does not execute Go tests, frontend tests/builds, live API requests, keyboard/mobile acceptance, or a dependency-vulnerability audit.
+
+All preparation input names are explicit except recursively discovered lowercase `*.md` files in the two documentation trees. Other root Markdown, task packs, prompts, UI source, runtime databases, and patch artifacts are not copied by this script. `shutil.copy2` copies files and metadata; it is not a content sanitizer, Markdown rewriter, link repairer, or assertion that local symlink targets are safe to publish. Review the actual staged tree when adding generated or externally supplied documentation. The script has no dry-run, destination flag, incremental mode, or CLI configuration; rerunning replaces `.docs-build` in the repository determined from its location.
+
 ### CI triggers and publication evidence
 
 The `Documentation` workflow runs on pull requests, pushes to `main`, and manual dispatch. It uses Python 3.12 on `ubuntu-latest` and executes generation, contract verification, preparation, strict build, and navigation verification in order. Its concurrency group is `pages-${github.ref}`, with older in-progress runs for that ref cancelled when a new run starts.
