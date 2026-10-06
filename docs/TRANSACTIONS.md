@@ -51,6 +51,14 @@ The walk is not a snapshot or a context-aware bounded operation: concurrent exte
 
 ## Important guarantees and gaps
 
+### External Patch Executor
+
+Temporary and authoritative application both call `exec.Command("patch", "-p1")` with the chosen root as working directory and the full patch text on stdin. The executable must be available on the Roundtable process's PATH. This is the system `patch` utility, not `git apply`, a Go-native diff engine, a configured adapter command, or a shell pipeline. `-p1` strips one leading pathname component according to that installed utility's behavior. No explicit batch, forward-only, fuzz, reject-file, backup-file, or binary-mode options are passed; parser recognition of a change does not guarantee that the installed executor supports all its Git diff metadata.
+
+The command inherits the process environment and has no context cancellation, timeout, resource limit, sandbox, or output-byte cap in this helper. It collects combined stdout/stderr in memory. Success discards that output and returns only nil error; failure includes the exit error and trimmed combined output in `patch apply failed: ...`, without general secret redaction here. Review who can read tool errors and artifacts. Different platform implementations/versions can behave differently; a documentation build does not probe this executable.
+
+The helper does not stage files, commit, reset, switch branches, enforce a clean worktree, run tests, or inspect/reverse partial effects. A nonzero exit can follow earlier file/hunk changes; the caller performs no automatic filesystem rollback. Temporary checks reduce ordinary context failures but do not establish an atomic authoritative apply or eliminate concurrent-write races. Inspect changed files and any executor-created artifacts after an uncertain failure before retrying. Missing `patch` fails command startup rather than activating a fallback implementation.
+
 - The required security-review gate reads persisted statuses. The local MCP caller can provide both a manual status and a reviewer ID; supplying a status skips the automatic patch scan. Reviewer identity is not authenticated by the Unix-socket tool server. Restrict socket access to trusted participants and inspect review provenance. See [Security Reviews](SECURITY_REVIEW.md) for exact scan and gate behavior.
 - Temporary-apply validation detects many malformed/context-mismatched diffs before the authoritative apply.
 - The apply service does not itself run `expected_tests`; use the testing tools/records separately. A stored test result is not proof that the current patch was tested unless the association and timing are checked.
