@@ -30,6 +30,16 @@ State transitions record statuses such as active, released, revoked, suspended, 
 
 ## Hashes and resume reconciliation
 
+### Resource Hash Algorithms
+
+File hashing reads the complete file and returns lowercase hexadecimal SHA-256 of its bytes. A missing path returns an empty hash without error; an existing empty file returns the SHA-256 of empty bytes, not an empty hash. Other read errors propagate. Paths and filesystem metadata are not part of this file digest. File symlinks are read through their targets; the helper does not independently enforce containment.
+
+Line-range hashing uses one-based inclusive bounds. Start at or below zero or end before start returns empty without reading the file. Missing files and start beyond the split-line count also return empty; end beyond that count is clamped. The helper splits raw string content on LF and joins the selected lines with LF before SHA-256, so CR bytes remain for CRLF files and a trailing LF creates a final empty split element. It does not hash the path, numeric bounds, or outside-range text, and it does not generally retain a final newline unless selected split elements encode one. Hashing a valid empty segment produces a real digest rather than the empty sentinel. Invalid UTF-8 is not decoded as structured text here.
+
+Directory hashing requires the selected path to be a directory (missing returns empty, another type returns an error), recursively collects nondirectory paths, slash-normalizes names relative to the **project root**, sorts them, and hashes each name, NUL, full bytes, NUL. Unlike transaction workspace hashing, this walk has **no `.git` or `.roundtable` directory exclusion**, no Git-ignore filtering, and no dependency/build exclusion. A broad directory claim can therefore include runtime state and churn caused by unrelated local writes. Empty directories contribute no entries; original permissions, timestamps, ownership, executable bits, and symlink identity are not captured.
+
+These reads are sequential and unbounded, not an atomic snapshot, a cancellation-aware scan, or a sandbox. Symlinks/special entries and unreadable files can affect or fail the operation. A directory digest includes project-relative names, so relocation/renaming within the project can alter it even when file bytes match. Do not compare file, range, directory, and transaction hashes as interchangeable evidence. See [Transaction Hashes](TRANSACTIONS.md#repository-state-hash-format) for their separate encoding and exclusions.
+
 On resume, stale reconciliation inspects active claims with a nonempty base hash, excluding read and review claims. File claims compare file SHA-256; directory claims compare directory hashes; symbol claims compare the current indexed line-range hash. A changed nonempty hash suspends a claim. Other resource types have no content hash in the current implementation. Missing/unresolvable resource content can produce an empty hash and is not equivalent to proof that the resource is unchanged.
 
 ## Creation and contention boundaries
