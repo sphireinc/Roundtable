@@ -29,6 +29,16 @@ The returned `valid` field covers claim validation, artifact presence, patch par
 
 ## Apply sequence
 
+### Temporary Workspace Copy
+
+Validation creates an OS temporary directory named `roundtable-patch-*`; apply separately creates `roundtable-apply-*` and repeats the copy/application check. Both schedule recursive cleanup on return, with cleanup errors ignored. There is no configured temporary-root, copy-size limit, disk-space preflight, or retained dry-run workspace for inspection.
+
+`CopyWorkspace` walks the current filesystem, not a Git commit/index export. It skips directories whose basename is exactly `.git` or `.roundtable` at **any depth**, but does not read `.gitignore`, skip dependency/build trees, filter secrets, or exclude ordinary hidden files. Untracked and already-modified files are copied. Large `node_modules`, build output, and local environment files can therefore increase work and copy sensitive material into temporary storage. A file named `.git` (as in some worktree layouts) is not excluded by the directory-only test.
+
+Directories are created with requested mode `0755`; files are opened and copied into newly created regular files. Original executable bits, permissions, ownership, timestamps, and extended attributes are not preserved. File symlinks are opened through their targets and copied as regular file contents; directory symlinks are not traversed as directories by this walk and can cause a copy failure when opened as a file. There is no symlink-containment check in this helper. Other special filesystem entries are not explicitly filtered. Copy/close errors can fail the dry run for reasons unrelated to patch validity.
+
+The walk is not a snapshot or a context-aware bounded operation: concurrent external writes can produce a mixed-time copy, and request cancellation does not independently interrupt its file-copy loop. Successful patch application to this copy proves applicability to that copied view, not preservation of filesystem metadata, clean Git state, test success, or absence of secrets. It also does not eliminate the race before authoritative application. Review the actual worktree and recorded gates separately.
+
 `patch.apply` repeats validation immediately before mutation. It refuses invalid patches, policy results that are not approvable without the required human override, and unsatisfied required security review. It then:
 
 1. Reads the stored patch and parses touched files.
