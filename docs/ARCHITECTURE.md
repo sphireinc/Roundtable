@@ -69,10 +69,17 @@ The WebSocket sends a periodic ping containing the current persisted workspace s
 ## Trust boundaries
 
 - The project database and policy files are authoritative local state.
-- Agent-facing MCP operations do not grant agents direct authority to write the repository; proposals are the intended write boundary.
-- The HTTP API enforces workspace roots and human/agent control surfaces independently of the local MCP runtime.
+- Proposals are the intended repository-write workflow, but local MCP dispatch exposes `patch.apply`, test-command execution, approval recording, and other mutations to trusted socket callers without cryptographic identity or per-tool authorization. The socket does not itself enforce that a caller is an agent rather than the transaction manager. Do not equate the intended workflow with an OS sandbox or independently enforced principal boundary.
+- HTTP workspace registration validates roots against a configured allowlist. That check does not mean every later route revalidates filesystem containment or entity/workspace association: patch previews use lexical checks without symlink resolution, and HTTP apply bypasses the workspace-scoped transaction lookup. See the implementation-grounded API/transaction references before exposing filesystem operations.
+- HTTP bearer tokens classify human/agent identity in request context, but current `humanAuthorized` checks original actor/role headers instead of that context. An accepted agent token with a human-role header can satisfy it. Process-local idempotency replay can also bypass fresh security checks. These are documented authorization defects, not enforced isolation guarantees; keep both token classes inside a trusted boundary until repaired and verified.
 - Browser configuration is public build-time configuration. No privileged bearer token belongs in a `NEXT_PUBLIC_*` variable.
 - A Unix socket is a local trust boundary, not a network authentication protocol.
+
+### Configuration and Evidence Boundaries
+
+Runtime YAML, fenced Markdown policy, standalone API flags/library configuration, database-backed HTTP settings revisions, and browser `NEXT_PUBLIC_*` values are distinct configuration channels. They are not automatically synchronized. MCP runtime configuration/policy is loaded when its runtime opens; HTTP settings save revisions without reconfiguring that runtime. Browser public values are compiled into its build. Confirm which process reads a value before expecting a setting to affect execution.
+
+Stored lifecycle status, static health labels, capability declarations, generated schemas, and event delivery are distinct evidence. A `running` deliberation does not launch agents, a declared read-only capability does not mount a sandbox, an approved HTTP consensus snapshot does not apply a proposal, and an audit/outbox row does not prove successful live delivery. Runtime application, database commit, artifact creation, and response delivery can fail at different boundaries. Preserve authoritative state and inspect specific execution evidence rather than treating one successful projection as end-to-end acceptance.
 
 ## Related references
 
@@ -80,4 +87,6 @@ The WebSocket sends a periodic ping containing the current persisted workspace s
 - [MCP Tools](MCP_TOOLS.md) inventories agent-callable tools.
 - [Database](DATABASE.md) documents schema and persistence.
 - [HTTP API](../api/README.md) covers service deployment and links to OpenAPI.
+- [Transactions](TRANSACTIONS.md) details filesystem/database non-atomicity and HTTP apply association limits.
+- [API error semantics](../api/docs/error-semantics.md) explains header-based authorization, decoding, and cached-response security limitations.
 - [Web UI](UI.md) distinguishes current pages from planned navigation.
