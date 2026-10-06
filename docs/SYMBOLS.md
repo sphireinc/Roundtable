@@ -46,6 +46,16 @@ The MCP `repo.symbols` handler requires a nonempty `path` even though its advert
 Use these ranges for navigation and coordination, not as a guarantee that a proposed patch affects only one semantic declaration. File/directory claims and patch review remain necessary when extraction is incomplete or IDs overlap.
 
 There is no tree-sitter dependency or language grammar registry in the current implementation. Supporting another language requires updating extension detection, implementing extraction, preserving stable resource ID behavior, and adding parser/edge-case tests. A future tree-sitter implementation would need explicit grammar/version distribution and error-recovery semantics; it is not an installed feature today.
+## Proposal-Time Symbol Resolution
+
+The proposal service's `resolveSymbolResource` is not a general index refresh. Non-symbol resources, empty paths, and empty symbol names are returned unchanged. A stored span with positive start and end at least start is also returned immediately, **without reindexing**. A declaration can move, disappear, or change identity while proposal validation continues using that previously stored numeric range.
+
+Only an eligible symbol resource lacking valid bounds is indexed from its path joined to the project root. Indexing errors are suppressed and leave the resource unchanged. Successful extraction selects the first exact, case-sensitive name match and copies its start/end lines; it does not disambiguate by kind, signature, scope, or a caller-selected occurrence. No match leaves the original bounds unchanged. The resolver returns this in-memory record without persisting discovered bounds, so repeated calls can index again.
+
+Coverage uses the resolved numeric span for hunk overlap. Claim freshness hashing uses the same resolver and hashes the resolved line range, but persists the current hash on the original resource record rather than saving newly discovered bounds. Invalid/unavailable ranges can produce an empty hash, which does not suspend the claim; this is not evidence of unchanged symbol content. Valid stale bounds can instead hash unrelated current lines. Resume reconciliation has its own rediscovery behavior and must not be assumed identical to proposal resolution. See [Claims](CLAIMS.md#reconciliation-selection-details) and [Transaction Coverage](TRANSACTIONS.md#resource-coverage-algorithm).
+
+Neither successful resolution nor a valid stored span proves semantic ownership, freshness of the declaration, or full containment of changed lines. Review current file contents and ranges after refactors, especially when names repeat or line positions shift. The local helper has no independent path-containment check, timeout, or persistent repository-wide index.
+
 ## HTTP Repository Entity Discovery
 
 The HTTP entity list/detail handlers rebuild a filesystem inventory on every request, then enrich it with database governance records. This is not a persistent database catalog, cached semantic index, or dependency graph. A full walk occurs even for a single entity lookup or small page. Walk failures return HTTP 409 `repository_index_failed`; governance query failures return HTTP 500 `repository_entity_context_failed`.
