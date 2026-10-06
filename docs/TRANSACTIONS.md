@@ -4,7 +4,17 @@ Agents submit patch-bearing proposals. Roundtable records proposal metadata and 
 
 ## Proposal lifecycle
 
-`proposal.create` stores task/agent/title/summary/risk, affected resources, expected tests/rollback notes, and a patch artifact beneath `.roundtable/patches/`. `proposal.attach_patch` can attach or replace patch content for an existing proposal. Review requests, votes, decisions, security reviews, and human approvals are persisted separately. Proposal status is updated through proposal/patch operations; exact eligible states and gates should be read from the service, not inferred from the design task pack.
+`proposal.create` stores task/agent/title/summary/risk, affected-resource associations, and a patch artifact beneath `.roundtable/patches/`. The local handler does not persist its advertised expected-tests/rollback-notes inputs. `proposal.attach_patch` can attach or replace patch content for an existing proposal. Review requests, votes, decisions, security reviews, and human approvals are persisted separately. Proposal status is updated through proposal/patch operations; exact eligible states and gates should be read from the service, not inferred from the design task pack.
+
+### Local Creation Fields and Persistence
+
+Creation requires actual nonempty string `task_id`, `agent_id`, `title`, `summary_md`, and `patch`. These checks do not trim whitespace. It parses patch paths, requires the task to exist, and validates ownership of the merged affected-resource list. It does not verify that the supplied agent exists/is enabled, owns the task, or is the authenticated caller. Risk defaults to `normal` for missing/empty/non-string input, with no enum check. Unadvertised `proposal_id` and `status` are accepted; defaults are generated `P-` timestamp ID and `pending`. A supplied status is not constrained to a creation-state enum.
+
+Optional `affected_resources` are deduplicated by exact ID, with empty entries omitted. Explicit file/symbol IDs cover their parsed file paths; directory IDs cover matching descendant paths; uncovered parsed patch paths add `file:<path>` resources. Ownership requires an exact resource-ID match in the supplied agent's active claims, excluding read/review claims. It does not check claim expiry, task/session/workspace association, or treat an unrelated overlapping lease as an exact match. Later patch validation separately checks resource coverage and current governance.
+
+Creation writes `.roundtable/patches/<proposal-id>.diff` before proposal persistence, requesting parent mode `0755` and file mode `0644`. Supplied IDs are used in pathname construction without a separate ID/containment check here. Existing artifact paths can be overwritten. The proposal upsert can replace an existing ID's local metadata, rather than rejecting it as duplicate creation. It then ensures resources, replaces links, and reloads both for the response. These are separate operations: a failure can leave an artifact, changed proposal, or incomplete associations. No durable request deduplication or encompassing filesystem/database transaction is supplied.
+
+Unknown argument keys can reach this local handler but are not automatically stored: expected tests, rollback notes, HTTP base revision, workspace/substate fields, and caller-selected execution controls do not gain behavior merely by appearing in input. Creation does not request review, clear old acceptance evidence on ID reuse, run tests, create an approval, or append a dedicated creation event in this handler. Title/summary/patch content are not generally redacted. It returns saved `proposal` and `proposal_resources`; use explicit current validation and review before apply.
 
 ## Local Proposal Reads
 
