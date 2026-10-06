@@ -49,6 +49,16 @@ The walk is not a snapshot or a context-aware bounded operation: concurrent exte
 
 `repo.RepoStateHash` combines Git HEAD (when available) with a SHA-256 of sorted workspace files, excluding `.git` and `.roundtable`; outside a Git repository it uses the workspace hash. This is not solely a Git tree hash and may include pre-existing uncommitted files.
 
+## Repository-State Hash Format
+
+`WorkspaceHash` walks the selected root and skips directories named exactly `.git` or `.roundtable` at any depth. It includes other nondirectory paths regardless of Git tracking/ignore rules, slash-normalizes and sorts their relative names, then hashes each relative path, a NUL byte, full file bytes, and another NUL byte in that order with SHA-256. The result is lowercase hexadecimal. Empty directories contribute nothing. Permissions, executable bits, ownership, timestamps, extended attributes, symlink identity, and Git staging state are not encoded. File symlinks are read through their targets; unreadable paths or directory symlinks read as files can fail hashing.
+
+`RepoStateHash` first runs Git discovery/HEAD commands, then computes that filesystem hash. Outside Git it returns only the hexadecimal workspace hash. Inside Git it returns `git:<HEAD>:<workspace-hash>`; an unborn HEAD recognized by its error-message checks uses `no-head` in place of HEAD. Those checks inspect specific command-error text rather than a structured Git status. Other Git failures abort hashing. Git commands have no context timeout in this helper, and the discovered top-level path is not used to broaden hashing beyond the supplied root. A root inside a larger repository can therefore combine that repository's HEAD with only the selected subtree's files.
+
+Branch name, remote/upstream, merge state, reflog, and clean-worktree status are not separate hash components. Two branches at the same commit with identical included files can match. Mode-only changes or empty-directory changes can match too. Conversely, ignored build/dependency/environment files can change the hash without a proposal modification. A `.git` file is not excluded by the directory-only rule. Treat transaction `before_git_hash`/`after_git_hash` as these mixed Git/filesystem labels, not pure Git object IDs, signatures, or a full filesystem backup.
+
+Hashing reads the current filesystem sequentially with no snapshot lock, size cap, cancellation checks, or per-file manifest output. Concurrent changes can yield mixed-time evidence, and a failure after authoritative apply can prevent recording the after hash. Hash equality does not prove tests passed, files are safe, or later work may be overwritten. Preserve current diffs, transaction records, and recovery artifacts alongside hashes before any manual restoration.
+
 ## Important guarantees and gaps
 
 ### External Patch Executor
