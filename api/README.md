@@ -50,6 +50,23 @@ GOCACHE=/tmp/roundtable-go-cache go run ./api/cmd/server \
 
 ## Startup, bind, and process lifecycle details
 
+### Embedded Server Configuration
+
+`httpapi.NewServer(Config)` is the library entry point used by the standalone executable and tests. These fields are constructor inputs, not additional YAML keys or automatically read environment variables:
+
+| Field | Constructor behavior and scope |
+| --- | --- |
+| `Version` | Exactly empty becomes `dev`; other values are retained as version metadata, not API-route version selection. |
+| `Logger` | Nil becomes `slog.Default()`; a supplied logger controls HTTP request-log output. No constructor-level redaction, log rotation, level flag, or log-file destination is added. |
+| `Store` | Supplied database store; the constructor does not open/migrate SQLite or reject nil. Individual handlers differ in nil-store handling, so nil is not a general supported stateless-service mode. |
+| `AllowedWorkspaceRoots` | Registration allowlist, with symlink resolution during root validation. Empty means no roots can be registered, not unrestricted filesystem access. The standalone executable supplies one root; embedded callers can supply several. |
+| `AllowedOrigins` | A zero-length slice, including nil or an explicitly empty slice, is replaced with the two localhost UI origins. This cannot disable defaults by passing an empty slice. Matching is exact after configured-entry trimming; the constructor does not validate origin syntax or expose a wildcard mode. |
+| `HumanToken` | Shared human credential, retained as supplied. No generation, hashing-at-rest, expiry, rotation, or per-workspace token scope is supplied. |
+| `AgentToken` | Shared agent credential, retained as supplied. Context classification does not repair the handler authorization limitation documented below. |
+| `MaintenanceDirectory` | Backup parent directory. Exactly empty uses `.roundtable` in the backup handler; the standalone executable supplies the database path's parent. It is not a workspace-root restriction or arbitrary client-selected destination. |
+
+Each new server allocates a fresh in-memory idempotency map and zeroed HTTP counters. Constructing another server with the same database does not share those maps/counters. `Handler()` constructs the HTTP routing/middleware surface; it does not itself create a listener, register workspaces, launch agents, or perform a runtime coordinator startup. The native executable separately opens the database and calls `Serve`. Constructor defaults are not evidence that environment variables, runtime configuration revisions, or browser settings have been synchronized.
+
 The native bind guard splits `-addr` as host/port and parses the host as a numeric IP. `127.0.0.1:8080` and `[::1]:8080` pass the loopback test; `localhost:8080`, `:8080`, and `0.0.0.0:8080` do not, even if a hostname resolves to loopback. Unless `-allow-remote` is set, rejection prints `refusing non-loopback bind; pass -allow-remote explicitly` and exits with code 2 before opening SQLite. The opt-in skips that check; malformed addresses can still fail when serving begins.
 
 Database and workspace-root defaults are independent process-relative paths. Setting `-workspace-root /some/repo` does not automatically move the default database into that repository. `-database` also sets the parent directory used as the maintenance directory. The process does not read `.roundtable/config.yaml` to derive these HTTP-service flags. Explicit token flags override their environment defaults, including an explicitly empty flag value. Environment changes do not hot-reload a running server.
