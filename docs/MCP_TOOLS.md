@@ -6,6 +6,14 @@ The runtime uses a local Unix-domain socket by default. Its registry/schema are 
 
 ## Local socket protocol
 
+### Runtime Initialization and Dispatch
+
+`OpenRuntime(root)` first loads `.roundtable/config.yaml` through the runtime configuration loader, opens SQLite using `filepath.Join(root, storage.sqlite_path)`, and then loads the Markdown policy engine. Configuration/database/policy-load errors abort initialization; policy-load failure closes the newly opened database. It constructs claim, proposal, security-review, and symbol-index services around that root/store. Cleanup closes the database and ignores close errors. It does not register a workspace, sync configured agents, import tasks, run reconciliation, launch adapters, or start a Chair tick loop merely by opening this runtime.
+
+Configuration and policy are loaded once per runtime instance, not on every tool dispatch. Editing YAML or policy Markdown does not hot-reload an already-running socket server's service objects. A later direct-mode CLI call opens another runtime and can therefore see newer configuration/policy than the existing listener. HTTP configuration revisions are a separate control plane and do not configure this initialization path. Coordinate root/database/run attribution explicitly when using several processes.
+
+`Call` dispatches through a fixed tool-name switch; it does not consult registry schemas for validation, permissions, or dynamic handler installation. A successfully parsed call can still fail handler-specific checks or reach the unimplemented fallback. Services perform their own persistence/filesystem work; dispatch supplies no encompassing transaction, global repository lock, durable request deduplication, or automatic compensation. Turn lifecycle synchronization uses a runtime-instance mutex, not a cross-process lock. Do not interpret the transport's `ok` flag as proof of test success, safe patch application, authenticated actor identity, or atomic rollback on error.
+
 The server accepts one request per Unix-domain connection. Send one JSON object terminated by a newline; the supported fields are `tool` (string) and `args` (object). For example:
 
 ```json
