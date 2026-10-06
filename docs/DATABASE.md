@@ -279,6 +279,14 @@ CREATE TABLE memory_entries (
 
 This catalog describes schema intent and the data represented by the tables. It does not assert that every table is currently populated by the Go runtime, that all table writes are append-only, or that every API endpoint has a corresponding complete user interface. API-side control-plane tables are partly broader than the local Go CLI feature set.
 
+## Decision Record Storage
+
+The local `decisions` table uses `id` as its primary key, nullable text `proposal_id`/`task_id`, required text `decision`, `rationale_md`, and `decided_by`, and a `created_at` default of SQLite `CURRENT_TIMESTAMP`. Its definition has no foreign-key constraint for either association and no decision-value enum/check constraint. An association is stored metadata, not proof that the referenced proposal/task exists or that the actor was authenticated.
+
+`UpsertDecision` converts empty association strings to SQL NULL. Conflict on ID replaces both associations, decision, rationale, and actor, but leaves the original creation timestamp unchanged. It does not record an update timestamp or revision history. A replacement can thus change attribution and content while retaining an older creation time; do not treat this table as an immutable audit ledger or use its creation time as a last-modified marker.
+
+`GetDecision` converts NULL associations back to empty strings. The internal `ListDecisions` query returns all rows in ascending `created_at`, then ID order, without workspace/run/task/proposal filtering or pagination; it propagates query, scan, and iteration errors. Its initially nil result slice can serialize as `null` when empty. These are store-method semantics, not a promise of a public `decision.list` MCP tool or HTTP endpoint with the same response. Recording a decision alone does not transition a proposal/task or authorize application; see [Votes and Decision Records](TRANSACTIONS.md#votes-and-decision-records).
+
 ## IDs
 
 Recommended prefixes:
