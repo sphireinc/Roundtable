@@ -100,6 +100,22 @@ Markdown extensions are admonitions, attribute lists, definition lists, tables, 
 The central `nav` tree groups Product, Getting Started, Runtime, Agent Interface, HTTP API, Web UI, and Operations. Runtime has nested Governance and Database groups. Labels and ordering come from this single tree, not duplicated per-page menus. Add new public pages to the appropriate group and retain existing nesting instead of introducing a page-specific sidebar. The navigation verifier checks the rendered common tree across pages; it does not certify mobile layout, keyboard interaction, visual wrapping, search behavior, or documentation completeness.
 
 Preparation recursively copies Markdown from `docs/` and `api/docs/`, plus four named root documents and explicitly selected API/OpenAPI/example assets. It does not copy arbitrary images, scripts, source trees, task packs, or all examples. A newly referenced non-Markdown asset needs an intentional preparation-rule update; merely placing it beside a source page does not make it available in the assembled site. Preparation preserves relative source paths and replaces the entire staging directory each run. Always rerun preparation after source edits before claiming a fresh build result.
+### Prepared Source Inventory
+
+`scripts/prepare-docs.py` resolves the repository root from its own location, not the caller's working directory, and always targets root `.docs-build`. It accepts no command-line flags, environment-based destination override, incremental mode, or dry run. The copy set is:
+
+| Source | Prepared destination/selection |
+| --- | --- |
+| Root `README.md`, `AGENTS.ROUNDTABLE.md`, `PROJECT.ROUNDTABLE.md`, `POLICIES.ROUNDTABLE.md` | Same filenames at staging root. |
+| `docs/` and `api/docs/` | Recursive `*.md` matches, sorted within each tree, retaining repository-relative paths. |
+| `api/README.md` and `api/openapi.yaml` | Same repository-relative paths. |
+| `api/examples/dashboard-fixtures.json` | Same repository-relative path; no general JSON fixture glob. |
+| `examples/resume-briefing.md` | Same repository-relative path; no general example-directory copy. |
+
+The script deletes an existing staging tree with `shutil.rmtree`, then recreates it before copying. This is not an atomic replacement and does not preserve a last-known-good staging tree on failure. `shutil.copy2` copies file content and supported metadata; it is not a sanitizer or symlink-containment check and normally follows a selected file symlink. Markdown glob matching follows the platform's path-matching behavior; do not assume every differently cased extension is portable. It does not preprocess Markdown, rewrite links, generate API references, validate navigation membership, or verify linked assets. A nonexistent recursively scanned tree can contribute no matches rather than independently failing a required-directory check, while missing explicitly named files fail their copy operation.
+
+Keep source documents and selected assets authoritative; files edited only inside `.docs-build` are lost on the next preparation. Run the generator and contract checks separately, then preparation, strict build, and navigation verification. Inspect build diagnostics for missing anchors/assets even when a command exits successfully; these checks are not a complete link crawler or publication acceptance test.
+
 ### Navigation Verification Contract
 
 Local browser spot-check on 2026-10-06: Chrome rendered the project overview with grouped desktop navigation, expanded Runtime/Governance, and followed Claims into its nested page while retaining the shared groups. At a 390-by-844 viewport, Claims content reflowed and the navigation drawer displayed the Governance submenu with readable links. The temporary viewport override was reset afterward. This is representative local browser evidence, not an exhaustive all-page interaction test, keyboard/accessibility audit, or verification of the published GitHub Pages deployment. The separate static verifier covers configured label/target uniformity across every rendered page.
