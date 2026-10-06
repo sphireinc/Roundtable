@@ -32,6 +32,8 @@ jobs:
         run: python scripts/prepare-docs.py
       - name: Build documentation
         run: python -m mkdocs build --strict
+      - name: Verify shared navigation on every rendered page
+        run: python scripts/verify-docs-navigation.py
       - name: Configure GitHub Pages
         if: github.event_name != 'pull_request'
         uses: actions/configure-pages@v5

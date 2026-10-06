@@ -65,7 +65,7 @@ func DefaultRegistry() *Registry {
 				prop("rollback_notes", "string"),
 			)...)),
 			tool("proposal.get", "Fetch a proposal by id.", requiredSchema("proposal_id")),
-			tool("proposal.list", "List proposals for the current run or task.", schema(nil, optionalProperties(
+			tool("proposal.list", "List local proposals, optionally filtered by task or status.", schema(nil, optionalProperties(
 				prop("task_id", "string"),
 				prop("status", "string"),
 			)...)),
@@ -101,25 +101,25 @@ func DefaultRegistry() *Registry {
 				prop("status", "string"),
 				prop("summary_md", "string"),
 			)...)),
-			tool("table.get_state", "Return current Roundtable state including tasks, agents, claims, proposals, votes, decisions, blockers, and required human approvals.", emptySchema()),
+			tool("table.get_state", "Return local runs, agents, tasks, claims, proposals, transactions, human approvals, security reviews, and memory.", emptySchema()),
 			tool("table.watch", "Read recent Roundtable activity or poll events after an event ID using after_event_id for reliable incremental delivery.", schema(nil, optionalProperties(
 				prop("run_id", "string"),
 				prop("limit", "integer"),
 				prop("after_event_id", "integer"),
 			)...)),
-			tool("task.create", "Create a task in the active run.", schema([]string{"title", "body_md"}, optionalProperties(
+			tool("task.create", "Create a task in shared local state.", schema([]string{"title", "body_md"}, optionalProperties(
 				prop("priority", "integer"),
 				prop("risk", "string"),
 				prop("assigned_agent_id", "string"),
 			)...)),
 			tool("task.get", "Fetch a task by id.", requiredSchema("task_id")),
-			tool("task.list", "List tasks for the current run.", emptySchema()),
+			tool("task.list", "List all local tasks ordered by priority, creation time, and ID.", emptySchema()),
 			tool("task.update_status", "Update a task status or assignment.", schema([]string{"task_id"}, optionalProperties(
 				prop("status", "string"),
 				prop("assigned_agent_id", "string"),
 			)...)),
 			tool("test.get_result", "Fetch a stored test result.", requiredSchema("test_run_id")),
-			tool("test.run", "Run an allowlisted, read-only test command under orchestrator control; shell control characters and repository write primitives are rejected.", schema([]string{"command"}, optionalProperties(
+			tool("test.run", "Run a command through the executable allowlist and shell-character guard, and persist its output/result.", schema([]string{"command"}, optionalProperties(
 				prop("proposal_id", "string"),
 				prop("task_id", "string"),
 			)...)),
@@ -127,7 +127,7 @@ func DefaultRegistry() *Registry {
 				prop("proposal_id", "string"),
 				prop("task_id", "string"),
 			)...)),
-			tool("vote.cast", "Cast a role-aware vote on a proposal.", schema([]string{"proposal_id", "agent_id", "vote", "reason_md"}, optionalProperties(
+			tool("vote.cast", "Record a caller-attributed vote on an existing proposal.", schema([]string{"proposal_id", "agent_id", "vote", "reason_md"}, optionalProperties(
 				prop("confidence", "number"),
 			)...)),
 			tool("vote.list", "List votes for a proposal.", requiredSchema("proposal_id")),

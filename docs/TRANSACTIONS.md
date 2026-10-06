@@ -6,6 +6,14 @@ Agents submit patch-bearing proposals. Roundtable records proposal metadata and 
 
 `proposal.create` stores task/agent/title/summary/risk, affected resources, expected tests/rollback notes, and a patch artifact beneath `.roundtable/patches/`. `proposal.attach_patch` can attach or replace patch content for an existing proposal. Review requests, votes, decisions, security reviews, and human approvals are persisted separately. Proposal status is updated through proposal/patch operations; exact eligible states and gates should be read from the service, not inferred from the design task pack.
 
+## Votes and decision records
+
+`vote.cast` requires an existing `proposal_id` and nonempty `agent_id`, `vote`, and `reason_md`. It returns the saved `vote`. `confidence` defaults to 0 and is not range-clamped by the local handler. The handler also accepts `vote_id` (not advertised in the registry); missing/empty generates a `V-` timestamp ID, while an existing ID replaces that vote row's fields and retains its creation time. Caller agent IDs are not authenticated or checked against review roles by this handler. Policy counts stored recognized vote strings, without using confidence or policy-weight metadata in its current approval count.
+
+Use `approve`, `approve_with_notes`, `revise`, `reject`, `veto`, or `abstain` as the workflow vocabulary. The local handler accepts any nonempty string; unrecognized or differently cased strings are stored but do not contribute to approval/blocker counts. `vote.list` requires a proposal ID and returns its votes in ascending creation-time/ID order. The returned list can be `null` when empty. These tools do not automatically apply a patch after votes arrive.
+
+`decision.record` requires nonempty `decision`, `rationale_md`, and `decided_by`; `proposal_id` and `task_id` are optional associations. It additionally recognizes an unadvertised `decision_id`, generating a `D-` timestamp ID when empty. An existing ID updates its row rather than creating an immutable revision. The handler stores decision strings and actor metadata directly, without checking the actor identity or loading the associated task/proposal first. It returns `decision`; recording it does not itself update task/proposal status, grant approval, or apply a patch. Lifecycle operations such as `patch.reject` have their own associated state changes.
+
 ## Validation performed by `patch.validate`
 
 Validation reports separate results for:
@@ -33,6 +41,7 @@ The returned `valid` field covers claim validation, artifact presence, patch par
 
 ## Important guarantees and gaps
 
+- The required security-review gate reads persisted statuses. The local MCP caller can provide both a manual status and a reviewer ID; supplying a status skips the automatic patch scan. Reviewer identity is not authenticated by the Unix-socket tool server. Restrict socket access to trusted participants and inspect review provenance. See [Security Reviews](SECURITY_REVIEW.md) for exact scan and gate behavior.
 - Temporary-apply validation detects many malformed/context-mismatched diffs before the authoritative apply.
 - The apply service does not itself run `expected_tests`; use the testing tools/records separately. A stored test result is not proof that the current patch was tested unless the association and timing are checked.
 - The before/after hashes and rollback JSON are recovery evidence, not an automatic rollback engine.

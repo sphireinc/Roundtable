@@ -14,8 +14,12 @@ This documentation describes the implementation in this repository. It distingui
 ## System areas
 
 - [Runtime and orchestration](ORCHESTRATION.md) explains run lifecycle, cycles, turn scheduling, retry behavior, and convergence.
+- [Tasks and assignments](TASKS.md) documents local task storage, ordering, updates, and assignment behavior.
 - [MCP tools](MCP_TOOLS.md) describes the agent-facing local tool boundary.
 - [Proposals and transactions](TRANSACTIONS.md) explains how proposed changes are validated and applied.
+- [Security reviews](SECURITY_REVIEW.md) covers automatic findings, manual review records, and the security gate used during application.
+- [Human approvals](HUMAN_APPROVALS.md) explains persisted decisions and the policy selection rules used during application.
+- [Tests and evidence](TEST_EXECUTION.md) documents command execution, captured logs, result status, and validation limits.
 - [HTTP API](../api/README.md) links to the OpenAPI contract and endpoint guide.
 - [Web UI](UI.md) records implemented routes separately from navigation concepts that are not yet implemented.
 - [Operations](DEPLOYMENT.md) covers local deployment and runtime configuration.

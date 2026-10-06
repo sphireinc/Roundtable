@@ -30,6 +30,10 @@ From `ui/`, install dependencies, set `NEXT_PUBLIC_API_BASE_URL`, `NEXT_PUBLIC_W
 
 ## GitHub documentation site
 
+After the strict build, run `python scripts/verify-docs-navigation.py`. The GitHub workflow runs this check before uploading the Pages artifact. It compares the primary sidebar on every generated HTML page, including the 404 page, against the labels, order, and page targets in `mkdocs.yml`. It also verifies that each configured page has a rendered output file. Missing entries, changed order, wrong link targets, missing pages, or multiple/missing primary sidebars fail the command. The checker supports the configured directory URLs and Material sidebar markup; update it when changing themes or URL mode.
+
+The sidebar taxonomy is maintained in the single `nav` mapping in `mkdocs.yml`. Governance pages share a Runtime subgroup, and database pages share a Database subgroup. Keep explicit page entries visible; `navigation.indexes` is disabled because it folds README overview pages into section labels. Active-page and table-of-contents controls may differ between pages, while the complete primary navigation remains uniform. The HTML check verifies labels and targets; use a browser to assess responsive layout, keyboard interaction, and visual appearance.
+
 The grouped docs site is built from the repository root using `python -m pip install -r requirements-docs.txt`, `ruby api/scripts/generate-admin-api-guide.rb`, `ruby api/scripts/verify-openapi.rb`, `python scripts/prepare-docs.py`, and `mkdocs build --strict`. The API generator refreshes both the endpoint inventory and component-schema catalog from `api/openapi.yaml`; verify the contract before publishing. The preparation script copies only the curated documentation pages and their linked API fixtures into ignored `.docs-build/`; it does not copy application source, TODO/DONE ledgers, or task prompts. The GitHub Actions workflow builds pull requests and publishes pushes on `main` through GitHub Pages. In repository settings, set Pages deployment source to GitHub Actions. Site output is generated into `site/` and should not be committed.
 
 ## Backups and maintenance

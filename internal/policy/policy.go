@@ -158,7 +158,7 @@ When resuming:
 
 ## Runtime interpretation and format
 
-The policy engine reads only fenced yaml blocks in this Markdown file. It supports a limited YAML-like subset with nested maps, scalar strings/integers/booleans, and string lists using space indentation; it is not a full YAML parser. If this file is missing, built-in policy defaults are used. Parsed consensus rules merge over defaults; a nonempty risk.high_paths or commands.dangerous list replaces that default list.
+The policy engine reads only fenced yaml blocks in this Markdown file. It supports a limited YAML-like subset with nested maps, scalar strings/integers/booleans, and string lists using space indentation; it is not a full YAML parser. If this file is missing, built-in policy defaults are used. Each parsed consensus profile replaces its entire built-in rule: omitted integers become 0, omitted booleans become false, and omitted role lists become empty. Profiles absent from the file retain their defaults. Include all fields whose behavior you want to retain. A nonempty risk.high_paths or commands.dangerous list replaces its complete default list; an omitted or empty list retains the default list.
 
 Settings that currently affect runtime behavior:
 
