@@ -48,6 +48,24 @@ Durable domain events are persisted in SQLite and used by snapshots/watch querie
 
 The Go event bus provides in-process fanout; the standalone API has its own WebSocket/event snapshot implementation. Those are separate delivery paths and should not be assumed to share one process-local subscription.
 
+### Durable append versus live notification
+
+`Store.AppendEvent` inserts an `events` row, obtains its generated integer ID, reloads that row, and only then publishes it on the store's in-memory bus. The insert is not enclosed in a transaction with the subsequent reload/publication. An error after insertion can therefore leave a durable event even though the caller receives an error and subscribers receive no notification. Retrying is not automatically deduplicated by this general append method. Whether an entity mutation and its event are atomic depends on the particular service path, not this method's name.
+
+`ListEvents` reads persisted rows in ascending ID order and optionally filters by exact run ID. Empty run ID reads all runs. The bus does not hold historical events, acknowledge delivery, persist subscriber positions, retry missed messages, or synthesize events for arbitrary SQL updates. Each `NewStore` creates its own bus when one is not supplied; stores share notifications only when explicitly given the same bus instance. Sharing a database file does not share a bus across stores or processes.
+
+### In-process bus lifecycle
+
+`Subscribe(buffer)` creates a channel of the requested capacity. Negative capacity is invalid and can panic; zero capacity creates an unbuffered channel. `Publish` attempts one nonblocking send per subscriber, dropping that subscriber's copy when it cannot immediately accept the value. A slow subscriber does not block all producers while waiting for space. There is no drop counter, overflow error, retry queue, or guaranteed delivery to an unbuffered subscriber. Map iteration does not define subscriber ordering, and concurrent publishers do not establish a total delivery order equivalent to database event IDs.
+
+`Unsubscribe` removes and closes the matching channel; unknown channels are ignored. `Close` closes all subscribed channels and is idempotent. Publishing after close does nothing; subscribing after close returns an already-closed channel. Buffered values can still be read before a closed channel is drained. Closing a bus does not delete database events or close the SQLite handle. Consumers must handle channel closure and use persisted events for recovery rather than treating a channel receive as authoritative complete history.
+
+### API WebSocket implications
+
+The API's event WebSocket subscribes to its store bus with capacity 64 and separately reads historical workspace events using the requested cursor. Live bus notifications are therefore best-effort hints after the historical replay, not an exactly-once stream. There is no bus overflow signal when more notifications arrive than the buffer can hold. An event inserted by the separate Go runtime is not automatically published through the API process's bus; a shared SQLite file alone does not create cross-process live fanout.
+
+The WebSocket sends a periodic ping containing the current persisted workspace sequence, which can reveal that durable state advanced beyond received notifications. Reconnect/replay or fetch the documented event snapshot when reconciliation is needed. Do not interpret a live connection, `resumable: true`, or an outbox table's existence as proof of complete real-time delivery. Cursor retention and replay rules are API-specific; consult the [Endpoint Guide](../api/docs/admin-api-guide.md) rather than applying MCP cursor fields to the WebSocket protocol.
+
 ## Trust boundaries
 
 - The project database and policy files are authoritative local state.

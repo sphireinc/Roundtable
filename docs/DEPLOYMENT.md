@@ -8,11 +8,10 @@ Build or run from the repository root with Go:
 
 ```sh
 go build -o roundtable ./cmd/roundtable
-./roundtable init --root .
 ./roundtable run --root . --goal "Coordinate this work"
 ```
 
-The runtime stores SQLite and MCP assets under `.roundtable/` by default. The MCP server uses the configured Unix socket. Protect the project directory and database; the database contains operational state and audit/event data.
+This assumes an already-scaffolded project with a readable `.roundtable/config.yaml`. For a new project, initialize its target root first as described in [Quickstart](QUICKSTART.md); `init` refuses existing starter files, while `--force` overwrites customizations. The runtime stores SQLite and MCP assets under `.roundtable/` by default. The MCP server uses the configured Unix socket. Protect the project directory and database; the database contains operational state and audit/event data.
 
 ## HTTP API container
 
@@ -35,6 +34,33 @@ After the strict build, run `python scripts/verify-docs-navigation.py`. The GitH
 The sidebar taxonomy is maintained in the single `nav` mapping in `mkdocs.yml`. Governance pages share a Runtime subgroup, and database pages share a Database subgroup. Keep explicit page entries visible; `navigation.indexes` is disabled because it folds README overview pages into section labels. Active-page and table-of-contents controls may differ between pages, while the complete primary navigation remains uniform. The HTML check verifies labels and targets; use a browser to assess responsive layout, keyboard interaction, and visual appearance.
 
 The grouped docs site is built from the repository root using `python -m pip install -r requirements-docs.txt`, `ruby api/scripts/generate-admin-api-guide.rb`, `ruby api/scripts/verify-openapi.rb`, `python scripts/prepare-docs.py`, and `mkdocs build --strict`. The API generator refreshes both the endpoint inventory and component-schema catalog from `api/openapi.yaml`; verify the contract before publishing. The preparation script copies only the curated documentation pages and their linked API fixtures into ignored `.docs-build/`; it does not copy application source, TODO/DONE ledgers, or task prompts. The GitHub Actions workflow builds pull requests and publishes pushes on `main` through GitHub Pages. In repository settings, set Pages deployment source to GitHub Actions. Site output is generated into `site/` and should not be committed.
+
+### Reproducible documentation build
+
+Run from the repository root with Python, pip, and Ruby available:
+
+```sh
+python3 -m pip install -r requirements-docs.txt
+ruby api/scripts/generate-admin-api-guide.rb
+ruby api/scripts/verify-openapi.rb
+python3 scripts/prepare-docs.py
+python3 -m mkdocs build --strict
+python3 scripts/verify-docs-navigation.py
+```
+
+`mkdocs build` alone does not refresh generated API Markdown or assemble current sources. The configured `docs_dir` is `.docs-build`, not `docs`; skipping preparation can build stale staged content. The generator writes tracked API reference pages, so inspect their diff after changes to OpenAPI. The verifier is a static contract check, not evidence that a running API implements every route correctly.
+
+Preparation determines the repository root from the script's own location. It deletes the entire existing `.docs-build` tree and recreates it; do not place hand-authored content or valuable files there. It copies four root documents (`README.md`, `AGENTS.ROUNDTABLE.md`, `PROJECT.ROUNDTABLE.md`, `POLICIES.ROUNDTABLE.md`), every `*.md` recursively under `docs` and `api/docs`, and the explicit assets `api/README.md`, `api/openapi.yaml`, `api/examples/dashboard-fixtures.json`, and `examples/resume-briefing.md`. Original relative paths are preserved. Non-Markdown images, stylesheets, downloads, and other files under `docs` are not automatically included. Add asset-copy support deliberately before linking new local assets.
+
+This is a curated source pipeline, not an automatic secret scanner. Any Markdown added under either copied documentation tree becomes a build input, even without a navigation entry. Keep runtime dumps, credentials, private notes, and generated operational data outside those trees. Missing explicitly copied files or copy errors fail preparation after any earlier staging work; the staging tree is not atomically replaced.
+
+### CI triggers and publication evidence
+
+The `Documentation` workflow runs on pull requests, pushes to `main`, and manual dispatch. It uses Python 3.12 on `ubuntu-latest` and executes generation, contract verification, preparation, strict build, and navigation verification in order. Its concurrency group is `pages-${github.ref}`, with older in-progress runs for that ref cancelled when a new run starts.
+
+Pull requests build and validate without configuring Pages, uploading its artifact, or deploying. Non-pull-request builds configure Pages and upload `site`; deployment additionally requires exact ref `refs/heads/main`. A manual run on another branch can build/upload but does not satisfy that deployment condition. The deploy job depends on the build, uses the `github-pages` environment, and receives `pages: write` and `id-token: write` permissions; the workflow-wide content permission is read-only.
+
+A passing local build proves neither hosted CI success nor publication. Verify the particular workflow run and deployment output URL separately after a push. The Pages source setting must be GitHub Actions. Neither `site` nor `.docs-build` should be committed. The navigation verifier establishes common rendered labels/order/targets, not mobile appearance, keyboard accessibility, client-side search behavior, or availability at the deployed URL.
 
 ## Backups and maintenance
 
