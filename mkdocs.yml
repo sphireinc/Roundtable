@@ -8,7 +8,6 @@ theme:
   name: material
   features:
     - navigation.sections
-    - navigation.indexes
     - navigation.top
     - toc.follow
     - content.code.copy
@@ -32,16 +31,21 @@ nav:
       - Product Model: PROJECT.ROUNDTABLE.md
       - Architecture: docs/ARCHITECTURE.md
       - Agent Protocol: AGENTS.ROUNDTABLE.md
-      - Governance Policies: POLICIES.ROUNDTABLE.md
   - Getting Started:
       - Quickstart: docs/QUICKSTART.md
       - CLI Reference: docs/CLI.md
       - Configuration Reference: docs/CONFIGURATION.md
   - Runtime:
       - Orchestration: docs/ORCHESTRATION.md
-      - Claims: docs/CLAIMS.md
+      - Tasks and Assignments: docs/TASKS.md
       - Symbols: docs/SYMBOLS.md
-      - Proposals and Transactions: docs/TRANSACTIONS.md
+      - Governance:
+          - Governance Policies: POLICIES.ROUNDTABLE.md
+          - Claims: docs/CLAIMS.md
+          - Proposals and Transactions: docs/TRANSACTIONS.md
+          - Security Reviews: docs/SECURITY_REVIEW.md
+          - Human Approvals: docs/HUMAN_APPROVALS.md
+          - Tests and Evidence: docs/TEST_EXECUTION.md
       - Sessions and Resume: docs/SESSIONS.md
       - Agent Adapters: docs/ADAPTERS.md
       - TUI and Watch: docs/TUI.md

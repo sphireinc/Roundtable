@@ -26,7 +26,11 @@ The default is `.roundtable/mcp/roundtable.sock`. Keep it inside the project run
 
 ## Turn scheduling events
 
-An agent that has something time-sensitive to report or do requests the next turn with `agent.turn_request` (`run_id`, `agent_id`, `reason_md`). The request is recorded as a durable event, deduplicated while outstanding, and queued FIFO by request arrival. The Chair schedules only the next request and records `agent.turn_scheduled` with the request event ID. MCP is request/response, not unsolicited push: poll `table.watch` with the run ID and `after_event_id: 0`, then pass each response's `next_after_event_id` on the next poll until the matching `agent.turn_scheduled` appears. This cursor mode returns bounded events in ascending order with `has_more_events`, so a caller can drain every page without missing an event; calls without a cursor retain the recent-activity snapshot behavior. After finding the matching schedule event, call `agent.turn_start`; after completing the work call `agent.turn_complete`, allowing the Chair to advance the queue. Each lifecycle call requires `run_id`, `agent_id`, and positive integer `request_event_id` in both schema and runtime. Duplicate/out-of-order starts or completions are rejected. Requests do not interrupt a currently running external process or create a process; they coordinate MCP turn ownership only.
+An agent that has something time-sensitive to report or do requests the next turn with `agent.turn_request` (`run_id`, `agent_id`, `reason_md`). The request is recorded as a durable event, deduplicated while outstanding, and queued FIFO by request arrival. The Chair schedules only the next request and records `agent.turn_scheduled` with the request event ID.
+
+Poll `table.watch` with the run ID and `after_event_id: 0`, then pass each response's `next_after_event_id` on the next poll until the matching `agent.turn_scheduled` appears. This cursor mode returns bounded events in ascending order with `has_more_events`, so a caller can drain every page; calls without a cursor retain the recent-activity snapshot behavior. After finding the matching schedule event, call `agent.turn_start`; after completing the work call `agent.turn_complete`, allowing the Chair to advance the queue.
+
+Each lifecycle call requires `run_id`, `agent_id`, and `request_event_id`. The schema declares the ID as an integer with minimum 1. The handler converts numeric arguments through its integer helper before checking positivity and ownership; it does not independently reject fractional JSON numbers before conversion. Supply the exact positive integer returned by the request. Duplicate/out-of-order starts or completions are rejected. Requests coordinate MCP turn ownership and do not launch or interrupt external agent processes.
 
 ## Tool inventory
 
@@ -36,7 +40,7 @@ An agent that has something time-sensitive to report or do requests the next tur
 
 | Tool | Required arguments | Optional arguments / behavior |
 | --- | --- | --- |
-| `table.get_state` | none | Returns the current shared snapshot: runs, agents, tasks, claims, proposals, votes, decisions, blockers, approvals, transactions, and memories. |
+| `table.get_state` | none | Returns `runs`, `agents`, `tasks`, `claims`, `proposals`, `transactions`, `human_approvals`, `security_reviews`, and `memory` from local state. It does not return votes or decisions in this response; use their dedicated tools/related proposal reads. |
 | `table.watch` | none | `run_id`, `limit`; optional `after_event_id` enables cursor polling and returns `next_after_event_id`/`has_more_events`. Without a cursor, returns the recent event/transaction activity snapshot. It is not a blocking stream. |
 | `agent.turn_request` | `run_id`, `agent_id`, `reason_md` | Records a durable FIFO request; one outstanding request per agent. |
 | `agent.turn_start` | `run_id`, `agent_id`, `request_event_id` | Acknowledge only after the Chair emits a matching `agent.turn_scheduled` event. |
@@ -44,12 +48,16 @@ An agent that has something time-sensitive to report or do requests the next tur
 
 ### Tasks
 
+The registry schemas describe advertised fields; the local socket server dispatches parsed arguments directly to handlers without applying JSON Schema validation. Runtime checks, types, and defaults therefore determine the accepted behavior. Several handlers recognize extra ID/status fields not advertised in the registry; their detailed reference pages identify those implementation fields separately. Do not assume schema `required` alone establishes a server-side check or that unknown keys are rejected.
+
+Most string helpers accept only actual JSON strings and default only for missing/empty values, not whitespace-only values. Numeric integer helpers accept JSON numbers and truncate floating-point values; string numbers fall back to defaults. Boolean helpers accept actual booleans, with other types falling back. Turn lifecycle handlers check that the converted request ID is positive; the schema requires an integer, so callers should supply an integer rather than relying on numeric truncation. See each tool's behavior before constructing calls.
+
 | Tool | Required arguments | Optional arguments / behavior |
 | --- | --- | --- |
-| `task.create` | `title`, `body_md` | `priority`, `risk`, `assigned_agent_id`. Creates persisted work for the active run. |
+| `task.create` | `title`, `body_md` | `priority`, `risk`, `assigned_agent_id`. Stores shared local task state; see [Tasks and Assignments](TASKS.md) for defaults and handler-only fields. |
 | `task.get` | `task_id` | Fetch one task. |
-| `task.list` | none | Lists persisted tasks. |
-| `task.update_status` | `task_id` | `status`, `assigned_agent_id`. Updates the task's status and/or assignment. |
+| `task.list` | none | Lists all local tasks ordered by priority, creation time, and ID; no run/workspace filter. |
+| `task.update_status` | `task_id` | Nonempty `status`/`assigned_agent_id` update those fields; empty values preserve them. See [Tasks and Assignments](TASKS.md). |
 
 ### Repository context and symbols
 
@@ -81,7 +89,7 @@ Conflict coverage and stale-claim rules are documented in [Claims](CLAIMS.md). C
 | `proposal.get` | `proposal_id` | Fetch one proposal. |
 | `proposal.list` | none | Filter with `task_id` and/or `status`. |
 | `proposal.request_review` | `proposal_id` | Requests relevant review records/agent work. |
-| `vote.cast` | `proposal_id`, `agent_id`, `vote`, `reason_md` | `confidence`. Vote strings and policy requirements are validated/evaluated by runtime policy. |
+| `vote.cast` | `proposal_id`, `agent_id`, `vote`, `reason_md` | `confidence`, default 0. Requires an existing proposal but stores nonempty vote strings and caller-provided agent IDs without role authentication or an enum check. Policy counts its recognized vote strings; other values do not contribute. |
 | `vote.list` | `proposal_id` | List recorded votes. |
 | `decision.record` | `decision`, `rationale_md`, `decided_by` | Optional `proposal_id`, `task_id`. Persists a decision record. |
 | `patch.validate` | `proposal_id` | Reports claim, diff, resource coverage, temporary-apply, policy, human approval, and security-review results. |
@@ -94,11 +102,13 @@ The exact apply flow and non-atomic failure boundaries are described in [Proposa
 
 | Tool | Required arguments | Optional arguments / behavior |
 | --- | --- | --- |
-| `human.request_approval` | `subject`, `reason_md` | `approval_id`, `proposal_id`, `task_id`, `requested_by`, `status`, `decision_md`, `decided_by`, `override_policy`. Creates or updates an approval record; it does not cause a human to approve automatically. |
+| `human.request_approval` | `subject`, `reason_md` | `approval_id`, `proposal_id`, `task_id`, `requested_by`, `status`, `decision_md`, `decided_by`, `override_policy`. Creates/replaces an approval record with caller-supplied decision fields. See [Human Approvals](HUMAN_APPROVALS.md) for selection and identity limits. |
 | `human.approval_status` | `approval_id` | Returns persisted status. |
-| `security.review` | none | Optional `review_id`, `proposal_id`, `resource_id`, `task_id`, `reviewer_id`, `status`, `summary_md`; invokes/records a security review according to the service. |
+| `security.review` | At least one of `proposal_id` or `resource_id` at runtime | Optional `review_id`, `task_id`, `reviewer_id`, `status`, `summary_md`. A proposal with omitted/empty status runs the automatic patch scan; supplying status records a manual review and skips scanning. A resource-only review with omitted status defaults to `approved`. See [Security Reviews](SECURITY_REVIEW.md) for fields, heuristics, selection order, and trust limits. |
 
 ### Tests
+
+See [Test Execution and Evidence](TEST_EXECUTION.md) for suggestions, execution status, log persistence, and failure handling.
 
 | Tool | Required arguments | Optional arguments / behavior |
 | --- | --- | --- |
