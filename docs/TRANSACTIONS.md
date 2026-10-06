@@ -69,6 +69,26 @@ Validation reports separate results for:
 
 The returned `valid` field covers claim validation, artifact presence, patch parsing, resource coverage, and successful temporary apply. Policy approvability and security/human gates are reported separately and are enforced again by `patch.apply`.
 
+### Validation Response Interpretation
+
+The handler requires nonempty `proposal_id` and returns an error for failed proposal/resource/vote/approval/security-record reads. Claim, patch-parser, coverage, and temporary-apply errors are instead carried in the successful result envelope. Read every relevant field rather than equating transport `ok: true` with `valid: true` or apply authorization.
+
+| Field | Meaning and limitation |
+| --- | --- |
+| `proposal`, `proposal_resources` | Separately loaded stored metadata/links, not an immutable patch-version snapshot. |
+| `patch_exists` | `os.Stat` succeeded for the joined artifact path; any stat error makes it false. This does not prove regular-file type or successful read. |
+| `patch_files`, `patch_parse_error` | Parsed touched paths and parser error text. Missing artifact skips parsing, leaving empty/nil paths and an empty error. |
+| `claims_valid`, `claim_error`, `stale_claims` | Claim validator outcome and stale-claim evidence; not authentication of the supplied/stored author. |
+| `resource_coverage`, `resource_error` | Coverage validator outcome when parsing succeeds. If skipped, nil error still yields true; it is not an independently executed-check marker. |
+| `temp_apply_error` | Copy/executor error if parsing and coverage succeed. Empty also occurs when skipped, so it is not sufficient proof of a completed dry run. |
+| `policy` | Runtime policy evaluation using stored risk, parsed paths, and stored votes. It can still be evaluated with no parsed paths after an artifact failure. |
+| `human_approvals`, `human_approval`, `human_approval_applied` | All proposal approvals plus the selected satisfying record/boolean under runtime rules, not a newly requested or verified human action. |
+| `security_reviews`, `security_review` | Stored history and latest selected review, not an automatic scan performed by validation. |
+| `security_review_required`, `security_review_satisfied` | Separate runtime gate; satisfied defaults true when review is not required. |
+| `valid` | Conjunction of no claim error, artifact stat success, no parser error, no coverage error, and no temporary-apply error. Excludes policy/human/security acceptance and tests. |
+
+If stat succeeds but reading fails, the read error is not returned directly: patch text remains empty and later parser/executor behavior supplies the failure evidence. This path has no dedicated `patch_read_error` or executed/skipped status per stage. Validation does not itself persist a test run, phase, validation revision, or main event, and does not update proposal status. It reads current state across several queries/filesystem operations rather than under one snapshot or lock. HTTP staged validation maps this result into its own projection and persists a separate test record; see [Tests and Evidence](TEST_EXECUTION.md).
+
 ## Apply sequence
 
 ### Temporary Workspace Copy
