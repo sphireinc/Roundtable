@@ -65,6 +65,21 @@ go run ./cmd/roundtable run --root . --run RUN_ID --resume
 
 Use `roundtable table`, `roundtable watch`, `roundtable claims list`, and `roundtable mcp inspect` to inspect persisted state and the generated tool surface. See the [CLI Reference](CLI.md) for flags and subcommands.
 
+## Before Connecting Participants
+
+1. Confirm the intended root and inspect `.roundtable/config.yaml`, especially database and socket paths. Runtime configuration, HTTP flags/settings, and browser build variables are separate channels; pointing one component at a checkout does not align all others automatically.
+2. Record current repository status and preserve existing uncommitted work. Initialization does not create a clean Git baseline, and patch application is not atomic across filesystem changes and database/artifact persistence. Do not start by resetting or deleting runtime state to make the workspace look clean.
+3. Confirm there is one intended listener at the configured socket pathname and that its parent/socket permissions restrict access to trusted participants. Startup recursively removes that pathname before listening; it does not verify that an existing target is merely a stale socket. Never use a valuable file/directory as the socket path.
+4. Review the [MCP transport](MCP_TOOLS.md) and its authority: it is a local Roundtable protocol without per-tool principal authentication, not a standards-complete MCP server or OS sandbox. A connected caller can invoke implemented mutating tools. Agent protocol expectations must also be enforced through the surrounding trusted account/process setup.
+5. If using the separate HTTP service, review [authentication limitations](../api/README.md#authentication-and-authorization) before sharing either token. An agent token is not currently a reliably isolated human-control boundary. Do not start the publicly mapped Compose service with empty credentials on a shared network or put privileged tokens in browser public variables.
+6. Keep the run ID and database association explicit when requesting turns. A standalone socket server accepts tool calls but does not tick the scheduler; headless single-cycle mode does not provide a continuously listening interactive coordinator. Turn scheduling does not launch external CLI agents.
+
+### Interpreting the First Successful Run
+
+A successful bounded headless invocation proves only that its configured coordinator cycles returned without an unrecovered error; it can stop at the iteration limit while the stored run remains active. Inspect persisted run/task/proposal status separately. A no-task interactive run intentionally waits for incoming work. Initial agent/capability records, a visible TUI, and a bound socket do not prove provider execution, passing tests, approved patches, or complete convergence.
+
+Use [Tasks](TASKS.md) to create authoritative task records rather than assuming Markdown task files were imported. Use [Tests and Evidence](TEST_EXECUTION.md) to interpret result status separately from tool-envelope success. Before any apply, review current claims, proposal artifact/resources, policy/security/human gates, and existing work; use [Transactions](TRANSACTIONS.md) for the exact sequence and uncertain-failure recovery. This quickstart does not perform a live provider integration or acceptance test for you.
+
 ## Data and safety
 
 The default database is `.roundtable/roundtable.db`; the MCP socket is `.roundtable/mcp/roundtable.sock`. Treat this directory as project-local runtime state and do not commit its database, socket, WAL, SHM, patch artifacts, or secrets. Agents use the MCP surface; they must not write directly to the authoritative repository. Read the [Agent Protocol](../AGENTS.ROUNDTABLE.md) and [Governance Policies](../POLICIES.ROUNDTABLE.md) before connecting an agent.
