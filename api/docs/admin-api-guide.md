@@ -4,11 +4,11 @@ This guide is generated from [`api/openapi.yaml`](../openapi.yaml). Regenerate i
 
 ## Shared contract
 
-- Responses are JSON; errors are RFC 7807 `application/problem+json` with `request_id` and `code`.
-- Every response includes `X-Request-ID`; pass `X-Correlation-ID` to connect a human action to downstream events.
+- Ordinary handler responses are JSON; structured handler errors use RFC 7807 `application/problem+json` with `request_id` and `code`. Audit exports also support CSV/NDJSON, metrics use text, and WebSocket upgrades use their own protocol. Router, middleware, and transport failures need not share the handler error shape.
+- Request middleware assigns `X-Request-ID` to ordinary HTTP responses; pass `X-Correlation-ID` for request-log correlation. Hijacked WebSocket handshakes and downstream persisted events have separate propagation boundaries; do not assume every protocol message or event carries these IDs.
 - Mutations commonly require `X-Actor-ID` and, for human-only actions, `X-Actor-Role`. When bearer tokens are configured, requests must also use the matching human or agent token; header-only mode is for loopback development, not remote authentication.
 - Mutations that can be retried declare `Idempotency-Key`; body-bearing mutations replay the original response, while empty-body lifecycle transitions are re-evaluated.
-- Collection pages use `limit` (maximum 200) and opaque `cursor` values. Never construct a cursor.
+- Pagination is endpoint-specific: offset, keyset, and decimal-ID cursors coexist, and some collections are unpaginated. Consult [Pagination](pagination.md), preserve returned cursors, and check documented implementation mismatches before assuming a universal protocol.
 - Permission and idempotency columns summarize OpenAPI metadata; check each handler for runtime authorization details. Many governance writes group state and audit/outbox records in a SQLite transaction, but this is not guaranteed for every route or filesystem mutation.
 - Browser state-changing requests with an Origin header must match an allowed CORS origin. Default origins and loopback binding are described in `api/README.md`.
 

@@ -65,3 +65,39 @@ A passing local build proves neither hosted CI success nor publication. Verify t
 ## Backups and maintenance
 
 Use the API maintenance endpoints and [Maintenance Guide](../api/docs/maintenance.md) for supported database backup/retention procedures. Do not copy only the main SQLite file while WAL writes are active; use the supported SQLite backup path or stop writers first. Keep a tested restore procedure and protect the database, its WAL/SHM sidecars, patch artifacts, auth material, and external session metadata.
+## Developer Verification Scope
+
+This repository has a root `go.mod` declaring Go 1.26.0 and no Makefile. The runtime and API Go packages belong to that one module; there is no separate `api/go.mod`. Run Go commands from the repository root:
+
+```sh
+go build ./...
+go test ./...
+go vet ./...
+go test -race ./...
+```
+
+These are distinct checks, not interchangeable evidence. Build checks compilation; tests execute the Go test suite; vet performs its static diagnostics; race tests instrument executed test paths for data races. A successful race run does not prove unexecuted concurrent paths safe. The SQLite dependency uses `github.com/mattn/go-sqlite3`, so use a compatible C toolchain and CGO-enabled environment for meaningful database execution. Toolchain/dependency downloads and platform permissions can affect these commands independently of product behavior.
+
+Root Go tests include API packages but do not run the Next.js UI build, frontend unit tests, Playwright browser suite, OpenAPI verification, or MkDocs navigation checks. Run those documented toolchains separately. Tests using temporary databases or local HTTP servers are not proof that a deployed service, remote agent CLI, container mount, or GitHub Pages publication works. Record the command, platform, revision, and relevant live-service configuration when reporting acceptance.
+
+The current `.github/workflows` directory contains the documentation workflow, not a general runtime/API/UI CI workflow. Local success must not be presented as hosted CI evidence for those components. Documentation build validation likewise does not certify runtime behavior or comprehensive feature coverage.
+## Documentation Site Configuration
+
+`mkdocs.yml` is the authoritative site and navigation configuration. Site name is `Roundtable Documentation`; description is `Product, runtime, API, and operations documentation for Roundtable.` Sources are assembled under `.docs-build`, output is written to `site`, and `use_directory_urls: true` produces directory-style page URLs. Edit original Markdown and configuration, not these generated output directories. The configuration does not set a canonical `site_url`, repository/edit links, custom CSS/JavaScript, analytics integration, locale, or theme color palette.
+
+The Material theme enables `navigation.sections` (grouped sidebar sections), `navigation.top` (back-to-top control), `toc.follow` (following the active in-page heading), and `content.code.copy` (code-block copy controls). Navigation indexes, instant navigation, navigation tabs, and expansion of every branch are not enabled here. The page table of contents is distinct from the shared left navigation: current-page headings can differ while the same logical navigation tree is retained.
+
+Markdown extensions are admonitions, attribute lists, definition lists, tables, a table of contents with heading permalinks, collapsible details, SuperFences, and alternate-style tabbed content. Their availability does not mean arbitrary embedded HTML or scripts are safe to publish. Search is not explicitly configured in this file; do not describe custom indexing, ranking, or access-control behavior that the repository has not configured.
+
+The central `nav` tree groups Product, Getting Started, Runtime, Agent Interface, HTTP API, Web UI, and Operations. Runtime has nested Governance and Database groups. Labels and ordering come from this single tree, not duplicated per-page menus. Add new public pages to the appropriate group and retain existing nesting instead of introducing a page-specific sidebar. The navigation verifier checks the rendered common tree across pages; it does not certify mobile layout, keyboard interaction, visual wrapping, search behavior, or documentation completeness.
+
+Preparation recursively copies Markdown from `docs/` and `api/docs/`, plus four named root documents and explicitly selected API/OpenAPI/example assets. It does not copy arbitrary images, scripts, source trees, task packs, or all examples. A newly referenced non-Markdown asset needs an intentional preparation-rule update; merely placing it beside a source page does not make it available in the assembled site. Preparation preserves relative source paths and replaces the entire staging directory each run. Always rerun preparation after source edits before claiming a fresh build result.
+### Navigation Verification Contract
+
+Local browser spot-check on 2026-10-06: Chrome rendered the project overview with grouped desktop navigation, expanded Runtime/Governance, and followed Claims into its nested page while retaining the shared groups. At a 390-by-844 viewport, Claims content reflowed and the navigation drawer displayed the Governance submenu with readable links. The temporary viewport override was reset afterward. This is representative local browser evidence, not an exhaustive all-page interaction test, keyboard/accessibility audit, or verification of the published GitHub Pages deployment. The separate static verifier covers configured label/target uniformity across every rendered page.
+
+Run `python3 scripts/verify-docs-navigation.py` after preparation and site build, with PyYAML available in that Python environment. The verifier reads root `mkdocs.yml`, requires directory URLs, maps README/index sources to directory `index.html` outputs, and checks every configured page exists. It then scans **all** rendered HTML files under the configured site directory, including error pages, not only pages listed in navigation.
+
+For each page it requires exactly one Material primary navigation element and compares the normalized sequence of labels and resolved link targets against the central navigation configuration. Group labels are included as entries without targets. It excludes the secondary in-page table of contents and rejects sidebar links pointing off-site or to fragments. Relative links are resolved against each rendered page; whitespace in labels is normalized. Missing output, no rendered pages, unexpected targets, or mismatches produce a nonzero exit with diagnostic page names.
+
+This check proves consistent labels, ordering, group entries, and destinations in parsed HTML. It does not independently compare DOM nesting depth, CSS presentation, expanded/collapsed state, active-page highlighting, accessibility semantics, mobile drawer behavior, or keyboard focus. A flat sequence alone cannot prove a visually usable hierarchy. Keep the central nested `nav` configuration and perform desktop/mobile browser inspection before claiming the full sidebar requirement is accepted. Counts printed by the script describe the current build and must be refreshed after adding pages.

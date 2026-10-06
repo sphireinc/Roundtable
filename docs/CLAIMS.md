@@ -56,6 +56,37 @@ Despite the name, stale-claim reconciliation does not use agent-session heartbea
 
 For each selected claim it reloads the resource, computes the current content hash, and persists that resource hash even when no suspension follows. Missing resource rows or propagated hash/storage errors abort the operation after any earlier changes. An empty current hash leaves the claim active; it is not a verified unchanged result. Symbol reconciliation attempts to rediscover the named declaration, but indexing failure or a missing name retains the previously stored span. Consult [Symbol Index](SYMBOLS.md) before treating that span as a precise semantic boundary.
 
+## HTTP Claim Acquisition and Transitions
+
+Claim list/detail require exact stored `claims.workspace_id` membership; legacy unbound rows are not automatically assigned to the URL workspace. Lists load all claims before membership queries and offset pagination. They do not filter by status, agent, or expiry. Resource lookup errors are ignored when building responses, potentially leaving type/path/symbol empty. Response session ID is not populated, even though creation accepts a `session_id` input. Rationale receives text redaction; resource metadata and identifiers are returned without equivalent independent redaction.
+
+HTTP creation requires exact `X-Roundtable-Orchestrator: true` plus a nonblank trimmed idempotency key, in addition to common authentication. The header is a supplied marker, not a verified coordinator process identity. Agent/task/resource-type/path/mode are trimmed; required fields are agent, task, resource type, and mode. Nonempty path undergoes lexical workspace-relative checks but not symlink resolution. Agent/task/session/run associations are not verified here. The local claim service performs acquisition with its documented conflict and persistence limitations, then a separate SQL update binds the claim to the URL workspace. Binding failure returns `claim_persist_failed` after acquisition has already occurred. Session ID input is ignored. Service errors use `claim_conflict`, with HTTP 400 selected by error-text fragments `required`/`invalid`, otherwise 409.
+
+Transitions accept the raw nonempty actor header exactly matching claim agent ID, or a human-authorized caller, plus a nonblank idempotency key. This owner comparison uses supplied attribution, not independently verified ownership credentials. Actions are `extend`, `release`, and `force-release`. Force-release uses the same owner/human boundary and release service as ordinary release; it adds a required nonblank `reason` query parameter, not a distinct force-override permission check. It does not revoke via a separate service path.
+
+Extend reads optional body `ttl_seconds` but ignores body decode errors, so malformed/empty input can use the service's default TTL. Ordinary release may have no reason; query reason is text-redacted before the service call. These operations inherit the local service's transition/renewal behavior. Their emitted service-event run label is supplied as the claim's task ID, not an independently resolved run or workspace. Failures use `claim_transition_conflict` and can occur after a service write.
+
+Non-owner transitions attempt an extra audit insert with `forced: true`, ignoring its error. That insert uses the raw query reason rather than the text-redacted service reason. Owner transitions do not make that additional audit record. Re-read current claim state and do not infer complete audit coverage, actual process ownership, or an automatic contention resolution from HTTP success.
+
+## HTTP Contention Listing and Resolution
+
+Contention listing resolves the workspace, reads local `claim_contentions` joined to the challenged claim, then filters by the challenged claim's workspace membership. Optional `resource_id` is exact and untrimmed; there is no status filter. Rows are ordered oldest creation time then ID, loaded before shared offset pagination (default 50, limits 1 through 200). A missing challenged claim can cause a null-to-string scan failure rather than being silently omitted. Query/scan failures return `contention_list_failed`; final iteration errors are not separately checked.
+
+Items include contention/workspace/resource IDs, requested resource/agent/task/mode/path, challenged claim and current owner agent, contention state/reason, creation time as `acquired_at`, current challenged-claim expiry as `lease_expires_at`, and `allowed_resolutions`. The acquisition timestamp describes the contention record, not necessarily the owner's original lease acquisition. The list does not apply general payload or text redaction to these fields. Every row advertises `keep_owner`, `transfer`, `extend_lease`, and `reject_contender`, even when already resolved; this is a static list, not a current authorization or feasibility verdict.
+
+Resolution requires human authorization, a nonblank trimmed `Idempotency-Key`, and JSON `resolution` plus optional `reason`. Resolution names must match exact strings; whitespace and case are not normalized. `split` and `narrow` are recognized but return 409 `resolution_not_supported` because resource-specific semantics are absent. Unknown/empty input returns `invalid_resolution`. Lookup selects a contention whose resource appears among this workspace's claims, a different scope check from the list's challenged-claim membership check. Lookup failures return `contention_not_found`; a status other than exact `open` returns 409 `contention_already_resolved`.
+
+| Resolution | Actual effect |
+| --- | --- |
+| `keep_owner` | Marks contention resolved; leaves the challenged claim unchanged. |
+| `reject_contender` | Marks contention resolved; does not create or separately reject a requested claim. |
+| `transfer` | For an active challenged claim, overwrites agent ID, task ID, and claim type with stored requested values. Keeps the same claim/resource ID, expiry, base hash, heartbeat, and other lease metadata. Does not validate the new participant, requested mode, or overlapping claims again. |
+| `extend_lease` | For an active challenged claim, sets expiry to now plus 15 minutes, not old expiry plus 15 minutes. Does not check renewable flag, refresh heartbeat, or accept a caller TTL. Can shorten a longer lease. |
+
+Claim updates, contention resolution, and `claim.contention_resolved` audit insertion share one SQL transaction. The update statements do not check affected-row counts: a claim that is no longer active can remain unchanged while the contention is reported resolved, and concurrent resolvers are not ruled out solely by the earlier open-state read. Transaction-begin failure returns HTTP 500; later SQL/commit failures return HTTP 409 `contention_resolution_failed`. The optional reason is text-redacted in audit fields, not stored as a new claim rationale.
+
+After commit, a separate main event is attempted and its error ignored. HTTP 200 returns contention ID, `state: "resolved"`, and resolution, not a reloaded claim or proof of event delivery. No filesystem ownership enforcement, agent notification, automatic scheduling, new requested-resource lease, or patch application follows from this handler. Re-read claim state and inspect current conflicts before the contender continues governed work.
+
 ## Safe usage sequence
 
 1. Read current table, assigned task, and claim status.

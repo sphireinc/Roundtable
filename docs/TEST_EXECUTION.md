@@ -43,3 +43,21 @@ A command failure is represented by the saved `failed` status; it is not itself 
 Associations label the result but do not establish that the executed command tested the current proposal revision. The handler stores no patch hash or repository revision binding. Record the command, environment, tested revision, scope, and timing in review evidence, and repeat relevant tests after changes. A successful shell command establishes only that command's result; it does not establish browser, external-provider, or whole-project acceptance.
 
 See [MCP Tools](MCP_TOOLS.md), [Proposals and Transactions](TRANSACTIONS.md), and [Database](DATABASE.md).
+## HTTP Proposal Validation Stages
+
+The HTTP proposal-validation handler requires human authorization, a nonblank trimmed `Idempotency-Key`, and a workspace-owned proposal. Optional JSON `stages` accepts exact `patch_parse`, `apply_dry_run`, `static_checks`, `tests`, `policy`, and `stale_base`. An empty selection defaults to patch parsing, dry run, policy, and stale-base checks. Body decode errors are ignored, so malformed input can fall back to defaults or leave partially decoded fields rather than produce a uniform bad-body response. Unknown stage names return `invalid_validation_stage`.
+
+The handler synchronously calls the runtime proposal service's `PatchValidate` regardless of stage selection, then projects the requested results. Stage selection does not selectively disable that underlying service's validation work. If the service returns an error, overall status becomes `failed`, its text-redacted error is returned as output, and the stage map remains empty. Otherwise any requested stage whose `passed` value is false fails the overall result.
+
+| Stage | HTTP interpretation |
+| --- | --- |
+| `patch_parse` | Requires service `patch_exists == true` and empty `patch_parse_error`. |
+| `apply_dry_run` | Requires empty service `temp_apply_error`; not a real-worktree patch application. |
+| `policy` | When service policy is an object, accepts `approvable == true` **or** literal summary `no policy blockers`; otherwise falls back to `claims_valid == true`. |
+| `stale_base` | Inspects current repository HEAD using a background context, ignoring inspection errors. Empty proposal base passes; otherwise exact HEAD equality is required. |
+| `static_checks` | Executes only `git diff --check` in the current workspace root. Not a general linter/static-analysis suite. |
+| `tests` | Executes only `go test ./...` in the current workspace root. In this repository's single Go module that includes API Go packages. Does not apply the proposed patch first or run UI tooling automatically. |
+
+Static checks and tests use inherited process environment, a fresh background context with a 30-second timeout per command, and combined stdout/stderr. They are not cancelled by the request context through this helper. Output is collected fully in memory before truncation to the first 8,192 bytes and text redaction; the cap is not a bounded process-output buffer. There is no command customization, sandbox, network restriction, resource quota, exit-code field, or timeout-specific status in this stage projection. Executing repository tests can execute arbitrary repository code. Duplicate requested stages can run commands repeatedly even though the result map retains only the final value under that stage name.
+
+Response fields are validation run ID, proposal ID, overall `passed`/`failed` status, start/completion timestamps, stage map, an empty `commands` map, and optional service-error output. HTTP 202 is returned **after** validation and persistence finish; it does not identify an asynchronous job or polling handle. Failed validation can still return 202. A `test_runs` row is saved with command label `proposal validation stages`, overall status, and serialized stage summary; no log file is created here. Persistence failure returns HTTP 500 `validation_persist_failed` after any command execution has already occurred. This handler does not apply a patch or atomically commit validation, filesystem state, and governance events.
