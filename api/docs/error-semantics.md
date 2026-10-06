@@ -1,8 +1,11 @@
 # API error and retry semantics
 
-Every error is RFC 7807 `application/problem+json` and includes the request ID
-in both the `X-Request-ID` header and `request_id` body field. Conflict responses
-may include machine-readable `metadata` for the UI.
+Ordinary errors emitted through the problem helpers use RFC 7807
+`application/problem+json`, with the effective request ID in the header and
+`request_id` body field. This is not universal: blocked branch switches return
+the preflight object, router-generated errors can use plain text, and WebSocket
+failures after upgrade cannot become ordinary HTTP problem responses. Conflict
+problems may include machine-readable `metadata` for the UI.
 
 Stable codes include `invalid_*`, `*_not_found`, `authentication_required`,
 `forbidden`, `workspace_revision_conflict`, `invalid_*_transition`,
@@ -19,10 +22,30 @@ different payload is a typed `409 idempotency_key_reuse` conflict. A new key
 must not be used to blindly repeat repository or transaction mutations until
 the client has inspected the returned conflict metadata.
 
-Read-only `GET` requests are safe to retry. High-impact `POST`, `PATCH`, and
-`DELETE` mutations require `Idempotency-Key` where declared by OpenAPI;
-preflight, validation, and diagnostics requests are also keyed because they
-can create persisted records or events.
+Read-only `GET` requests can be retried, but may observe newer state. Mutation
+key requirements are handler-specific; OpenAPI declarations are not independent
+enforcement. For example, settings preflight/update and notification acknowledgment
+do not require a key in their handlers, while proposal validation and agent
+diagnostics do. Inspect the endpoint's implementation-grounded reference before
+assuming a request requires or benefits from replay caching.
+
+## Shared JSON Decoding
+
+Handlers that call `decodeJSON` use Go's JSON decoder over `io.LimitReader` with a 1 MiB (`1 << 20` bytes) read limit and `DisallowUnknownFields`. This rejects unknown fields when decoding typed structs, but does not reject arbitrary keys in map-based settings inputs. It is not full OpenAPI/JSON Schema validation: required fields, enums, ranges, identity associations, and permissions depend on each handler's subsequent checks. The decoder does not inspect `Content-Type` or demand an Accept header.
+
+It decodes one value, then requires a second decode to return EOF. Additional JSON values or malformed trailing data within the limited view produce `request body must contain one JSON object`. That error wording does not enforce an object root independently: decoding JSON null into a struct can succeed with zero fields, and map targets accept null; handler validation determines what happens next. Struct field matching follows Go JSON rules, including case-insensitive matches and later duplicate-key updates, rather than strict schema property matching.
+
+The limit is **not** `http.MaxBytesReader`, does not detect every oversized body, and does not drain/reject all remaining transport bytes. A valid first value followed by sufficient whitespace to exhaust the limited reader can appear complete even with additional bytes beyond it. A value truncated inside the limit normally fails JSON decoding. There is no common automatic HTTP 413 response: handlers select their own problem code/status, and some intentionally ignore decode errors and use defaults. Keyed requests can already have their full body buffered by idempotency middleware before this decoder runs. Do not treat 1 MiB as an end-to-end memory or request-size protection.
+
+Handlers that never call the decoder ignore supplied JSON options. An empty body normally produces EOF at the initial decode, but some lifecycle actions accept it because they do not decode, and some validation/run actions ignore that error. These are endpoint-specific behaviors, not a universal empty-object substitution rule.
+
+## Actor and Request Attribution
+
+The generic `authorized` helper checks only that trimmed `X-Actor-ID` is nonempty. It does not look up an agent/human record, establish ownership, inspect role, or verify that the ID belongs to a bearer token. The separate `humanAuthorized` helper additionally accepts normalized roles `human`, `admin`, `chair`, `view`, `operate`, `approve`, `govern`, `administer`, and `force-override`. Thus even role label `view` satisfies that helper; it is not a granular privilege hierarchy. Common security middleware remains a separate boundary, and cached-response bypass limitations are described below.
+
+Both helpers inspect original headers rather than the authenticated actor context. Accepting an agent token changes context identity to agent but leaves a supplied human-role header intact; that request can still pass `humanAuthorized`. An allowlisted header is therefore not proof of authenticated human kind. See [Authentication and Authorization](../README.md#authentication-and-authorization) for this known boundary defect. Do not use generated permission labels or successful bearer authentication alone as evidence of endpoint-level privilege isolation.
+
+Request-ID middleware trims a supplied `X-Request-ID` and replaces it when empty, longer than 128 bytes, or containing CR/LF. Generated IDs are `req-` plus 16 random bytes encoded as hexadecimal, with Unix-nanosecond fallback on random-source failure. The effective ID is placed in response headers and request context; the original request header is not rewritten. A handler reading the raw incoming header can therefore persist attribution different from the effective context ID. Request IDs are correlation labels, not idempotency keys or verified actor identities.
 
 ## Exact idempotency scope
 

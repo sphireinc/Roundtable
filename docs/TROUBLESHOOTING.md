@@ -61,3 +61,35 @@ Briefings are assembled from current local rows, not frozen session-start snapsh
 ## Test tool returns success with a failed test
 
 The tool envelope reports successful command execution/persistence handling, not a passing test verdict. Read `test_run.status`: a command failure is stored as `failed` while the tool can still return `ok: true`. Missing or unreadable saved log files can yield empty log text without a tool error. Results are not bound to a patch hash or repository revision, and patch application does not automatically run expected tests. See [Tests and Evidence](TEST_EXECUTION.md).
+
+## API returns an error after a mutation
+
+A 409/5xx, timeout, or disconnected client does not establish rollback. Runtime patch application mutates files before completing artifact/database persistence. Branch switching can change Git before recording workspace revision and attempts only best-effort restoration on failure. Notification acknowledgment can save read state before a failed reload; diagnostics can persist a test row before failing event insertion. Preserve the response/request IDs and inspect the relevant files, entity rows, audit/outbox, and artifacts before retrying. Do not change keys merely to bypass a cached conflict. See [Transactions](TRANSACTIONS.md), [Repository Control](../api/README.md#repository-status-and-branch-control), and [Retry Semantics](../api/docs/error-semantics.md).
+
+## Agent credentials can reach a human-labeled control
+
+This is a known HTTP authorization limitation, not evidence that the agent acquired human consent. Security middleware assigns agent identity in context, but the shared human helper reads the original role header. An accepted agent token with an allowlisted human-role header and actor ID can satisfy that helper. Do not distribute agent credentials assuming narrow read-only authority. Restrict both token types to trusted participants and inspect raw actor/decision provenance; changing an advertised role label does not repair the boundary. The current documentation records the defect rather than claiming it is fixed. See [API Authorization](../api/README.md#authentication-and-authorization). Local MCP socket trust is a separate boundary.
+
+## Saved settings disappear after another update
+
+Effective settings overlay only the latest workspace revision's one section onto defaults; they do not replay earlier section updates. Saving another section can make the prior section appear reverted, and a partial update does not inherit omitted keys from older revisions. Inspect the current version and raw revision history through trusted database access before resubmitting values. HTTP settings also do not rewrite runtime YAML, enforce loaded policy, or restart components. Governance confirmation tokens bind workspace/section/version, not proposed values. See [Settings](../api/docs/settings.md); do not infer applied runtime configuration from a successful save.
+
+## Deliberation or session says running but no agent executes
+
+HTTP deliberation start changes stored status without launching a provider, advancing rounds, or enforcing its budget/time metadata. HTTP session creation records `starting` without spawning a CLI. Check the actual runtime process, adapter execution path, and session evidence separately. A static readiness label or stored status is not a process probe. Do not repeatedly create sessions/deliberations to force execution. See [Deliberation Administration](../api/README.md#deliberation-administration), [Sessions](SESSIONS.md), and [Adapters](ADAPTERS.md).
+
+## Compensation proposal fails patch parsing
+
+HTTP compensation copies the transaction's rollback path into a high-risk pending proposal. Runtime rollback artifacts are JSON recovery entries, not unified reverse diffs, and that endpoint does not convert them or create affected-resource rows. Preserve the artifact, inspect current files for later work, and prepare a reviewed, valid patch through the governed workflow. Do not feed rollback JSON to Git or treat compensation creation as restoration. See [Transaction Control](TRANSACTIONS.md#http-transaction-control).
+
+## Notifications and badge counts disagree
+
+The actionable count includes only unread, unresolved rows marked exactly 1; the actionable list can include read-but-unresolved rows. Recipient filters use exact equality and do not automatically include broadcast `*`. Broadcast acknowledgment changes one shared row, not a per-user receipt. Marking read does not resolve the underlying approval or proposal. Verify recipient, read/resolution timestamps, and authoritative linked entity separately. See [Notifications](../api/docs/notifications.md).
+
+## Metrics scrape succeeds but the collector rejects it
+
+The current exporter emits HELP/TYPE declarations followed by bare numeric values rather than named metric samples. HTTP 200 therefore does not establish valid Prometheus ingestion. The counters are process-local, unlabeled, and updated after handler completion; they are not persisted governance statistics. Inspect the actual response and collector parsing evidence, and avoid building operational guarantees on the declared names alone. See [HTTP Observability](../api/README.md).
+
+## WAL is nonempty immediately after checkpoint
+
+Checkpoint does not stop writers, and its own subsequent audit insert can create new WAL content. A `completed` response with nonzero `busy` also does not prove truncation. Do not delete sidecars. A database backup excludes its own later creation audit and does not include external patch/log artifacts. Coordinate all writers and verify restoration separately. See [Maintenance](../api/docs/maintenance.md).
