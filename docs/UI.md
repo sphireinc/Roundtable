@@ -1,6 +1,6 @@
 # Web UI: Architecture and Scope
 
-The `ui/` directory is a Next.js 15 application using React 19, TypeScript, TanStack Query, and Zustand. The UI communicates with the separate HTTP API; it is not the Go terminal UI. API contract and service behavior are described in the [HTTP API guide](../api/README.md).
+The `ui/` directory is a Next.js application whose current manifest requests Next `^16.3.8`, using React 19, TypeScript, TanStack Query, and Zustand. The UI communicates with the separate HTTP API; it is not the Go terminal UI. API contract and service behavior are described in the [HTTP API guide](../api/README.md).
 
 ## Runtime configuration
 
@@ -141,3 +141,11 @@ Playwright discovers tests under `src/test/e2e`, uses base URL `http://127.0.0.1
 The current bootstrap suite checks explicit configuration/dashboard rendering, a retry affordance with a mocked 503 health response, and workspace/repository context with intercepted REST responses. The latter tests require a configured dashboard to reach their expected controls; the first permits either configuration-error or dashboard copy and does not by itself prove a usable configuration. Fixtures do not demonstrate real token authentication, branch switching, WebSocket payload reconciliation, data persistence, or complete feature-page behavior. Record mocked-browser, live-service, production-build, and manual accessibility results separately.
 
 Local `.env.local`, dependency installs, `.next`, test reports/results, and TypeScript build metadata are environment artifacts, not public documentation inputs. Avoid printing local environment contents when diagnosing configuration and do not commit secrets or generated outputs simply because a test created them.
+
+## Dependency Manifest and Lockfile
+
+The tracked `ui/package-lock.json` is the npm resolution record; the package manifest uses version ranges rather than exact pins. In the current checkout it locks Next 16.3.8, React 19.3.0, Vitest 5.0.1, and `eslint-config-next` 15.5.25. The lint package therefore remains on a different major from Next. This records source state, not a claim of compatible tooling or successful upgrade acceptance.
+
+For installation consistent with the tracked npm lock, use `npm ci` from `ui/`; it replaces the dependency installation and should be run only when that local replacement is intended. The documented scripts can be invoked with `npm run <script>`. A pnpm invocation uses its own resolution/lock behavior and is not proof that the npm-locked dependency graph was installed. Do not automatically stage local pnpm lock/workspace files or update both managers' records as a side effect of a documentation check.
+
+After pulling a manifest/lockfile change, an existing `node_modules` or `.next` tree can still represent older dependencies/build output. Record installed versions and the revision/environment used before attributing test results to the upgrade. Documentation builds do not install UI dependencies or run typecheck, lint, Vitest, Next production build, or Playwright. A dependency version bump alone is not evidence that these gates passed or that the browser/API integration works.
