@@ -111,3 +111,23 @@ These are implementation details of `parseYAMLInto` and `splitKV`, not promises 
 - Values are parsed directly into the default configuration. Omitted fields keep defaults; specifying only some fields on a custom adapter leaves its other fields at zero values (`false` or empty string), not built-in capabilities.
 
 For example, do not write `sqlite_path: .roundtable/db.sqlite # local database`: the inline comment would become part of the path. Prefer a comment on its own line.
+
+## Loader Diagnostics
+
+The loader returns the first encountered error, not an aggregate report. Parser diagnostics do not include a line number or a caret; structural errors can include the complete offending line. Preserve the source file and inspect indentation and section context when troubleshooting. Error text is not generally redacted by this parser, so avoid sharing diagnostics containing sensitive scalar values without review.
+
+| Diagnostic | Interpretation and next check |
+| --- | --- |
+| `read config: ...` | The fixed configuration path could not be read. Check the selected project root, existence, and permissions; this does not trigger a default-only fallback. |
+| `unsupported config indentation: ...` | Leading space count is odd. Use two-space levels, not tabs or a general YAML formatter that changes nesting. |
+| `invalid config line` | A nonblank/noncomment line has no colon separator. A YAML document marker such as `---` is not accepted as a document delimiter. |
+| `missing config key` | The text before the first colon is empty after trimming. |
+| `invalid config nesting near ...` | The line skips beyond the next permitted section level. Inspect preceding nonblank/noncomment lines, since they establish the section path. |
+| `unsupported config key: ...` | The computed ordinary scalar path is not supported. Check spelling and indentation, not merely the final key name. |
+| `invalid value for <path>: ...` | A recognized ordinary integer/boolean value failed Go conversion. Inline comments and single quotes remain in the value and can cause this. |
+| `unsupported adapter nesting: ...` | A scalar adapter path does not have exactly three segments. Check `adapters`, name, and field nesting. |
+| `unsupported adapter key: ...` | The adapter field is not one of the configured capability/command fields. |
+
+Adapter boolean conversion failures are returned directly from `strconv.ParseBool`, rather than wrapped with the ordinary `invalid value for <path>` prefix. The absence of a key-specific prefix does not imply a filesystem or adapter-process failure. `Load` returns an empty `Config` alongside a parse error rather than exposing the partially assigned default configuration; do not continue startup using that result.
+
+A successful load is syntax/conversion evidence only. It does not prove that counts are sensible, a version/transport is supported operationally, adapters exist, paths are contained or writable, commands can launch, or a resume pattern works. Diagnose these through their actual runtime surfaces and keep loader success separate from service readiness.
