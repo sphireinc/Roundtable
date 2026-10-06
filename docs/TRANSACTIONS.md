@@ -16,6 +16,16 @@ Creation writes `.roundtable/patches/<proposal-id>.diff` before proposal persist
 
 Unknown argument keys can reach this local handler but are not automatically stored: expected tests, rollback notes, HTTP base revision, workspace/substate fields, and caller-selected execution controls do not gain behavior merely by appearing in input. Creation does not request review, clear old acceptance evidence on ID reuse, run tests, create an approval, or append a dedicated creation event in this handler. Title/summary/patch content are not generally redacted. It returns saved `proposal` and `proposal_resources`; use explicit current validation and review before apply.
 
+### Declared Resource Merge and ID Interpretation
+
+Creation and attachment retain nonempty explicit IDs in input order, deduplicating exact strings, then append uncovered parsed file paths as `file:<path>`. IDs are not trimmed, case-folded, path-cleaned, or symlink-resolved. Explicit IDs remain unchanged as lease/link keys even if another spelling describes the same path.
+
+Exact `symbol:` IDs split at the first `#` into path and optional symbol name. Other IDs containing a colon split at the first colon into type/path; bare IDs become file metadata but retain the bare ID. Only parsed types `file`, `symbol`, and `directory` suppress automatic file insertion. A symbol suppresses insertion for its entire parsed file path without resolving the name or checking spans; final coverage can still fail.
+
+Directory matching is literal equality or prefix `directory-path + "/"`; an empty directory path covers every parsed path. Trailing slash is not removed. Thus `directory:src` suppresses insertion for `src/main.go`, whereas `directory:src/` also requires the automatically added `file:src/main.go`. Bare `src/main.go` suppresses insertion but requires ownership of that exact bare key, not `file:src/main.go`. This helper does not establish filesystem containment or least privilege.
+
+Resource-record creation skips IDs whose lookup succeeds, preserving existing metadata. Any lookup error, not only a confirmed missing row, instead leads to an upsert using metadata parsed from the ID and detected language. Per-resource writes are separate and can remain after a later failure. Existing metadata is not verified against ID spelling here; final coverage reads stored metadata, so an ID label alone is not authoritative scope evidence.
+
 ## Local Proposal Reads
 
 `proposal.list` accepts optional actual string `task_id` and `status`. Empty/missing or non-string values impose no filter; nonempty values compare exactly without whitespace trimming or case normalization. It loads all database proposals ordered by creation time then ID and filters in memory. There is no run/workspace/agent restriction, cursor, page size, newest-first mode, or automatic exclusion of terminal records. The response is `{proposals: [...]}` with an empty array when no matches survive, not a shared HTTP page envelope.
