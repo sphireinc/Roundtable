@@ -6,6 +6,16 @@ Agents submit patch-bearing proposals. Roundtable records proposal metadata and 
 
 `proposal.create` stores task/agent/title/summary/risk, affected resources, expected tests/rollback notes, and a patch artifact beneath `.roundtable/patches/`. `proposal.attach_patch` can attach or replace patch content for an existing proposal. Review requests, votes, decisions, security reviews, and human approvals are persisted separately. Proposal status is updated through proposal/patch operations; exact eligible states and gates should be read from the service, not inferred from the design task pack.
 
+## Local Proposal Reads
+
+`proposal.list` accepts optional actual string `task_id` and `status`. Empty/missing or non-string values impose no filter; nonempty values compare exactly without whitespace trimming or case normalization. It loads all database proposals ordered by creation time then ID and filters in memory. There is no run/workspace/agent restriction, cursor, page size, newest-first mode, or automatic exclusion of terminal records. The response is `{proposals: [...]}` with an empty array when no matches survive, not a shared HTTP page envelope.
+
+The underlying list selects ID, task/agent IDs, title, summary Markdown, patch path, status, risk, and creation time. It does not populate the newer HTTP control-plane substates, workspace metadata, base revision, or validation summary merely because those database columns exist. Local stored-record serialization is distinct from the HTTP response schema; do not infer field parity from shared tables. List query, scan, and final iteration errors propagate rather than returning a verified empty result.
+
+`proposal.get` requires a nonempty string proposal ID, loads that record by ID, and separately reads its resource links sorted by resource ID. It returns `proposal` and `proposal_resources`; an empty association slice can be null. The links contain proposal/resource IDs, not expanded resource definitions, claims, or symbols. A resource-read error fails the call after proposal lookup. These independent reads are not an atomic snapshot.
+
+Neither read validates artifact existence, downloads patch bytes, redacts all stored metadata, recalculates policy, loads votes/decisions/security/human/test evidence, or proves current apply eligibility. Use the corresponding tools and current validation for those tasks. Proposal path/status metadata alone is not proof of a readable patch or a completed transaction; HTTP list/detail membership and pagination are separately described below.
+
 ## Local Patch Attachment and Replacement
 
 `proposal.attach_patch` requires actual nonempty string `proposal_id` and `patch`, loads the proposal by ID, parses touched files, merges optional `affected_resources` with parsed file resources, and validates those claims against the **stored proposal author**. It does not authenticate that the caller is that author or require a pending/in-review proposal status. Whitespace is not independently trimmed by these required-string checks. Malformed patch/resource arguments or missing claims fail before the file write; this is not full apply validation, policy acceptance, or test execution.
