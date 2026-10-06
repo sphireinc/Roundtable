@@ -60,7 +60,7 @@ Use `approve`, `approve_with_notes`, `revise`, `reject`, `veto`, or `abstain` as
 
 Validation reports separate results for:
 
-1. The proposal's active-claim validation for its declared affected resources.
+1. The author's active-claim freshness scan, followed by exact ownership checks for declared affected resources.
 2. Patch artifact existence and unified-diff parse success.
 3. Resource coverage: the touched paths must be covered by proposal resources.
 4. Applying the patch to a temporary workspace copy of the current project.
@@ -68,6 +68,16 @@ Validation reports separate results for:
 6. Human approval satisfaction and whether a security review is required/satisfied.
 
 The returned `valid` field covers claim validation, artifact presence, patch parsing, resource coverage, and successful temporary apply. Policy approvability and security/human gates are reported separately and are enforced again by `patch.apply`.
+
+### Claim Freshness and Validation Side Effects
+
+The validator lists all claims in the local database and selects those whose `agent_id` exactly matches the stored proposal author and whose status is exactly `active`, excluding exact claim types `read` and `review`. It does **not** restrict this scan to the proposal's affected resources. A stale lease on an unrelated resource can therefore invalidate this proposal. Task, run, session, workspace, expiry, heartbeat, and renewal settings do not narrow selection; validation is not caller authentication or automatic expiration.
+
+For every selected claim with nonempty `base_hash`, it loads the resource, computes its current content hash, and persists `resource.current_hash`, including an empty result. A nonempty current hash different from the base hash causes an immediate claim upsert to status `suspended`; that claim is excluded from the active ownership map and collected in `stale_claims`. An empty base hash skips hashing entirely. An empty current hash leaves the claim active, so passing this check does not prove that missing or unresolved content is unchanged. See [Resource Hash Algorithms](CLAIMS.md#resource-hash-algorithms) for hash formats and filesystem limitations.
+
+After scanning, any collected stale claim produces `claim_error` beginning `stale claim base hash:` and names the first collected resource. This takes precedence over missing affected-resource ownership. Only when no stale claims were collected does the validator require an exact active resource-ID match for every affected resource; the first missing match produces `unclaimed affected resource:`. Overlapping paths or a broader directory lease do not substitute for that exact ID check.
+
+This is a **state-mutating validation operation**, not a read-only eligibility probe. Resource updates and suspensions are separate writes without a transaction around the loop, and this helper appends no dedicated event. A later resource lookup, hashing, or persistence failure returns immediately while earlier writes remain. Such an early failure returns no stale-claim slice even if earlier claims were already suspended: inspect stored claims rather than interpreting empty `stale_claims` as proof that nothing changed. Subsequent validation excludes those suspended claims and can report missing ownership instead of the original stale-hash error. Creation and patch attachment use a separate ownership-only helper and do not perform this freshness scan.
 
 ### Resource Coverage Algorithm
 
