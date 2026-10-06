@@ -53,6 +53,23 @@ The returned `valid` field covers claim validation, artifact presence, patch par
 
 Before retrying an uncertain apply, inspect the workspace diff, proposal state, transaction rows, and `.roundtable/patches/*-rollback.json`. Preserve the rollback artifact and database/WAL files. Restore only after reviewing the exact changed paths and confirming no later work would be overwritten. The service does not expose a general automatic rollback command today.
 
+## Rollback Artifact Format
+
+Runtime apply captures rollback entries before authoritative mutation, using the parsed touched-file list. The eventual `.roundtable/patches/<transaction-id>-rollback.json` is an indented JSON array, not a reverse diff or an automatically executable restore plan:
+
+```json
+[
+  {"path": "src/example.go", "existed": true, "content": "previous text\n"},
+  {"path": "src/new.go", "existed": false, "content": ""}
+]
+```
+
+`path` is the supplied parsed relative path. Successful `os.ReadFile` records `existed: true` and converts all bytes to a Go string. A not-exist error records false with empty content; other read errors abort capture. Empty existing files are distinguishable from missing files through the flag. This helper does not capture directory trees, file permissions, ownership, timestamps, executable bits, symlink identity/target metadata, extended attributes, or Git index state. Reading a symlink follows its target. JSON string serialization can replace invalid UTF-8, so the artifact is not a byte-exact binary-file backup.
+
+Writing creates parent directories with requested mode `0755` and writes the artifact with requested mode `0644`, subject to umask/existing permissions. It uses an ordinary direct write rather than exclusive creation, atomic rename, fsync, checksum validation, encryption, or restrictive secret-specific permissions. Reusing a transaction ID can reuse/overwrite its artifact path. File contents are not redacted; preserve access controls and do not publish recovery artifacts in documentation or Git.
+
+Capture is in memory before apply, but artifact writing occurs after files have changed and the proposal has been marked accepted. A later artifact-write or transaction-persistence failure can therefore leave mutation without a complete saved recovery record. There is no schema version, before/after hash embedded in this array, later-work conflict check, or general restore handler. Compare transaction hashes, current diffs, and every affected path before creating a governed recovery patch. The `existed: false` flag describes the capture-time state, not authorization to delete a file now containing later work.
+
 ## HTTP phase history and recovery advice
 
 The API exposes GET `/api/v1/workspaces/{id}/transactions/{transaction_id}/phases` and `/recovery`. Both resolve the workspace and require a transaction associated with that workspace; lookup failure returns 404 `transaction_not_found`. Neither endpoint executes a phase, retries an apply, restores files, or invokes the runtime transaction manager.
