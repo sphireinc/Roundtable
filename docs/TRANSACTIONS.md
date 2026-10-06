@@ -131,6 +131,32 @@ The walk is not a snapshot or a context-aware bounded operation: concurrent exte
 
 `repo.RepoStateHash` combines Git HEAD (when available) with a SHA-256 of sorted workspace files, excluding `.git` and `.roundtable`; outside a Git repository it uses the workspace hash. This is not solely a Git tree hash and may include pre-existing uncommitted files.
 
+### Local Apply Inputs and Persistence Ordering
+
+`patch.apply` requires an actual nonempty string `proposal_id`, without trimming whitespace. It runs `patch.validate` first, so a refused apply can already have persisted resource hashes or suspended stale claims. Invalid validation becomes the generic error `proposal validation failed`; inspect explicit validation results and stored claims for details. A missing typed policy result produces `policy evaluation unavailable`. A nonapprovable policy is refused unless the returned human-approval satisfaction flag is true; the required security-review gate is checked afterward and is not bypassed by that human flag.
+
+| Input | Local service behavior |
+| --- | --- |
+| `transaction_id` | Nonempty string retained as supplied; otherwise generated `TX-` timestamp ID. Used as the transaction upsert key and rollback-artifact filename component. |
+| `run_id` | Nonempty string retained; otherwise `RUN-UNSPECIFIED`. No run-existence or proposal/run association check here. |
+| `applied_by` | Nonempty string retained; otherwise `orchestrator`. Attribution, not authenticated identity. |
+
+This method does not independently restrict proposal prior status, require a new transaction ID, enforce idempotency, or verify a caller's author/applier ownership. Reusing an ID can replace a transaction row and overwrite its rollback artifact rather than create an immutable new history entry. These are local service semantics, distinct from HTTP middleware or transaction-control handlers.
+
+After validation, the method reloads the proposal and rereads/reparses its patch; it does not compare those bytes with a validated digest. It captures rollback contents, makes another temporary copy/application, computes the before hash, applies authoritatively, and computes the after hash. It then saves proposal status `accepted`, writes rollback JSON, upserts the transaction, and reloads proposal and transaction for the response. No transaction encompasses this sequence, and no dedicated event, vote, decision, test run, claim release, Git commit, or HTTP phase is created by this method.
+
+| Failure point | Evidence or effects that may already remain |
+| --- | --- |
+| Validation or gate refusal | Validation-time resource updates and claim suspensions; no authoritative patch execution yet. |
+| Patch reread/parse, rollback capture, temporary copy/apply, or before hash | No authoritative patch application from this attempt; earlier validation writes remain. Temporary directory removal is deferred and its error ignored. |
+| Authoritative executor error | Earlier file/hunk changes and executor-created artifacts can remain; rollback entries exist only in memory and have not yet been written. |
+| After-state hash or proposal save error | Authoritative files have changed, but rollback JSON and transaction upsert have not yet occurred. |
+| Rollback write error | Files changed and proposal saved as `accepted`; artifact may be absent/partial and transaction is not yet upserted. |
+| Transaction upsert error | Files changed, proposal accepted, rollback artifact written; no successful transaction persistence is established. |
+| Final proposal/transaction reload error | All preceding writes may have succeeded even though the tool returns an error instead of its success response. |
+
+Successful transaction metadata contains `mode: applied`, policy summary, parsed patch files, and selected human-approval/security-review IDs (which may be empty); applied time is current UTC RFC3339. The response returns `proposal`, `transaction`, `policy`, `human_approval`, and `security_review`. Neither an error nor response loss proves that mutation did not happen. Preserve evidence and inspect current files/rows before retrying; this method performs no compensating restoration.
+
 ## Repository-State Hash Format
 
 `WorkspaceHash` walks the selected root and skips directories named exactly `.git` or `.roundtable` at any depth. It includes other nondirectory paths regardless of Git tracking/ignore rules, slash-normalizes and sorts their relative names, then hashes each relative path, a NUL byte, full file bytes, and another NUL byte in that order with SHA-256. The result is lowercase hexadecimal. Empty directories contribute nothing. Permissions, executable bits, ownership, timestamps, extended attributes, symlink identity, and Git staging state are not encoded. File symlinks are read through their targets; unreadable paths or directory symlinks read as files can fail hashing.
