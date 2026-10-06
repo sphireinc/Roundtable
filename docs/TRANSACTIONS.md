@@ -69,6 +69,16 @@ Validation reports separate results for:
 
 The returned `valid` field covers claim validation, artifact presence, patch parsing, resource coverage, and successful temporary apply. Policy approvability and security/human gates are reported separately and are enforced again by `patch.apply`.
 
+### Resource Coverage Algorithm
+
+Coverage loads each proposal-resource record and groups exact stored types `file`, `directory`, and `symbol` by slash-normalized path. Other resource types do not cover file changes. Missing resource or failed symbol resolution fails the check. This is distinct from lease ownership: resource links define the declared coverage, while claim validation checks the proposal author's claims separately.
+
+For every parsed file operation, coverage considers unique nonempty old/new paths. An exact file match or matching directory for **any** of those paths accepts the operation. Directory matching is lexical equality or `directory + "/"` prefix; an empty directory path covers everything in this helper. It does not resolve symlinks or revalidate directory semantics here. Consequently, a rename can pass on coverage of only one side, not necessarily both source and destination. Create/delete/rename without file/directory coverage is rejected even if symbol resources exist.
+
+For ordinary modifications lacking file/directory coverage, each parsed change range must overlap at least one valid symbol span for a considered path. **Overlap is not full containment**: a range extending beyond the claimed symbol can pass when it intersects that span. Different ranges can overlap different symbols. Missing ranges or symbols do not establish coverage, and invalid symbol bounds are ignored. This check uses parser/indexer line evidence, not a complete semantic dependency or mutation-boundary analysis. Do not rely on it as proof that every changed line belongs entirely to the claimed declaration.
+
+If detailed file operations are absent, the checker synthesizes ordinary old/new-same-path changes from parsed file paths. It returns on the first coverage failure, not a complete issue inventory. Exact error messages distinguish special-operation coverage, nonoverlapping symbol ranges, and uncovered files. The algorithm does not grant new claims, enforce unique ownership, inspect external dependency effects, or repair malformed resource records. Review actual touched paths/ranges alongside claims before application.
+
 ### Validation Response Interpretation
 
 The handler requires nonempty `proposal_id` and returns an error for failed proposal/resource/vote/approval/security-record reads. Claim, patch-parser, coverage, and temporary-apply errors are instead carried in the successful result envelope. Read every relevant field rather than equating transport `ok: true` with `valid: true` or apply authorization.
