@@ -665,7 +665,7 @@ paths:
     get:
       operationId: getConsensusAnalytics
       summary: Return bounded consensus analytics for a workspace
-      description: Success and rejection rates use finalized snapshots (approved or blocked) as the denominator. Abstention rate uses all votes in the window. Time-to-consensus is measured from proposal creation to the finalized snapshot; p50 and p95 use nearest-rank interpolation. Quorum failures count pending snapshots observed in the window. Policy overrides count approved human approvals with override_policy set.
+      description: Uses a half-open UTC time window [from,to), defaulting to the previous 24 hours through now and capped at 31 days. Proposal count filters proposal creation time; vote rates filter vote creation time; consensus and duration metrics include every snapshot in the window rather than only the latest snapshot per proposal. Success/rejection rates divide approved/blocked snapshot counts by all approved+blocked snapshots and are zero when that denominator is empty. Abstention rate uses abstain votes divided by all votes. Durations compare proposal creation with each approved/blocked snapshot and p50/p95 select the nearest rank. Quorum failures count pending snapshots. Human interventions count matching workspace audit actions. Current policy_override aggregation is not workspace-scoped and counts approved overrides across every workspace during the window; its query error is also ignored. This metric is therefore not safe for per-workspace attribution until implementation is corrected.
       responses: {'200': {description: Consensus analytics, content: {application/json: {schema: {$ref: '#/components/schemas/ConsensusAnalytics'}}}}, '400': {$ref: '#/components/responses/Problem'}, '404': {$ref: '#/components/responses/Problem'}}
   /api/v1/workspaces/{id}/policies:
     parameters: [{name: id, in: path, required: true, schema: {type: string}}, {name: cursor, in: query, schema: {type: string}}, {name: limit, in: query, schema: {type: integer, minimum: 1, maximum: 200, default: 50}}]
@@ -1662,31 +1662,32 @@ components:
     ConsensusAnalytics:
       type: object
       required: [window, generated_at, proposal_count, consensus_count, success_rate, rejection_rate, abstention_rate, mean_time_to_consensus_seconds, p50_time_to_consensus_seconds, p95_time_to_consensus_seconds, policy_overrides, human_interventions, quorum_failures, agent_participation]
+      description: Workspace analytics projection over the requested time window. The component queries are independent and are not assembled from one database snapshot; policy_overrides currently counts all workspaces, unlike the other workspace-filtered metrics.
       properties:
-        window: {type: object, required: [from, to], properties: {from: {type: string, format: date-time}, to: {type: string, format: date-time}}}
-        generated_at: {type: string, format: date-time}
-        proposal_count: {type: integer, minimum: 0}
-        consensus_count: {type: integer, minimum: 0}
-        success_rate: {type: number, minimum: 0, maximum: 1}
-        rejection_rate: {type: number, minimum: 0, maximum: 1}
-        abstention_rate: {type: number, minimum: 0, maximum: 1}
-        mean_time_to_consensus_seconds: {type: number, minimum: 0}
-        p50_time_to_consensus_seconds: {type: number, minimum: 0}
-        p95_time_to_consensus_seconds: {type: number, minimum: 0}
-        policy_overrides: {type: integer, minimum: 0}
-        human_interventions: {type: integer, minimum: 0}
-        quorum_failures: {type: integer, minimum: 0}
-        agent_participation: {type: array, items: {$ref: '#/components/schemas/AgentParticipation'}}
+        window: {type: object, required: [from, to], description: "Normalized UTC half-open range used by the calculation.", properties: {from: {type: string, format: date-time, description: "Inclusive UTC start timestamp."}, to: {type: string, format: date-time, description: "Exclusive UTC end timestamp."}}}
+        generated_at: {type: string, format: date-time, description: "UTC timestamp when the response calculation began; it is not a database snapshot timestamp."}
+        proposal_count: {type: integer, minimum: 0, description: "Workspace proposals created in [from,to); independent of whether they have votes or consensus snapshots."}
+        consensus_count: {type: integer, minimum: 0, description: "Approved plus blocked consensus snapshot rows created in the window. Every matching snapshot row counts, so repeated snapshots for one proposal increase this count."}
+        success_rate: {type: number, minimum: 0, maximum: 1, description: "Approved snapshot rows divided by consensus_count; zero when consensus_count is zero."}
+        rejection_rate: {type: number, minimum: 0, maximum: 1, description: "Blocked snapshot rows divided by consensus_count; zero when consensus_count is zero."}
+        abstention_rate: {type: number, minimum: 0, maximum: 1, description: "Abstain vote rows divided by all vote rows in the workspace/window; zero when no votes exist."}
+        mean_time_to_consensus_seconds: {type: number, minimum: 0, description: "Arithmetic mean of seconds from proposal creation to each approved/blocked snapshot in the window; zero when there are no finalized snapshots."}
+        p50_time_to_consensus_seconds: {type: number, minimum: 0, description: "Nearest-rank-style median selected by sorting durations and rounding (n-1)*0.50 to the nearest index; zero when empty."}
+        p95_time_to_consensus_seconds: {type: number, minimum: 0, description: "Nearest-rank-style 95th percentile selected by sorting durations and rounding (n-1)*0.95 to the nearest index; zero when empty."}
+        policy_overrides: {type: integer, minimum: 0, description: "Approved human-approval rows with override_policy=1 in the time window. Current query omits workspace_id filtering, so this is a cross-workspace count, not a workspace metric."}
+        human_interventions: {type: integer, minimum: 0, description: "Workspace audit rows in the window whose action matches human.% or contains approval; this is a SQL-pattern count, not a semantic classification of every human action."}
+        quorum_failures: {type: integer, minimum: 0, description: "Pending consensus snapshot rows created in the window; this does not independently establish that quorum was the reason each remained pending."}
+        agent_participation: {type: array, items: {$ref: '#/components/schemas/AgentParticipation'}, description: "Per-agent counts of vote rows in the workspace/window, sorted by agent_id. Every vote increments votes, while only approve/reject/abstain/veto labels increment the corresponding subtype."}
     AgentParticipation:
       type: object
       required: [agent_id, votes, approvals, rejections, abstentions, vetoes]
       properties:
-        agent_id: {type: string}
-        votes: {type: integer, minimum: 0}
-        approvals: {type: integer, minimum: 0}
-        rejections: {type: integer, minimum: 0}
-        abstentions: {type: integer, minimum: 0}
-        vetoes: {type: integer, minimum: 0}
+        agent_id: {type: string, description: "Agent identifier from vote rows; the result is sorted lexicographically by this value."}
+        votes: {type: integer, minimum: 0, description: "All vote rows for this agent in the workspace/window, including unrecognized vote labels."}
+        approvals: {type: integer, minimum: 0, description: "Vote rows whose decision is exactly approve."}
+        rejections: {type: integer, minimum: 0, description: "Vote rows whose decision is exactly reject."}
+        abstentions: {type: integer, minimum: 0, description: "Vote rows whose decision is exactly abstain; these rows contribute to the workspace abstention rate."}
+        vetoes: {type: integer, minimum: 0, description: "Vote rows whose decision is exactly veto."}
     Policy:
       type: object
       required: [id, workspace_id, name, status, scope, selector, severity, enforcement_mode, human_approval_required, metadata, created_at, updated_at]

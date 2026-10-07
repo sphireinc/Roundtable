@@ -932,26 +932,27 @@ Required fields: `proposal_id`, `outcome`, `approve_weight`, `reject_weight`, `a
 
 Type: `object`
 
+Description: Workspace analytics projection over the requested time window. The component queries are independent and are not assembled from one database snapshot; policy_overrides currently counts all workspaces, unlike the other workspace-filtered metrics.
 Required fields: `window`, `generated_at`, `proposal_count`, `consensus_count`, `success_rate`, `rejection_rate`, `abstention_rate`, `mean_time_to_consensus_seconds`, `p50_time_to_consensus_seconds`, `p95_time_to_consensus_seconds`, `policy_overrides`, `human_interventions`, `quorum_failures`, `agent_participation`
 
 | Property | Type | Required | Constraints | Description |
 |---|---|---|---|---|
-| `window` | `object` | yes |  |  |
-| `window.from` | `string` | yes | format="date-time" |  |
-| `window.to` | `string` | yes | format="date-time" |  |
-| `generated_at` | `string` | yes | format="date-time" |  |
-| `proposal_count` | `integer` | yes | minimum=0 |  |
-| `consensus_count` | `integer` | yes | minimum=0 |  |
-| `success_rate` | `number` | yes | minimum=0; maximum=1 |  |
-| `rejection_rate` | `number` | yes | minimum=0; maximum=1 |  |
-| `abstention_rate` | `number` | yes | minimum=0; maximum=1 |  |
-| `mean_time_to_consensus_seconds` | `number` | yes | minimum=0 |  |
-| `p50_time_to_consensus_seconds` | `number` | yes | minimum=0 |  |
-| `p95_time_to_consensus_seconds` | `number` | yes | minimum=0 |  |
-| `policy_overrides` | `integer` | yes | minimum=0 |  |
-| `human_interventions` | `integer` | yes | minimum=0 |  |
-| `quorum_failures` | `integer` | yes | minimum=0 |  |
-| `agent_participation` | array of `AgentParticipation` | yes |  |  |
+| `window` | `object` | yes |  | Normalized UTC half-open range used by the calculation. |
+| `window.from` | `string` | yes | format="date-time" | Inclusive UTC start timestamp. |
+| `window.to` | `string` | yes | format="date-time" | Exclusive UTC end timestamp. |
+| `generated_at` | `string` | yes | format="date-time" | UTC timestamp when the response calculation began; it is not a database snapshot timestamp. |
+| `proposal_count` | `integer` | yes | minimum=0 | Workspace proposals created in [from,to); independent of whether they have votes or consensus snapshots. |
+| `consensus_count` | `integer` | yes | minimum=0 | Approved plus blocked consensus snapshot rows created in the window. Every matching snapshot row counts, so repeated snapshots for one proposal increase this count. |
+| `success_rate` | `number` | yes | minimum=0; maximum=1 | Approved snapshot rows divided by consensus_count; zero when consensus_count is zero. |
+| `rejection_rate` | `number` | yes | minimum=0; maximum=1 | Blocked snapshot rows divided by consensus_count; zero when consensus_count is zero. |
+| `abstention_rate` | `number` | yes | minimum=0; maximum=1 | Abstain vote rows divided by all vote rows in the workspace/window; zero when no votes exist. |
+| `mean_time_to_consensus_seconds` | `number` | yes | minimum=0 | Arithmetic mean of seconds from proposal creation to each approved/blocked snapshot in the window; zero when there are no finalized snapshots. |
+| `p50_time_to_consensus_seconds` | `number` | yes | minimum=0 | Nearest-rank-style median selected by sorting durations and rounding (n-1)*0.50 to the nearest index; zero when empty. |
+| `p95_time_to_consensus_seconds` | `number` | yes | minimum=0 | Nearest-rank-style 95th percentile selected by sorting durations and rounding (n-1)*0.95 to the nearest index; zero when empty. |
+| `policy_overrides` | `integer` | yes | minimum=0 | Approved human-approval rows with override_policy=1 in the time window. Current query omits workspace_id filtering, so this is a cross-workspace count, not a workspace metric. |
+| `human_interventions` | `integer` | yes | minimum=0 | Workspace audit rows in the window whose action matches human.% or contains approval; this is a SQL-pattern count, not a semantic classification of every human action. |
+| `quorum_failures` | `integer` | yes | minimum=0 | Pending consensus snapshot rows created in the window; this does not independently establish that quorum was the reason each remained pending. |
+| `agent_participation` | array of `AgentParticipation` | yes |  | Per-agent counts of vote rows in the workspace/window, sorted by agent_id. Every vote increments votes, while only approve/reject/abstain/veto labels increment the corresponding subtype. |
 
 ### Schema: AgentParticipation {#schema-agentparticipation}
 
@@ -961,12 +962,12 @@ Required fields: `agent_id`, `votes`, `approvals`, `rejections`, `abstentions`, 
 
 | Property | Type | Required | Constraints | Description |
 |---|---|---|---|---|
-| `agent_id` | `string` | yes |  |  |
-| `votes` | `integer` | yes | minimum=0 |  |
-| `approvals` | `integer` | yes | minimum=0 |  |
-| `rejections` | `integer` | yes | minimum=0 |  |
-| `abstentions` | `integer` | yes | minimum=0 |  |
-| `vetoes` | `integer` | yes | minimum=0 |  |
+| `agent_id` | `string` | yes |  | Agent identifier from vote rows; the result is sorted lexicographically by this value. |
+| `votes` | `integer` | yes | minimum=0 | All vote rows for this agent in the workspace/window, including unrecognized vote labels. |
+| `approvals` | `integer` | yes | minimum=0 | Vote rows whose decision is exactly approve. |
+| `rejections` | `integer` | yes | minimum=0 | Vote rows whose decision is exactly reject. |
+| `abstentions` | `integer` | yes | minimum=0 | Vote rows whose decision is exactly abstain; these rows contribute to the workspace abstention rate. |
+| `vetoes` | `integer` | yes | minimum=0 | Vote rows whose decision is exactly veto. |
 
 ### Schema: Policy {#schema-policy}
 
