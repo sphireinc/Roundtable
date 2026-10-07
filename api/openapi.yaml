@@ -298,6 +298,8 @@ paths:
     get:
       operationId: listRepositoryEntities
       summary: Search and paginate the read-only repository entity index
+      description: >-
+        Builds an entity index from the current workspace filesystem for each request; this is not a persisted or commit-pinned snapshot. It emits directory and file entities, classifies selected schema, command, and test paths, and extracts supported-language symbols. It skips .git, .roundtable, node_modules, and secret-like paths containing .env, secret, or credential, or ending in .pem or .key. When the store is available, active claim status and pending/in-review proposal links are added by exact resource ID; unavailable governance context fails the request rather than silently omitting it. q performs case-insensitive substring matching over entity id, path, name, and kind; type is an exact type filter; path is a normalized repository-relative subtree filter. cursor is an encoded offset and limit defaults to 50 with a range of 1 through 200. Index traversal errors return 409, governance enrichment errors 500, malformed filters/cursor/limit 400, and unknown workspace 404. Indexing parses supported source files and is read-only; it does not expose file contents.
       responses:
         '200':
           description: Repository entities
@@ -319,6 +321,8 @@ paths:
     get:
       operationId: getRepositoryEntity
       summary: Get one indexed repository entity and governance context
+      description: >-
+        Rebuilds the same live filesystem index and governance enrichment used by the collection endpoint, then returns the matching entity. entity_id may be the full generated ID (for example file:path or directory:path) or the corresponding path/symbol identifier with its known prefix removed. The response contains metadata and related IDs, not source contents. Secret-like paths and excluded internal directories cannot be retrieved through this index. Invalid IDs return 400, an absent entity returns 404, filesystem/index failures return 409, and governance-context query failures return 500.
       responses:
         '200':
           description: Repository entity
