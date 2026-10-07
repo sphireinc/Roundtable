@@ -69,6 +69,12 @@ GOCACHE=/tmp/roundtable-go-cache go run ./api/cmd/server \
 
 ## Startup, bind, and process lifecycle details
 
+### Native executable startup sequence and failures
+
+The standalone executable parses process flags first, then applies the non-loopback guard, opens SQLite, installs interrupt/SIGTERM cancellation, constructs the HTTP server, and calls `Serve`. The guard runs before any database directory is created. A rejected bind prints the guard message and exits with status 2; SQLite directory/open/PRAGMA/migration errors are printed to stderr and exit with status 1. A listener/server error is likewise printed and exits with status 1. Flag parsing uses Go's standard `flag` package and its process-level error behavior; there is no application-specific configuration-file fallback or structured JSON startup diagnostic.
+
+The environment-backed flag defaults (`ROUNDTABLE_HUMAN_TOKEN` and `ROUNDTABLE_AGENT_TOKEN`) and `ROUNDTABLE_API_VERSION` are read once during process startup. Supplying either token flag explicitly replaces its environment default, including an explicit empty value. There is no reload signal or settings watcher. A database open is more than a lazy `sql.Open`: `db.Open` creates the parent directory, applies WAL mode, foreign keys, and a 5,000 ms SQLite busy timeout, then runs schema migrations before the process installs its signal context or begins listening. A failed startup can therefore have created the database directory or partially advanced schema even though no HTTP listener became available; inspect the database before retrying after an initialization failure.
+
 ### Embedded Server Configuration
 
 `httpapi.NewServer(Config)` is the library entry point used by the standalone executable and tests. These fields are constructor inputs, not additional YAML keys or automatically read environment variables:
