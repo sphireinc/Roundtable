@@ -791,7 +791,7 @@ paths:
       description: The measurement window is the preceding 24 hours. Consensus success rate is approved finalized snapshots divided by all finalized snapshots. Policy pass rate is pass evaluations divided by all evaluations in the window. The response intentionally excludes proposal, claim, and activity lists.
       responses: {'200': {description: Dashboard summary, content: {application/json: {schema: {$ref: '#/components/schemas/DashboardSummary'}}}}, '404': {$ref: '#/components/responses/Problem'}}
   /api/v1/workspaces/{id}/activity:
-    parameters: [{name: id, in: path, required: true, schema: {type: string}}, {name: entity, in: query, description: Filter by normalized entity type., schema: {type: string}}, {name: category, in: query, description: Filter by event category prefix., schema: {type: string}}, {name: actor, in: query, schema: {type: string}}, {name: severity, in: query, schema: {type: string}}, {name: cursor, in: query, schema: {type: string}}, {name: limit, in: query, schema: {type: integer, minimum: 1, maximum: 200, default: 50}}]
+    parameters: [{name: id, in: path, required: true, schema: {type: string}}, {name: entity, in: query, description: "Exact match against normalized entity_type after lowercasing and trimming the filter.", schema: {type: string}}, {name: category, in: query, description: "Exact match against the lowercased prefix of event type before its first dot.", schema: {type: string}}, {name: actor, in: query, description: "Exact match against the normalized redacted actor value after trimming the filter; sensitive redaction can affect matching.", schema: {type: string}}, {name: severity, in: query, description: "Exact match against payload severity after lowercasing and trimming; missing severity is info.", schema: {type: string}}, {name: cursor, in: query, description: "Opaque raw-base64url encoding of a decimal item offset, returned as next_cursor.", schema: {type: string}}, {name: limit, in: query, description: "Page size from 1 to 200; defaults to 50.", schema: {type: integer, minimum: 1, maximum: 200, default: 50}}]
     get:
       operationId: listActivityFeed
       summary: List normalized workspace activity events
@@ -866,14 +866,14 @@ paths:
       summary: Pin, archive, restore, merge, or request memory resynthesis
       responses: {'200': {description: Updated memory, content: {application/json: {schema: {$ref: '#/components/schemas/Memory'}}}}, '400': {$ref: '#/components/responses/Problem'}, '403': {$ref: '#/components/responses/Problem'}, '404': {$ref: '#/components/responses/Problem'}, '409': {$ref: '#/components/responses/Problem'}}
   /api/v1/workspaces/{id}/notifications:
-    parameters: [{name: id, in: path, required: true, schema: {type: string}}, {name: recipient_id, in: query, schema: {type: string}}, {name: category, in: query, schema: {type: string}}, {name: severity, in: query, schema: {type: string}}, {name: unread, in: query, schema: {type: boolean}}, {name: actionable, in: query, schema: {type: boolean}}, {name: cursor, in: query, schema: {type: string}}, {name: limit, in: query, schema: {type: integer, minimum: 1, maximum: 200, default: 50}}]
+    parameters: [{name: id, in: path, required: true, schema: {type: string}}, {name: recipient_id, in: query, description: "Recipient filter; omission falls back to X-Actor-ID, and if both are empty the handler does not filter by recipient.", schema: {type: string}}, {name: category, in: query, description: "Exact stored category match after whitespace trimming; not normalized to lowercase by this handler.", schema: {type: string}}, {name: severity, in: query, description: "Exact stored severity match after whitespace trimming; not normalized to lowercase by this handler.", schema: {type: string}}, {name: unread, in: query, description: "When exactly true, returns notifications whose read_at is null; false or omitted adds no filter.", schema: {type: boolean}}, {name: actionable, in: query, description: "When exactly true, returns actionable notifications whose resolved_at is null; this filter does not require the notification to be unread.", schema: {type: boolean}}, {name: cursor, in: query, description: "Raw-base64url encoding of the last returned created_at, newline, and ID; used for descending keyset pagination.", schema: {type: string}}, {name: limit, in: query, description: "Page size from 1 to 200; defaults to 50.", schema: {type: integer, minimum: 1, maximum: 200, default: 50}}]
     get:
       operationId: listNotifications
       summary: List actionable attention items
       description: Attention items are distinct from the raw activity stream. Acknowledgement marks an item read but does not resolve the underlying condition.
       responses: {'200': {description: Notification collection, content: {application/json: {schema: {$ref: '#/components/schemas/Notifications'}}}}, '404': {$ref: '#/components/responses/Problem'}}
   /api/v1/workspaces/{id}/notifications/counts:
-    parameters: [{name: id, in: path, required: true, schema: {type: string}}, {name: recipient_id, in: query, schema: {type: string}}]
+    parameters: [{name: id, in: path, required: true, schema: {type: string}}, {name: recipient_id, in: query, description: "Recipient filter; omission falls back to X-Actor-ID, and if both are empty counts cover every workspace recipient.", schema: {type: string}}]
     get:
       operationId: getNotificationCounts
       summary: Return unread and actionable attention counts
@@ -885,19 +885,19 @@ paths:
       summary: Acknowledge an attention item without resolving it
       responses: {'200': {description: Acknowledged notification, content: {application/json: {schema: {$ref: '#/components/schemas/Notification'}}}}, '403': {$ref: '#/components/responses/Problem'}, '404': {$ref: '#/components/responses/Problem'}, '409': {$ref: '#/components/responses/Problem'}}
   /api/v1/workspaces/{id}/logs/operational:
-    parameters: [{name: id, in: path, required: true, schema: {type: string}}, {name: from, in: query, schema: {type: string, format: date-time}}, {name: to, in: query, schema: {type: string, format: date-time}}, {name: severity, in: query, schema: {type: string}}, {name: component, in: query, schema: {type: string}}, {name: request_id, in: query, schema: {type: string}}, {name: agent_id, in: query, schema: {type: string}}, {name: session_id, in: query, schema: {type: string}}, {name: proposal_id, in: query, schema: {type: string}}, {name: transaction_id, in: query, schema: {type: string}}, {name: cursor, in: query, schema: {type: string}}, {name: limit, in: query, schema: {type: integer, minimum: 1, maximum: 200, default: 50}}]
+    parameters: [{name: id, in: path, required: true, schema: {type: string}}, {name: from, in: query, description: "Inclusive RFC3339Nano timestamp lower bound; invalid values are silently ignored by the handler.", schema: {type: string, format: date-time}}, {name: to, in: query, description: "Inclusive RFC3339Nano timestamp upper bound; invalid values are silently ignored by the handler.", schema: {type: string, format: date-time}}, {name: severity, in: query, description: "Payload text filter for a severity string; matching uses SQL LIKE against serialized JSON rather than a normalized severity column.", schema: {type: string}}, {name: component, in: query, description: "Event type prefix filter matching type values shaped as component dot suffix.", schema: {type: string}}, {name: request_id, in: query, description: "Payload text filter for request_id using SQL LIKE; it is not parsed as exact JSON equality.", schema: {type: string}}, {name: agent_id, in: query, description: "Payload text filter for agent_id using SQL LIKE; it is not parsed as exact JSON equality.", schema: {type: string}}, {name: session_id, in: query, description: "Payload text filter for session_id using SQL LIKE; it is not parsed as exact JSON equality.", schema: {type: string}}, {name: proposal_id, in: query, description: "Payload text filter for proposal_id using SQL LIKE; it is not parsed as exact JSON equality.", schema: {type: string}}, {name: transaction_id, in: query, description: "Payload text filter for transaction_id using SQL LIKE; it is not parsed as exact JSON equality.", schema: {type: string}}, {name: cursor, in: query, description: "Positive decimal global event ID; returns older rows with IDs less than the cursor.", schema: {type: string}}, {name: limit, in: query, description: "Page size from 1 to 200; defaults to 50.", schema: {type: integer, minimum: 1, maximum: 200, default: 50}}]
     get:
       operationId: listOperationalLogs
       summary: Search bounded redacted operational logs
       responses: {'200': {description: Operational logs, content: {application/json: {schema: {$ref: '#/components/schemas/OperationalLogs'}}}}, '404': {$ref: '#/components/responses/Problem'}}
   /api/v1/workspaces/{id}/audit:
-    parameters: [{name: id, in: path, required: true, schema: {type: string}}, {name: from, in: query, schema: {type: string, format: date-time}}, {name: to, in: query, schema: {type: string, format: date-time}}, {name: actor, in: query, schema: {type: string}}, {name: action, in: query, schema: {type: string}}, {name: request_id, in: query, schema: {type: string}}, {name: entity_id, in: query, schema: {type: string}}, {name: cursor, in: query, schema: {type: string}}, {name: limit, in: query, schema: {type: integer, minimum: 1, maximum: 200, default: 50}}]
+    parameters: [{name: id, in: path, required: true, schema: {type: string}}, {name: from, in: query, description: "Inclusive RFC3339Nano timestamp lower bound; invalid values are silently ignored by the handler.", schema: {type: string, format: date-time}}, {name: to, in: query, description: "Inclusive RFC3339Nano timestamp upper bound; invalid values are silently ignored by the handler.", schema: {type: string, format: date-time}}, {name: actor, in: query, description: "Exact stored actor ID filter; the returned actor value is text-redacted.", schema: {type: string}}, {name: action, in: query, description: "Exact stored action name filter.", schema: {type: string}}, {name: request_id, in: query, description: "Exact stored request ID filter.", schema: {type: string}}, {name: entity_id, in: query, description: "Exact stored entity ID filter.", schema: {type: string}}, {name: cursor, in: query, description: "Positive decimal audit row ID; returns older rows with IDs less than the cursor.", schema: {type: string}}, {name: limit, in: query, description: "Page size from 1 to 200; defaults to 50.", schema: {type: integer, minimum: 1, maximum: 200, default: 50}}]
     get:
       operationId: listAuditEvents
       summary: List immutable audit events
       responses: {'200': {description: Audit events, content: {application/json: {schema: {$ref: '#/components/schemas/AuditEvents'}}}}, '404': {$ref: '#/components/responses/Problem'}}
   /api/v1/workspaces/{id}/audit/export:
-    parameters: [{name: id, in: path, required: true, schema: {type: string}}, {name: format, in: query, schema: {type: string, enum: [json, ndjson, csv], default: json}}, {$ref: '#/components/parameters/ActorID'}]
+    parameters: [{name: id, in: path, required: true, schema: {type: string}}, {name: format, in: query, description: "Output encoding: json, ndjson, or csv. The handler lowercases the value; missing or unrecognized values fall back to JSON.", schema: {type: string, enum: [json, ndjson, csv], default: json}}, {$ref: '#/components/parameters/ActorID'}]
     get:
       operationId: exportAuditEvents
       summary: Export a bounded redacted audit slice
@@ -1942,22 +1942,22 @@ components:
       type: object
       required: [id, type, category, entity_type, severity, title, metadata, created_at]
       properties:
-        id: {type: integer}
-        type: {type: string}
-        category: {type: string}
-        actor_id: {type: string}
-        entity_type: {type: string}
-        entity_id: {type: string}
-        severity: {type: string}
-        title: {type: string}
-        metadata: {type: object, additionalProperties: true}
-        created_at: {type: string, format: date-time}
+        id: {type: integer, description: "Global event row ID; activity is returned newest-first by this ID."}
+        type: {type: string, description: "Persisted event type string."}
+        category: {type: string, description: "Prefix of type before the first dot; also used as the activity entity_type projection."}
+        actor_id: {type: string, description: "Text-redacted event actor ID; omitted when empty."}
+        entity_type: {type: string, description: "Currently identical to category, not a separately resolved domain entity type."}
+        entity_id: {type: string, description: "First string value found in selected metadata keys (proposal, claim, approval, transaction, policy, session, contention, vote IDs), text-redacted; omitted if unavailable."}
+        severity: {type: string, description: "Lowercased severity string from event metadata, or info when absent or not a string."}
+        title: {type: string, description: "Friendly title for selected known event types; other event names are transformed from dotted/underscored identifiers."}
+        metadata: {type: object, additionalProperties: true, description: "JSON object payload after heuristic redaction; malformed or non-object payloads yield an empty object in this activity projection."}
+        created_at: {type: string, format: date-time, description: "Persisted event creation timestamp."}
     ActivityFeed:
       type: object
       required: [items]
       properties:
-        items: {type: array, items: {$ref: '#/components/schemas/ActivityItem'}}
-        next_cursor: {type: [string, 'null']}
+        items: {type: array, items: {$ref: '#/components/schemas/ActivityItem'}, description: "Workspace-matching events in descending event ID order, with optional entity, category, actor, and severity filters applied in memory."}
+        next_cursor: {type: [string, 'null'], description: "Opaque offset cursor for the next page; this endpoint loads and filters the matching event rows before pagination."}
     Memory:
       type: object
       required: [id, scope, kind, title, body_md, tags, provenance, confidence, reliability, importance, pinned, revision, status, resynthesis_status, created_at, updated_at]
@@ -2042,64 +2042,64 @@ components:
       type: object
       required: [id, workspace_id, recipient_id, severity, category, title, body, actionable, created_at]
       properties:
-        id: {type: string}
-        workspace_id: {type: string}
-        recipient_id: {type: string}
-        severity: {type: string, enum: [info, warning, error, critical]}
-        category: {type: string, enum: [approval_required, claim_contention, transaction_failure, policy_intervention, agent_session_failure, repository_degraded, system_warning]}
-        title: {type: string}
-        body: {type: string}
-        entity_type: {type: string}
-        entity_id: {type: string}
-        read_at: {type: string, format: date-time}
-        actionable: {type: boolean}
-        resolved_at: {type: string, format: date-time}
-        created_at: {type: string, format: date-time}
+        id: {type: string, description: "Stable notification identifier."}
+        workspace_id: {type: string, description: "Workspace that owns the notification."}
+        recipient_id: {type: string, description: "Recipient identity or wildcard recipient; text-redacted before returning."}
+        severity: {type: string, enum: [info, warning, error, critical], description: "Stored notification severity label."}
+        category: {type: string, enum: [approval_required, claim_contention, transaction_failure, policy_intervention, agent_session_failure, repository_degraded, system_warning], description: "Stored attention category used by exact-match list filters."}
+        title: {type: string, description: "Notification headline after text redaction."}
+        body: {type: string, description: "Notification detail after text redaction."}
+        entity_type: {type: string, description: "Optional associated entity category; omitted when empty."}
+        entity_id: {type: string, description: "Optional associated entity identifier; omitted when empty."}
+        read_at: {type: string, format: date-time, description: "Acknowledgement timestamp; acknowledgement preserves the first timestamp and does not resolve the underlying condition."}
+        actionable: {type: boolean, description: "Whether the notification is marked as actionable; actionable counts include only unread items whose resolved_at is null."}
+        resolved_at: {type: string, format: date-time, description: "Underlying notification resolution timestamp; omitted when unresolved. Reading/acknowledging does not set this field."}
+        created_at: {type: string, format: date-time, description: "Notification creation timestamp, used with ID for descending keyset pagination."}
     Notifications:
       type: object
       required: [items]
-      properties: {items: {type: array, items: {$ref: '#/components/schemas/Notification'}}, next_cursor: {type: [string, 'null']}}
+      properties: {items: {type: array, items: {$ref: '#/components/schemas/Notification'}, description: "Workspace notifications ordered by creation time and ID descending after recipient/category/severity/read/actionable filters."}, next_cursor: {type: [string, 'null'], description: "Raw-base64url cursor encoding the last returned created_at and ID separated by a newline; null when no further page is available."}}
     NotificationCounts:
       type: object
       required: [workspace_id, unread, actionable]
-      properties: {workspace_id: {type: string}, unread: {type: integer, minimum: 0}, actionable: {type: integer, minimum: 0}}
+      properties: {workspace_id: {type: string, description: "Workspace whose notifications were counted."}, unread: {type: integer, minimum: 0, description: "Count of unread notifications for the selected recipient scope."}, actionable: {type: integer, minimum: 0, description: "Count of unread notifications with actionable=true and resolved_at unset for the selected recipient scope."}}
     OperationalLog:
       type: object
       required: [id, type, component, severity, payload, created_at]
       properties:
-        id: {type: integer, format: int64}
-        type: {type: string}
-        component: {type: string}
-        severity: {type: string}
-        actor_id: {type: string}
-        request_id: {type: string}
-        agent_id: {type: string}
-        session_id: {type: string}
-        proposal_id: {type: string}
-        transaction_id: {type: string}
-        payload: {type: object, additionalProperties: true}
-        created_at: {type: string, format: date-time}
+        id: {type: integer, format: int64, description: "Global persisted event row ID."}
+        type: {type: string, description: "Stored event type."}
+        component: {type: string, description: "Prefix of type before the first dot; the component filter matches event-type prefixes."}
+        severity: {type: string, description: "String severity extracted from the payload, defaulting to info when absent or non-string."}
+        actor_id: {type: string, description: "Text-redacted actor ID; omitted when empty."}
+        request_id: {type: string, description: "Text-redacted string extracted from payload; omitted when absent or non-string."}
+        agent_id: {type: string, description: "Text-redacted string extracted from payload; omitted when absent or non-string."}
+        session_id: {type: string, description: "Text-redacted string extracted from payload; omitted when absent or non-string."}
+        proposal_id: {type: string, description: "Text-redacted string extracted from payload; omitted when absent or non-string."}
+        transaction_id: {type: string, description: "Text-redacted string extracted from payload; omitted when absent or non-string."}
+        payload: {type: object, additionalProperties: true, description: "Decoded JSON event payload after heuristic redaction; invalid or non-object payloads become an object containing redacted text."}
+        created_at: {type: string, format: date-time, description: "Persisted event creation timestamp."}
     OperationalLogs:
       type: object
       required: [items]
-      properties: {items: {type: array, items: {$ref: '#/components/schemas/OperationalLog'}}, next_cursor: {type: [string, 'null']}}
+      properties: {items: {type: array, items: {$ref: '#/components/schemas/OperationalLog'}, description: "Workspace events in descending global event ID order, projected from the events table; this is not the HTTP logger or a complete process log."}, next_cursor: {type: [string, 'null'], description: "Decimal global event ID of the last returned item when another page exists; send it back as cursor to request older IDs."}}
     AuditEvent:
       type: object
       required: [id, actor_id, action, entity_type, entity_id, payload, created_at]
       properties:
-        id: {type: integer, format: int64}
-        actor_id: {type: string}
-        action: {type: string}
-        entity_type: {type: string}
-        entity_id: {type: string}
-        request_id: {type: string}
-        reason: {type: string}
-        payload: {type: object, additionalProperties: true}
-        created_at: {type: string, format: date-time}
+        id: {type: integer, format: int64, description: "Global audit row ID."}
+        actor_id: {type: string, description: "Text-redacted actor identifier."}
+        action: {type: string, description: "Recorded audit action label."}
+        entity_type: {type: string, description: "Recorded entity category associated with the audited action."}
+        entity_id: {type: string, description: "Text-redacted identifier of the audited entity."}
+        request_id: {type: string, description: "Optional request correlation ID; omitted when absent."}
+        reason: {type: string, description: "Optional text-redacted rationale; omitted when empty."}
+        payload: {type: object, additionalProperties: true, description: "Decoded audit JSON payload after heuristic redaction; invalid or non-object content is represented as redacted text."}
+        created_at: {type: string, format: date-time, description: "Audit row creation timestamp."}
     AuditEvents:
       type: object
       required: [items]
-      properties: {items: {type: array, items: {$ref: '#/components/schemas/AuditEvent'}}, next_cursor: {type: [string, 'null']}}
+      properties: {items: {type: array, items: {$ref: '#/components/schemas/AuditEvent'}, description: "Workspace audit rows in descending ID order, filtered by exact actor/action/request/entity values and valid time bounds."}, next_cursor: {type: [string, 'null'], description: "Decimal audit row ID of the last returned item when another page exists; send it back to request older IDs."}}
     EffectiveSettings:
       type: object
       required: [workspace_id, version, sections]

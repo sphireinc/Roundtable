@@ -1380,16 +1380,16 @@ Required fields: `id`, `type`, `category`, `entity_type`, `severity`, `title`, `
 
 | Property | Type | Required | Constraints | Description |
 |---|---|---|---|---|
-| `id` | `integer` | yes |  |  |
-| `type` | `string` | yes |  |  |
-| `category` | `string` | yes |  |  |
-| `actor_id` | `string` | no |  |  |
-| `entity_type` | `string` | yes |  |  |
-| `entity_id` | `string` | no |  |  |
-| `severity` | `string` | yes |  |  |
-| `title` | `string` | yes |  |  |
-| `metadata` | object (any value) | yes |  |  |
-| `created_at` | `string` | yes | format="date-time" |  |
+| `id` | `integer` | yes |  | Global event row ID; activity is returned newest-first by this ID. |
+| `type` | `string` | yes |  | Persisted event type string. |
+| `category` | `string` | yes |  | Prefix of type before the first dot; also used as the activity entity_type projection. |
+| `actor_id` | `string` | no |  | Text-redacted event actor ID; omitted when empty. |
+| `entity_type` | `string` | yes |  | Currently identical to category, not a separately resolved domain entity type. |
+| `entity_id` | `string` | no |  | First string value found in selected metadata keys (proposal, claim, approval, transaction, policy, session, contention, vote IDs), text-redacted; omitted if unavailable. |
+| `severity` | `string` | yes |  | Lowercased severity string from event metadata, or info when absent or not a string. |
+| `title` | `string` | yes |  | Friendly title for selected known event types; other event names are transformed from dotted/underscored identifiers. |
+| `metadata` | object (any value) | yes |  | JSON object payload after heuristic redaction; malformed or non-object payloads yield an empty object in this activity projection. |
+| `created_at` | `string` | yes | format="date-time" | Persisted event creation timestamp. |
 
 ### Schema: ActivityFeed {#schema-activityfeed}
 
@@ -1399,8 +1399,8 @@ Required fields: `items`
 
 | Property | Type | Required | Constraints | Description |
 |---|---|---|---|---|
-| `items` | array of `ActivityItem` | yes |  |  |
-| `next_cursor` | `string or null` | no |  |  |
+| `items` | array of `ActivityItem` | yes |  | Workspace-matching events in descending event ID order, with optional entity, category, actor, and severity filters applied in memory. |
+| `next_cursor` | `string or null` | no |  | Opaque offset cursor for the next page; this endpoint loads and filters the matching event rows before pagination. |
 
 ### Schema: Memory {#schema-memory}
 
@@ -1545,19 +1545,19 @@ Required fields: `id`, `workspace_id`, `recipient_id`, `severity`, `category`, `
 
 | Property | Type | Required | Constraints | Description |
 |---|---|---|---|---|
-| `id` | `string` | yes |  |  |
-| `workspace_id` | `string` | yes |  |  |
-| `recipient_id` | `string` | yes |  |  |
-| `severity` | `string` | yes | enum=["info","warning","error","critical"] |  |
-| `category` | `string` | yes | enum=["approval_required","claim_contention","transaction_failure","policy_intervention","agent_session_failure","repository_degraded","system_warning"] |  |
-| `title` | `string` | yes |  |  |
-| `body` | `string` | yes |  |  |
-| `entity_type` | `string` | no |  |  |
-| `entity_id` | `string` | no |  |  |
-| `read_at` | `string` | no | format="date-time" |  |
-| `actionable` | `boolean` | yes |  |  |
-| `resolved_at` | `string` | no | format="date-time" |  |
-| `created_at` | `string` | yes | format="date-time" |  |
+| `id` | `string` | yes |  | Stable notification identifier. |
+| `workspace_id` | `string` | yes |  | Workspace that owns the notification. |
+| `recipient_id` | `string` | yes |  | Recipient identity or wildcard recipient; text-redacted before returning. |
+| `severity` | `string` | yes | enum=["info","warning","error","critical"] | Stored notification severity label. |
+| `category` | `string` | yes | enum=["approval_required","claim_contention","transaction_failure","policy_intervention","agent_session_failure","repository_degraded","system_warning"] | Stored attention category used by exact-match list filters. |
+| `title` | `string` | yes |  | Notification headline after text redaction. |
+| `body` | `string` | yes |  | Notification detail after text redaction. |
+| `entity_type` | `string` | no |  | Optional associated entity category; omitted when empty. |
+| `entity_id` | `string` | no |  | Optional associated entity identifier; omitted when empty. |
+| `read_at` | `string` | no | format="date-time" | Acknowledgement timestamp; acknowledgement preserves the first timestamp and does not resolve the underlying condition. |
+| `actionable` | `boolean` | yes |  | Whether the notification is marked as actionable; actionable counts include only unread items whose resolved_at is null. |
+| `resolved_at` | `string` | no | format="date-time" | Underlying notification resolution timestamp; omitted when unresolved. Reading/acknowledging does not set this field. |
+| `created_at` | `string` | yes | format="date-time" | Notification creation timestamp, used with ID for descending keyset pagination. |
 
 ### Schema: Notifications {#schema-notifications}
 
@@ -1567,8 +1567,8 @@ Required fields: `items`
 
 | Property | Type | Required | Constraints | Description |
 |---|---|---|---|---|
-| `items` | array of `Notification` | yes |  |  |
-| `next_cursor` | `string or null` | no |  |  |
+| `items` | array of `Notification` | yes |  | Workspace notifications ordered by creation time and ID descending after recipient/category/severity/read/actionable filters. |
+| `next_cursor` | `string or null` | no |  | Raw-base64url cursor encoding the last returned created_at and ID separated by a newline; null when no further page is available. |
 
 ### Schema: NotificationCounts {#schema-notificationcounts}
 
@@ -1578,9 +1578,9 @@ Required fields: `workspace_id`, `unread`, `actionable`
 
 | Property | Type | Required | Constraints | Description |
 |---|---|---|---|---|
-| `workspace_id` | `string` | yes |  |  |
-| `unread` | `integer` | yes | minimum=0 |  |
-| `actionable` | `integer` | yes | minimum=0 |  |
+| `workspace_id` | `string` | yes |  | Workspace whose notifications were counted. |
+| `unread` | `integer` | yes | minimum=0 | Count of unread notifications for the selected recipient scope. |
+| `actionable` | `integer` | yes | minimum=0 | Count of unread notifications with actionable=true and resolved_at unset for the selected recipient scope. |
 
 ### Schema: OperationalLog {#schema-operationallog}
 
@@ -1590,18 +1590,18 @@ Required fields: `id`, `type`, `component`, `severity`, `payload`, `created_at`
 
 | Property | Type | Required | Constraints | Description |
 |---|---|---|---|---|
-| `id` | `integer` | yes | format="int64" |  |
-| `type` | `string` | yes |  |  |
-| `component` | `string` | yes |  |  |
-| `severity` | `string` | yes |  |  |
-| `actor_id` | `string` | no |  |  |
-| `request_id` | `string` | no |  |  |
-| `agent_id` | `string` | no |  |  |
-| `session_id` | `string` | no |  |  |
-| `proposal_id` | `string` | no |  |  |
-| `transaction_id` | `string` | no |  |  |
-| `payload` | object (any value) | yes |  |  |
-| `created_at` | `string` | yes | format="date-time" |  |
+| `id` | `integer` | yes | format="int64" | Global persisted event row ID. |
+| `type` | `string` | yes |  | Stored event type. |
+| `component` | `string` | yes |  | Prefix of type before the first dot; the component filter matches event-type prefixes. |
+| `severity` | `string` | yes |  | String severity extracted from the payload, defaulting to info when absent or non-string. |
+| `actor_id` | `string` | no |  | Text-redacted actor ID; omitted when empty. |
+| `request_id` | `string` | no |  | Text-redacted string extracted from payload; omitted when absent or non-string. |
+| `agent_id` | `string` | no |  | Text-redacted string extracted from payload; omitted when absent or non-string. |
+| `session_id` | `string` | no |  | Text-redacted string extracted from payload; omitted when absent or non-string. |
+| `proposal_id` | `string` | no |  | Text-redacted string extracted from payload; omitted when absent or non-string. |
+| `transaction_id` | `string` | no |  | Text-redacted string extracted from payload; omitted when absent or non-string. |
+| `payload` | object (any value) | yes |  | Decoded JSON event payload after heuristic redaction; invalid or non-object payloads become an object containing redacted text. |
+| `created_at` | `string` | yes | format="date-time" | Persisted event creation timestamp. |
 
 ### Schema: OperationalLogs {#schema-operationallogs}
 
@@ -1611,8 +1611,8 @@ Required fields: `items`
 
 | Property | Type | Required | Constraints | Description |
 |---|---|---|---|---|
-| `items` | array of `OperationalLog` | yes |  |  |
-| `next_cursor` | `string or null` | no |  |  |
+| `items` | array of `OperationalLog` | yes |  | Workspace events in descending global event ID order, projected from the events table; this is not the HTTP logger or a complete process log. |
+| `next_cursor` | `string or null` | no |  | Decimal global event ID of the last returned item when another page exists; send it back as cursor to request older IDs. |
 
 ### Schema: AuditEvent {#schema-auditevent}
 
@@ -1622,15 +1622,15 @@ Required fields: `id`, `actor_id`, `action`, `entity_type`, `entity_id`, `payloa
 
 | Property | Type | Required | Constraints | Description |
 |---|---|---|---|---|
-| `id` | `integer` | yes | format="int64" |  |
-| `actor_id` | `string` | yes |  |  |
-| `action` | `string` | yes |  |  |
-| `entity_type` | `string` | yes |  |  |
-| `entity_id` | `string` | yes |  |  |
-| `request_id` | `string` | no |  |  |
-| `reason` | `string` | no |  |  |
-| `payload` | object (any value) | yes |  |  |
-| `created_at` | `string` | yes | format="date-time" |  |
+| `id` | `integer` | yes | format="int64" | Global audit row ID. |
+| `actor_id` | `string` | yes |  | Text-redacted actor identifier. |
+| `action` | `string` | yes |  | Recorded audit action label. |
+| `entity_type` | `string` | yes |  | Recorded entity category associated with the audited action. |
+| `entity_id` | `string` | yes |  | Text-redacted identifier of the audited entity. |
+| `request_id` | `string` | no |  | Optional request correlation ID; omitted when absent. |
+| `reason` | `string` | no |  | Optional text-redacted rationale; omitted when empty. |
+| `payload` | object (any value) | yes |  | Decoded audit JSON payload after heuristic redaction; invalid or non-object content is represented as redacted text. |
+| `created_at` | `string` | yes | format="date-time" | Audit row creation timestamp. |
 
 ### Schema: AuditEvents {#schema-auditevents}
 
@@ -1640,8 +1640,8 @@ Required fields: `items`
 
 | Property | Type | Required | Constraints | Description |
 |---|---|---|---|---|
-| `items` | array of `AuditEvent` | yes |  |  |
-| `next_cursor` | `string or null` | no |  |  |
+| `items` | array of `AuditEvent` | yes |  | Workspace audit rows in descending ID order, filtered by exact actor/action/request/entity values and valid time bounds. |
+| `next_cursor` | `string or null` | no |  | Decimal audit row ID of the last returned item when another page exists; send it back to request older IDs. |
 
 ### Schema: EffectiveSettings {#schema-effectivesettings}
 
