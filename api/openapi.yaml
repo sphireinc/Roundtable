@@ -32,6 +32,8 @@ paths:
     get:
       operationId: getSecurityCapabilities
       summary: Describe the configured local security boundary
+      description: >-
+        Returns a descriptive snapshot of the server's configured boundary, not a probe that proves every request path enforces each field. authentication is local-header-development when neither human nor agent bearer token is configured, otherwise bearer-token. The response also states the separate agent-token boundary, Origin/CSRF policy, default loopback bind, configured allowed origins, and recognized roles. When tokens are configured, the global middleware still requires a valid bearer token to read this route; with no tokens configured, it is accessible in local development mode. No token values are returned.
       security: [{HumanBearer: []}, {}]
       responses:
         '200':
@@ -44,6 +46,8 @@ paths:
     get:
       operationId: getMetrics
       summary: Prometheus-compatible low-cardinality HTTP metrics
+      description: >-
+        Exposes three process-local, unlabeled counters in Prometheus text exposition format: total requests handled, responses with status 400 or greater, and cumulative request duration in nanoseconds. These are in-memory since-process-start totals, not persisted metrics, histograms, per-route labels, or distributed aggregates. The scrape request itself is counted after its response is generated and is reflected in a subsequent scrape. When bearer authentication is configured, this endpoint is subject to the server-wide authentication middleware.
       responses:
         '200':
           description: Prometheus text exposition
@@ -424,6 +428,8 @@ paths:
     post:
       operationId: runAgentDiagnostics
       summary: Run bounded, read-only adapter and MCP diagnostics
+      description: >-
+        Requires X-Actor-ID, an accepted human X-Actor-Role, a nonblank Idempotency-Key, a registered workspace, and an existing global agent. Runs synchronously under a three-second deadline, then returns HTTP 202 after completion. The diagnostic executes the configured agent Command (or Adapter label when Command is empty) as an executable plus whitespace-split arguments, appending --version; it does not invoke a shell, create a session, or receive repository write access. It also checks whether the default MCP registry exposes tools. Combined command output is sanitized by dropping any whole line containing token=, password=, or secret= (case-insensitive) and truncating to 2,000 bytes; the excerpt is returned in stdout, while stderr is currently not populated. A missing executable configuration returns a failed check without probing MCP. Result is persisted as a test-run record and a global agent.diagnostic.completed event. Although Idempotency-Key is required, the request has no body, so shared idempotency middleware does not cache/replay it. Authorization failure returns 403, unknown agent 404, and persistence/event failures 500.
       responses:
         '202':
           description: Diagnostic completed or accepted
