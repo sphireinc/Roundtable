@@ -28,9 +28,9 @@ Required fields: `foreign_keys`, `wal`, `protected_immutable_tables`
 
 | Property | Type | Required | Constraints | Description |
 |---|---|---|---|---|
-| `foreign_keys` | `boolean` | yes |  | Whether SQLite foreign-key enforcement is enabled on the inspected database connection. |
-| `wal` | `boolean` | yes |  | Whether the database reports WAL journal mode. |
-| `protected_immutable_tables` | array of `string` | yes |  | Table names excluded from the retention cleanup operation; this is not a complete immutability guarantee for every API or database writer. |
+| `foreign_keys` | `boolean` | yes |  | Whether PRAGMA foreign_keys returned 1 on the inspected pooled connection; query failure returns an error. |
+| `wal` | `boolean` | yes |  | Whether PRAGMA journal_mode returned wal; a journal-mode query error is ignored and appears false. |
+| `protected_immutable_tables` | array of `string` | yes |  | Fixed names audit_events, event_outbox, configuration_revisions, transaction_phases, memory_revisions, and policy_revisions. The retention handler deletes only notifications; this list is descriptive, not a database-wide immutability guarantee. |
 
 ### Schema: RetentionInput {#schema-retentioninput}
 
@@ -41,6 +41,62 @@ Required fields: `retention_days`
 | Property | Type | Required | Constraints | Description |
 |---|---|---|---|---|
 | `retention_days` | `integer` | yes | minimum=1; maximum=3650 | Age threshold in calendar days; the retention endpoint deletes notifications older than the computed UTC cutoff. |
+
+### Schema: IntegrityCheckResult {#schema-integritycheckresult}
+
+Type: `object`
+
+Description: Successful response only; non-ok integrity output is returned as a 409 Problem instead.
+Required fields: `status`, `result`, `completed_at`
+
+| Property | Type | Required | Constraints | Description |
+|---|---|---|---|---|
+| `status` | `string` | yes | const="ok" | Fixed success label returned only when PRAGMA integrity_check's first result is exactly ok. |
+| `result` | `string` | yes | const="ok" | First result returned by PRAGMA integrity_check; any other value becomes a conflict problem. |
+| `completed_at` | `string` | yes | format="date-time" | UTC operation-completion timestamp in RFC3339Nano form. |
+
+### Schema: CheckpointResult {#schema-checkpointresult}
+
+Type: `object`
+
+Description: Result from PRAGMA wal_checkpoint(TRUNCATE); completed does not guarantee busy was zero or the WAL stayed empty after the handler's audit write.
+Required fields: `status`, `busy`, `log_pages`, `checkpointed_pages`, `completed_at`
+
+| Property | Type | Required | Constraints | Description |
+|---|---|---|---|---|
+| `status` | `string` | yes | const="completed" | Fixed label after the pragma returned three values without a query/scan error. |
+| `busy` | `integer` | yes | minimum=0 | SQLite checkpoint busy result; nonzero can indicate that truncation did not fully complete. |
+| `log_pages` | `integer` | yes | minimum=0 | WAL page count reported by the checkpoint pragma. |
+| `checkpointed_pages` | `integer` | yes | minimum=0 | Number of pages SQLite reports checkpointed by this operation. |
+| `completed_at` | `string` | yes | format="date-time" | UTC operation-completion timestamp; subsequent audit or other writes may create new WAL data. |
+
+### Schema: BackupResult {#schema-backupresult}
+
+Type: `object`
+
+Description: Server-side artifact reference after VACUUM INTO succeeds; no download or restore-verification operation is implied.
+Required fields: `status`, `artifact`, `completed_at`
+
+| Property | Type | Required | Constraints | Description |
+|---|---|---|---|---|
+| `status` | `string` | yes | const="completed" | Fixed success label after the backup copy is created. |
+| `artifact` | `string` | yes |  | Slash-normalized path relative to the configured maintenance directory, usually backups/roundtable-<UTC Unix nanoseconds>.db; not a URL or absolute path. |
+| `completed_at` | `string` | yes | format="date-time" | UTC completion timestamp recorded after backup creation. |
+
+### Schema: RetentionResult {#schema-retentionresult}
+
+Type: `object`
+
+Description: Outcome of one global notification deletion request; reported RowsAffected errors are ignored.
+Required fields: `status`, `retention_days`, `deleted_notifications`, `protected_tables`, `completed_at`
+
+| Property | Type | Required | Constraints | Description |
+|---|---|---|---|---|
+| `status` | `string` | yes | const="completed" | Fixed success label after the DELETE statement succeeds. |
+| `retention_days` | `integer` | yes | minimum=1; maximum=3650 | Submitted age threshold used to calculate the UTC cutoff for this request. |
+| `deleted_notifications` | `integer` | yes | minimum=0 | RowsAffected count for notifications deleted across every workspace and recipient; if RowsAffected itself errors, the current handler reports zero. |
+| `protected_tables` | array of `string` | yes |  | Same fixed descriptive table list as MaintenanceStatus; the actual cleanup SQL deletes from notifications only. |
+| `completed_at` | `string` | yes | format="date-time" | UTC operation-completion timestamp in RFC3339Nano form. |
 
 ### Schema: ComponentHealth {#schema-componenthealth}
 

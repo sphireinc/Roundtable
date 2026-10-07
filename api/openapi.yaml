@@ -54,34 +54,37 @@ paths:
     get:
       operationId: getMaintenanceStatus
       summary: Inspect SQLite maintenance capabilities and protected tables
-      responses:
-        '200': {description: Maintenance status, content: {application/json: {schema: {$ref: '#/components/schemas/MaintenanceStatus'}}}}
-        '503': {$ref: '#/components/responses/Problem'}
+      description: Read-only inspection of PRAGMA foreign_keys and journal_mode on database connections selected from the SQL pool. This does not run an integrity check or prove every pooled connection shares these settings. A journal_mode read error is ignored and can appear as wal=false. This route does not use the maintenance-specific human-role or idempotency checks.
+      responses: {'200': {description: Maintenance status, content: {application/json: {schema: {$ref: '#/components/schemas/MaintenanceStatus'}}}}, '500': {$ref: '#/components/responses/Problem'}, '503': {$ref: '#/components/responses/Problem'}}
   /api/v1/maintenance/integrity-check:
     post:
       operationId: runIntegrityCheck
       summary: Run SQLite integrity check
+      description: Requires X-Actor-ID, an accepted human X-Actor-Role, and a nonempty Idempotency-Key. Executes PRAGMA integrity_check and inspects only its first returned string. Exact result ok returns success and attempts a global audit row; any other result returns 409 with the result in problem metadata, and query failure returns 500. It does not repair the database or run foreign_key_check. The handler ignores request-body options; empty-body requests are re-evaluated on retry.
       parameters: [{$ref: '#/components/parameters/ActorID'}, {$ref: '#/components/parameters/ActorRole'}, {$ref: '#/components/parameters/IdempotencyKey'}]
-      responses: {'200': {description: Integrity result}, '400': {$ref: '#/components/responses/Problem'}, '403': {$ref: '#/components/responses/Problem'}, '409': {$ref: '#/components/responses/Problem'}}
+      responses: {'200': {description: Database integrity check returned exactly ok, content: {application/json: {schema: {$ref: '#/components/schemas/IntegrityCheckResult'}}}}, '400': {$ref: '#/components/responses/Problem'}, '403': {$ref: '#/components/responses/Problem'}, '409': {$ref: '#/components/responses/Problem'}, '500': {$ref: '#/components/responses/Problem'}}
   /api/v1/maintenance/checkpoint:
     post:
       operationId: checkpointDatabase
       summary: Checkpoint the SQLite WAL
+      description: Requires the maintenance human-role and Idempotency-Key checks. Executes PRAGMA wal_checkpoint(TRUNCATE) and returns SQLite's busy, log_pages, and checkpointed_pages values. A successful pragma scan returns status completed even when busy is nonzero; inspect the fields rather than assuming truncation completed. The handler ignores request-body options, attempts its audit after checkpointing (which itself may create WAL content), and does not stop other writers. Empty-body requests are re-evaluated on retry.
       parameters: [{$ref: '#/components/parameters/ActorID'}, {$ref: '#/components/parameters/ActorRole'}, {$ref: '#/components/parameters/IdempotencyKey'}]
-      responses: {'200': {description: Checkpoint result}, '400': {$ref: '#/components/responses/Problem'}, '403': {$ref: '#/components/responses/Problem'}, '409': {$ref: '#/components/responses/Problem'}}
+      responses: {'200': {description: Checkpoint pragma result, content: {application/json: {schema: {$ref: '#/components/schemas/CheckpointResult'}}}}, '400': {$ref: '#/components/responses/Problem'}, '403': {$ref: '#/components/responses/Problem'}, '409': {$ref: '#/components/responses/Problem'}}
   /api/v1/maintenance/backup:
     post:
       operationId: createDatabaseBackup
       summary: Create a server-side SQLite backup artifact
+      description: Requires the maintenance human-role and Idempotency-Key checks. Uses SQLite VACUUM INTO to create a server-side copy beneath MaintenanceDirectory/backups (or .roundtable/backups when no directory is configured), with a server-generated filename. The returned artifact is a relative reference, not a download URL or absolute path. It does not verify restoration, checksum the backup, copy repository patches/logs, or include the subsequent backup-created audit row. The handler ignores request-body options; empty-body requests are re-evaluated on retry.
       parameters: [{$ref: '#/components/parameters/ActorID'}, {$ref: '#/components/parameters/ActorRole'}, {$ref: '#/components/parameters/IdempotencyKey'}]
-      responses: {'201': {description: Backup artifact reference}, '400': {$ref: '#/components/responses/Problem'}, '403': {$ref: '#/components/responses/Problem'}, '409': {$ref: '#/components/responses/Problem'}}
+      responses: {'201': {description: Created backup artifact reference, content: {application/json: {schema: {$ref: '#/components/schemas/BackupResult'}}}}, '400': {$ref: '#/components/responses/Problem'}, '403': {$ref: '#/components/responses/Problem'}, '409': {$ref: '#/components/responses/Problem'}, '500': {$ref: '#/components/responses/Problem'}}
   /api/v1/maintenance/retention:
     post:
       operationId: runRetentionCleanup
       summary: Remove eligible non-immutable notification history
+      description: Requires the maintenance human-role and Idempotency-Key checks. Deletes notifications across all workspaces and recipients using created_at text less than the UTC RFC3339Nano cutoff calculated from this request's retention_days. There is no dry run, unresolved-item exemption, archive, or settings-driven schedule. Only the fixed protected tables listed in the response are excluded because the SQL deletes solely from notifications; the list is not a general immutability guarantee. A successful body-bearing request can replay from the in-process idempotency cache.
       parameters: [{$ref: '#/components/parameters/ActorID'}, {$ref: '#/components/parameters/ActorRole'}, {$ref: '#/components/parameters/IdempotencyKey'}]
       requestBody: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/RetentionInput'}}}}
-      responses: {'200': {description: Retention result}, '400': {$ref: '#/components/responses/Problem'}, '403': {$ref: '#/components/responses/Problem'}, '409': {$ref: '#/components/responses/Problem'}}
+      responses: {'200': {description: Cleanup outcome and deleted-row count, content: {application/json: {schema: {$ref: '#/components/schemas/RetentionResult'}}}}, '400': {$ref: '#/components/responses/Problem'}, '403': {$ref: '#/components/responses/Problem'}, '409': {$ref: '#/components/responses/Problem'}}
   /api/v1/workspaces/{id}/health:
     parameters:
       - name: id
@@ -1072,14 +1075,50 @@ components:
       type: object
       required: [foreign_keys, wal, protected_immutable_tables]
       properties:
-        foreign_keys: {type: boolean, description: "Whether SQLite foreign-key enforcement is enabled on the inspected database connection."}
-        wal: {type: boolean, description: "Whether the database reports WAL journal mode."}
-        protected_immutable_tables: {type: array, items: {type: string}, description: "Table names excluded from the retention cleanup operation; this is not a complete immutability guarantee for every API or database writer."}
+        foreign_keys: {type: boolean, description: "Whether PRAGMA foreign_keys returned 1 on the inspected pooled connection; query failure returns an error."}
+        wal: {type: boolean, description: "Whether PRAGMA journal_mode returned wal; a journal-mode query error is ignored and appears false."}
+        protected_immutable_tables: {type: array, items: {type: string}, description: "Fixed names audit_events, event_outbox, configuration_revisions, transaction_phases, memory_revisions, and policy_revisions. The retention handler deletes only notifications; this list is descriptive, not a database-wide immutability guarantee."}
     RetentionInput:
       type: object
       required: [retention_days]
       properties:
         retention_days: {type: integer, minimum: 1, maximum: 3650, description: "Age threshold in calendar days; the retention endpoint deletes notifications older than the computed UTC cutoff."}
+    IntegrityCheckResult:
+      type: object
+      required: [status, result, completed_at]
+      description: Successful response only; non-ok integrity output is returned as a 409 Problem instead.
+      properties:
+        status: {type: string, const: ok, description: "Fixed success label returned only when PRAGMA integrity_check's first result is exactly ok."}
+        result: {type: string, const: ok, description: "First result returned by PRAGMA integrity_check; any other value becomes a conflict problem."}
+        completed_at: {type: string, format: date-time, description: "UTC operation-completion timestamp in RFC3339Nano form."}
+    CheckpointResult:
+      type: object
+      required: [status, busy, log_pages, checkpointed_pages, completed_at]
+      description: Result from PRAGMA wal_checkpoint(TRUNCATE); completed does not guarantee busy was zero or the WAL stayed empty after the handler's audit write.
+      properties:
+        status: {type: string, const: completed, description: "Fixed label after the pragma returned three values without a query/scan error."}
+        busy: {type: integer, minimum: 0, description: "SQLite checkpoint busy result; nonzero can indicate that truncation did not fully complete."}
+        log_pages: {type: integer, minimum: 0, description: "WAL page count reported by the checkpoint pragma."}
+        checkpointed_pages: {type: integer, minimum: 0, description: "Number of pages SQLite reports checkpointed by this operation."}
+        completed_at: {type: string, format: date-time, description: "UTC operation-completion timestamp; subsequent audit or other writes may create new WAL data."}
+    BackupResult:
+      type: object
+      required: [status, artifact, completed_at]
+      description: Server-side artifact reference after VACUUM INTO succeeds; no download or restore-verification operation is implied.
+      properties:
+        status: {type: string, const: completed, description: "Fixed success label after the backup copy is created."}
+        artifact: {type: string, description: "Slash-normalized path relative to the configured maintenance directory, usually backups/roundtable-<UTC Unix nanoseconds>.db; not a URL or absolute path."}
+        completed_at: {type: string, format: date-time, description: "UTC completion timestamp recorded after backup creation."}
+    RetentionResult:
+      type: object
+      required: [status, retention_days, deleted_notifications, protected_tables, completed_at]
+      description: Outcome of one global notification deletion request; reported RowsAffected errors are ignored.
+      properties:
+        status: {type: string, const: completed, description: "Fixed success label after the DELETE statement succeeds."}
+        retention_days: {type: integer, minimum: 1, maximum: 3650, description: "Submitted age threshold used to calculate the UTC cutoff for this request."}
+        deleted_notifications: {type: integer, minimum: 0, description: "RowsAffected count for notifications deleted across every workspace and recipient; if RowsAffected itself errors, the current handler reports zero."}
+        protected_tables: {type: array, items: {type: string}, description: "Same fixed descriptive table list as MaintenanceStatus; the actual cleanup SQL deletes from notifications only."}
+        completed_at: {type: string, format: date-time, description: "UTC operation-completion timestamp in RFC3339Nano form."}
     ComponentHealth:
       type: object
       required: [status]

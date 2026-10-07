@@ -21,10 +21,10 @@ This guide is generated from [`api/openapi.yaml`](../openapi.yaml). Regenerate i
 | `GET` | `/api/v1/security/capabilities` | `getSecurityCapabilities` | view | not required | none | 200: [`SecurityCapabilities`](schema-reference.md#schema-securitycapabilities) |
 | `GET` | `/metrics` | `getMetrics` | Prometheus scrape | not required | none | 200: string |
 | `GET` | `/api/v1/maintenance` | `getMaintenanceStatus` | view | not required | none | 200: [`MaintenanceStatus`](schema-reference.md#schema-maintenancestatus) |
-| `POST` | `/api/v1/maintenance/integrity-check` | `runIntegrityCheck` | role-gated human | required | none | none declared |
-| `POST` | `/api/v1/maintenance/checkpoint` | `checkpointDatabase` | role-gated human | required | none | none declared |
-| `POST` | `/api/v1/maintenance/backup` | `createDatabaseBackup` | role-gated human | required | none | none declared |
-| `POST` | `/api/v1/maintenance/retention` | `runRetentionCleanup` | role-gated human | required | [`RetentionInput`](schema-reference.md#schema-retentioninput) | none declared |
+| `POST` | `/api/v1/maintenance/integrity-check` | `runIntegrityCheck` | role-gated human | required | none | 200: [`IntegrityCheckResult`](schema-reference.md#schema-integritycheckresult) |
+| `POST` | `/api/v1/maintenance/checkpoint` | `checkpointDatabase` | role-gated human | required | none | 200: [`CheckpointResult`](schema-reference.md#schema-checkpointresult) |
+| `POST` | `/api/v1/maintenance/backup` | `createDatabaseBackup` | role-gated human | required | none | 201: [`BackupResult`](schema-reference.md#schema-backupresult) |
+| `POST` | `/api/v1/maintenance/retention` | `runRetentionCleanup` | role-gated human | required | [`RetentionInput`](schema-reference.md#schema-retentioninput) | 200: [`RetentionResult`](schema-reference.md#schema-retentionresult) |
 | `GET` | `/api/v1/workspaces/{id}/health` | `getWorkspaceHealth` | view | not required | none | 200: [`WorkspaceHealthResponse`](schema-reference.md#schema-workspacehealthresponse) |
 | `GET` | `/api/v1/workspaces` | `listWorkspaces` | view | not required | none | 200: inline object {`items`: array of `Workspace`!, `next_cursor`: string or null} |
 | `POST` | `/api/v1/workspaces` | `createWorkspace` | orchestrator or human | not required | [`WorkspaceInput`](schema-reference.md#schema-workspaceinput) | 201: [`Workspace`](schema-reference.md#schema-workspace) |
