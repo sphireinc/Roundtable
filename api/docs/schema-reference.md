@@ -1070,8 +1070,20 @@ Required fields: `schema_version`, `schema`
 
 | Property | Type | Required | Constraints | Description |
 |---|---|---|---|---|
-| `schema_version` | `string` | yes |  |  |
-| `schema` | object (any value) | yes |  |  |
+| `schema_version` | `string` | yes | const="1" |  |
+| `schema` | `PolicyInputSchema` | yes |  |  |
+
+### Schema: PolicyInputSchema {#schema-policyinputschema}
+
+Type: `object`
+
+Required fields: `type`, `required`, `properties`
+
+| Property | Type | Required | Constraints | Description |
+|---|---|---|---|---|
+| `type` | `string` | yes | const="object" |  |
+| `required` | array of `string` | yes | const=["name","definition"] |  |
+| `properties` | `object` | yes |  |  |
 
 ### Schema: PolicyValidation {#schema-policyvalidation}
 
@@ -1086,7 +1098,7 @@ Required fields: `valid`, `result`, `policy_id`, `policy_revision_id`, `issues`,
 | `policy_id` | `string` | yes |  |  |
 | `policy_revision_id` | `string` | yes |  |  |
 | `issues` | array of `string` | yes |  |  |
-| `simulation` | `boolean` | yes |  |  |
+| `simulation` | `boolean` | yes | const=true |  |
 | `deterministic_key` | `string` | yes |  |  |
 
 ### Schema: PolicyEvaluationInput {#schema-policyevaluationinput}
@@ -1099,24 +1111,24 @@ Required fields: `subject_type`, `subject_id`
 |---|---|---|---|---|
 | `subject_type` | `string` | yes |  |  |
 | `subject_id` | `string` | yes |  |  |
-| `evidence` | array of `string` | no |  |  |
+| `evidence` | `array or null` | no |  |  |
 
 ### Schema: PolicyEvaluation {#schema-policyevaluation}
 
 Type: `object`
 
-Required fields: `policy_id`, `policy_revision_id`, `subject_type`, `subject_id`, `result`, `matched_rules`, `evidence`, `remediation`, `human_approval_required`, `deterministic_key`, `simulation`, `evaluated_at`
+Required fields: `id`, `policy_id`, `policy_revision_id`, `subject_type`, `subject_id`, `result`, `matched_rules`, `evidence`, `remediation`, `human_approval_required`, `deterministic_key`, `simulation`, `evaluated_at`
 
 | Property | Type | Required | Constraints | Description |
 |---|---|---|---|---|
-| `id` | `string` | no |  |  |
+| `id` | `string` | yes |  |  |
 | `policy_id` | `string` | yes |  |  |
 | `policy_revision_id` | `string` | yes |  |  |
 | `subject_type` | `string` | yes |  |  |
 | `subject_id` | `string` | yes |  |  |
 | `result` | `string` | yes | enum=["pass","warn"] |  |
 | `matched_rules` | array of `string` | yes |  |  |
-| `evidence` | array of `string` | yes |  |  |
+| `evidence` | `array or null` | yes |  |  |
 | `remediation` | array of `string` | yes |  |  |
 | `human_approval_required` | `boolean` | yes |  |  |
 | `deterministic_key` | `string` | yes |  |  |

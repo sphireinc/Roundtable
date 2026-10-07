@@ -1736,8 +1736,26 @@ components:
       type: object
       required: [schema_version, schema]
       properties:
-        schema_version: {type: string}
-        schema: {type: object, additionalProperties: true}
+        schema_version: {type: string, const: '1'}
+        schema: {$ref: '#/components/schemas/PolicyInputSchema'}
+    PolicyInputSchema:
+      type: object
+      required: [type, required, properties]
+      properties:
+        type: {type: string, const: object}
+        required: {type: array, items: {type: string}, const: [name, definition]}
+        properties:
+          type: object
+          required: [name, scope, selector, severity, enforcement_mode, human_approval_required, definition, metadata]
+          properties:
+            name: {type: object, required: [type], properties: {type: {type: string, const: string}}}
+            scope: {type: object, required: [type], properties: {type: {type: string, const: string}}}
+            selector: {type: object, required: [type], properties: {type: {type: string, const: object}}}
+            severity: {type: object, required: [type], properties: {type: {type: string, const: string}}}
+            enforcement_mode: {type: object, required: [type], properties: {type: {type: string, const: string}}}
+            human_approval_required: {type: object, required: [type], properties: {type: {type: string, const: boolean}}}
+            definition: {type: object, required: [type], properties: {type: {type: string, const: object}}}
+            metadata: {type: object, required: [type], properties: {type: {type: string, const: object}}}
     PolicyValidation:
       type: object
       required: [valid, result, policy_id, policy_revision_id, issues, simulation, deterministic_key]
@@ -1755,10 +1773,10 @@ components:
       properties:
         subject_type: {type: string}
         subject_id: {type: string}
-        evidence: {type: array, items: {type: string}}
+        evidence: {type: [array, 'null'], items: {type: string}}
     PolicyEvaluation:
       type: object
-      required: [policy_id, policy_revision_id, subject_type, subject_id, result, matched_rules, evidence, remediation, human_approval_required, deterministic_key, simulation, evaluated_at]
+      required: [id, policy_id, policy_revision_id, subject_type, subject_id, result, matched_rules, evidence, remediation, human_approval_required, deterministic_key, simulation, evaluated_at]
       properties:
         id: {type: string}
         policy_id: {type: string}
@@ -1767,7 +1785,7 @@ components:
         subject_id: {type: string}
         result: {type: string, enum: [pass, warn]}
         matched_rules: {type: array, items: {type: string}}
-        evidence: {type: array, items: {type: string}}
+        evidence: {type: [array, 'null'], items: {type: string}}
         remediation: {type: array, items: {type: string}}
         human_approval_required: {type: boolean}
         deterministic_key: {type: string}

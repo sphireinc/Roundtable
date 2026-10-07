@@ -124,7 +124,7 @@ def schema_type(shape)
 end
 
 def schema_constraints(shape)
-  keys = %w[format enum minimum maximum exclusiveMinimum exclusiveMaximum minLength maxLength minItems maxItems minProperties maxProperties multipleOf pattern default example uniqueItems]
+  keys = %w[format const enum minimum maximum exclusiveMinimum exclusiveMaximum minLength maxLength minItems maxItems minProperties maxProperties multipleOf pattern default example uniqueItems]
   keys.map do |key|
     next unless shape.key?(key)
     value = shape[key]
