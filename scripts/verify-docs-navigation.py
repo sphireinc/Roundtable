@@ -103,6 +103,23 @@ def main():
     for _, target in expected:
         if target and not (site / target).is_file():
             raise SystemExit(f"Configured page has no rendered output: {target}")
+
+    docs_source = ROOT / config["docs_dir"]
+    prepared_pages = {
+        rendered_path(path.relative_to(docs_source).as_posix())
+        for path in docs_source.rglob("*.md")
+    }
+    menu_pages = {target for _, target in expected if target is not None}
+    missing_from_menu = sorted(prepared_pages - menu_pages)
+    missing_from_sources = sorted(menu_pages - prepared_pages)
+    if missing_from_menu or missing_from_sources:
+        details = []
+        if missing_from_menu:
+            details.append("prepared Markdown not in nav: " + ", ".join(missing_from_menu))
+        if missing_from_sources:
+            details.append("nav targets without prepared Markdown: " + ", ".join(missing_from_sources))
+        raise SystemExit("Navigation/source coverage mismatch: " + "; ".join(details))
+
     pages = sorted(site.rglob("*.html"))
     if not pages:
         raise SystemExit("No rendered pages found; build the site first")
