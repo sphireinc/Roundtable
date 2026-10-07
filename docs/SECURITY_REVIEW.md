@@ -35,6 +35,8 @@ The scan examines only lines starting with `+`, excluding patch headers starting
 
 Any critical finding yields `veto`. Other findings yield `needs_changes`. No findings yields `approved`, including high/critical-risk proposals. Risk determines whether review is required; it does not force a failed scan result.
 
+Scanning operates on the complete stored patch text, not only the paths returned by the patch metadata parser. It emits at most one `secret_logging` finding per matching added line. For dangerous commands, it emits one `dangerous_command` finding for each configured pattern found on each added line; multiple patterns or repeated matching lines can produce repeated finding codes and messages. Findings are sorted by descending severity string, then ascending code. This is lexical string ordering, not a separately defined severity rank; order among equal severity/code findings is not guaranteed. Findings contain neither source line numbers nor deduplicated path attribution, and the full matched pattern text can appear in their messages.
+
 These checks can flag comments, variable names, and ordinary words containing a configured substring. They do not inspect removed/context lines, execute commands, verify secrets, analyze data flow, or establish that a change is secure. Perform a human/agent review appropriate to the affected feature in addition to these heuristics.
 
 Missing proposals, unreadable patch artifacts, and malformed patches return errors before a review is stored when the automatic scan path is used. A supplied manual status skips patch reading/parsing after loading the proposal.
