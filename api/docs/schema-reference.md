@@ -1406,136 +1406,157 @@ Required fields: `items`
 
 Type: `object`
 
+Description: Current memory projection. Workspace-owned and legacy shared rows are readable within the workspace; optional source identifiers and workspace_id are omitted when empty. Title/body and selected provenance data are redacted heuristically on output. Confidence, reliability, and importance range metadata describe intended scale but creation currently does not enforce those bounds.
 Required fields: `id`, `scope`, `kind`, `title`, `body_md`, `tags`, `provenance`, `confidence`, `reliability`, `importance`, `pinned`, `revision`, `status`, `resynthesis_status`, `created_at`, `updated_at`
 
 | Property | Type | Required | Constraints | Description |
 |---|---|---|---|---|
-| `id` | `string` | yes |  |  |
-| `workspace_id` | `string` | no |  |  |
-| `scope` | `string` | yes |  |  |
-| `kind` | `string` | yes |  |  |
-| `title` | `string` | yes |  |  |
-| `body_md` | `string` | yes |  |  |
-| `tags` | array of `string` | yes |  |  |
-| `provenance` | object (any value) | yes |  |  |
-| `source_event_id` | `integer` | no | format="int64" |  |
-| `source_session_id` | `string` | no |  |  |
-| `source_proposal_id` | `string` | no |  |  |
-| `confidence` | `number` | yes | minimum=0; maximum=1 |  |
-| `reliability` | `number` | yes | minimum=0; maximum=1 |  |
-| `importance` | `integer` | yes | minimum=0; maximum=100 |  |
-| `pinned` | `boolean` | yes |  |  |
-| `revision` | `integer` | yes | minimum=1 |  |
-| `status` | `string` | yes | enum=["active","archived","merged"] |  |
-| `resynthesis_status` | `string` | yes |  |  |
-| `created_at` | `string` | yes | format="date-time" |  |
-| `updated_at` | `string` | yes | format="date-time" |  |
+| `id` | `string` | yes |  | Stable memory identifier; created notes use an M-prefixed time-derived identifier and canonical merges create a new identifier. |
+| `workspace_id` | `string` | no |  | Owning workspace; omitted for legacy shared rows. |
+| `scope` | `string` | yes |  | Caller-supplied scope label; creation does not validate or normalize it. |
+| `kind` | `string` | yes |  | Caller-supplied memory kind label; creation does not validate or normalize it. |
+| `title` | `string` | yes |  | Memory title after heuristic text redaction on output. |
+| `body_md` | `string` | yes |  | Markdown body after heuristic redaction before persistence and on output. |
+| `tags` | array of `string` | yes |  | Tag strings; missing or invalid stored JSON is returned as an empty array. |
+| `provenance` | object (any value) | yes |  | Caller-provided provenance JSON object; missing or invalid stored JSON is returned as an empty object and response values are redacted. |
+| `source_event_id` | `integer` | no | format="int64" | Optional originating event row ID; omitted when zero or absent. |
+| `source_session_id` | `string` | no |  | Optional source session identifier; omitted when empty. |
+| `source_proposal_id` | `string` | no |  | Optional source proposal identifier; omitted when empty. |
+| `confidence` | `number` | yes | minimum=0; maximum=1 | Confidence score; defaults to 0.5 on creation. Bounds are documented but not enforced by the current handler. |
+| `reliability` | `number` | yes | minimum=0; maximum=1 | Reliability score; defaults to 0.5 on creation. Bounds are documented but not enforced by the current handler. |
+| `importance` | `integer` | yes | minimum=0; maximum=100 | Importance score; omitted input currently persists as 0 despite the database column default. Bounds are not enforced by the handler. |
+| `pinned` | `boolean` | yes |  | Whether the note is pinned; changed through the pin and unpin actions. |
+| `revision` | `integer` | yes | minimum=1 | Current revision number; newly created notes start at 1 and successful revision writes increment it after an expected_revision check. |
+| `status` | `string` | yes | enum=["active","archived","merged"] | Lifecycle state. Listing always excludes archived rows; restore changes status to active; merges mark source records merged. |
+| `resynthesis_status` | `string` | yes |  | Resynthesis lifecycle marker; the resynthesize action sets requested but does not execute a worker. |
+| `created_at` | `string` | yes | format="date-time" | Database creation timestamp. |
+| `updated_at` | `string` | yes | format="date-time" | Database update timestamp, changed by lifecycle actions and revision writes. |
 
 ### Schema: Memories {#schema-memories}
 
 Type: `object`
 
+Description: One ascending keyset-paginated memory page; next_cursor is null when no further row was observed.
 Required fields: `items`
 
 | Property | Type | Required | Constraints | Description |
 |---|---|---|---|---|
-| `items` | array of `Memory` | yes |  |  |
-| `next_cursor` | `string or null` | no |  |  |
+| `items` | array of `Memory` | yes |  | Memory rows matching the list filters, ordered by created_at then id ascending. |
+| `next_cursor` | `string or null` | no |  | Raw-base64url keyset cursor derived from the last returned created_at and id when an additional row exists. |
 
 ### Schema: MemoryInput {#schema-memoryinput}
 
-Type: `object`
+Type: object (no additional properties)
 
-Required fields: `title`, `body_md`, `scope`, `kind`
+Description: Strict JSON request for note creation. Only title and body_md are validated as non-blank; scope and kind are accepted as empty when omitted. Confidence/reliability default to 0.5 and importance defaults to 0 in current handler behavior.
+Required fields: `title`, `body_md`
+Additional properties: forbidden.
 
 | Property | Type | Required | Constraints | Description |
 |---|---|---|---|---|
-| `scope` | `string` | yes |  |  |
-| `kind` | `string` | yes |  |  |
-| `title` | `string` | yes |  |  |
-| `body_md` | `string` | yes |  |  |
-| `tags` | array of `string` | no |  |  |
-| `provenance` | object (any value) | no |  |  |
-| `source_event_id` | `integer` | no | format="int64" |  |
-| `source_session_id` | `string` | no |  |  |
-| `source_proposal_id` | `string` | no |  |  |
-| `confidence` | `number` | no | minimum=0; maximum=1 |  |
-| `reliability` | `number` | no | minimum=0; maximum=1 |  |
-| `importance` | `integer` | no | minimum=0; maximum=100 |  |
+| `scope` | `string` | no |  | Optional caller-defined scope label; no enum or non-empty validation is currently applied. |
+| `kind` | `string` | no |  | Optional caller-defined kind label; no enum or non-empty validation is currently applied. |
+| `title` | `string` | yes | minLength=1 | Required non-blank title; trimmed only for validation, not before persistence. |
+| `body_md` | `string` | yes | minLength=1 | Required non-blank markdown body; text-redacted before persistence. |
+| `tags` | array of `string` | no |  | Optional tag list; omitted/null is returned as an empty array. |
+| `provenance` | object (any value) | no |  | Optional free-form provenance object; returned values are heuristically redacted. |
+| `source_event_id` | `integer` | no | format="int64" | Optional source event row ID; zero is persisted as SQL null. |
+| `source_session_id` | `string` | no |  | Optional source session ID; empty string is persisted as SQL null. |
+| `source_proposal_id` | `string` | no |  | Optional source proposal ID; empty string is persisted as SQL null. |
+| `confidence` | `number` | no | minimum=0; maximum=1 | Optional intended 0..1 score; omission defaults to 0.5. The handler does not enforce the range. |
+| `reliability` | `number` | no | minimum=0; maximum=1 | Optional intended 0..1 score; omission defaults to 0.5. The handler does not enforce the range. |
+| `importance` | `integer` | no | minimum=0; maximum=100 | Optional intended 0..100 score; omission currently persists as 0. The handler does not enforce the range. |
 
 ### Schema: MemoryRevisionInput {#schema-memoryrevisioninput}
 
-Type: `object`
+Type: object (no additional properties)
 
-Required fields: `body_md`
+Description: Strict JSON revision request using optimistic concurrency. expected_revision must be positive and equal the current revision; stale writes return 409.
+Required fields: `body_md`, `expected_revision`
+Additional properties: forbidden.
 
 | Property | Type | Required | Constraints | Description |
 |---|---|---|---|---|
-| `body_md` | `string` | yes |  |  |
-| `title` | `string` | no |  |  |
-| `reason` | `string` | no |  |  |
+| `body_md` | `string` | yes | minLength=1 | Required non-blank replacement markdown body; text-redacted before persistence. |
+| `title` | `string` | no |  | Optional replacement title; an empty value leaves the current title unchanged. |
+| `reason` | `string` | no |  | Accepted but currently ignored; stored revision provenance uses the fixed reason revision. |
+| `expected_revision` | `integer` | yes | minimum=1 | Required current revision number used to reject stale edits; must be at least 1. |
 
 ### Schema: MemoryRevision {#schema-memoryrevision}
 
 Type: `object`
 
+Description: Immutable revision record returned in ascending revision order.
 Required fields: `id`, `memory_id`, `revision`, `body_md`, `provenance`, `created_by`, `created_at`
 
 | Property | Type | Required | Constraints | Description |
 |---|---|---|---|---|
-| `id` | `string` | yes |  |  |
-| `memory_id` | `string` | yes |  |  |
-| `revision` | `integer` | yes | minimum=1 |  |
-| `body_md` | `string` | yes |  |  |
-| `provenance` | object (any value) | yes |  |  |
-| `created_by` | `string` | yes |  |  |
-| `created_at` | `string` | yes | format="date-time" |  |
+| `id` | `string` | yes |  | Revision row identifier, conventionally memory ID followed by -r and the revision number. |
+| `memory_id` | `string` | yes |  | Memory whose history contains this revision. |
+| `revision` | `integer` | yes | minimum=1 | Monotonically increasing revision number. |
+| `body_md` | `string` | yes |  | Persisted markdown body after heuristic text redaction and redacted again on output. |
+| `provenance` | object (any value) | yes |  | Revision provenance JSON; current writes record the fixed reason revision. |
+| `created_by` | `string` | yes |  | Actor ID that submitted the revision. |
+| `created_at` | `string` | yes | format="date-time" | Revision creation timestamp. |
 
 ### Schema: MemoryRevisions {#schema-memoryrevisions}
 
 Type: `object`
 
+Description: Complete unpaginated memory revision history.
 Required fields: `items`
 
 | Property | Type | Required | Constraints | Description |
 |---|---|---|---|---|
-| `items` | array of `MemoryRevision` | yes |  |  |
+| `items` | array of `MemoryRevision` | yes |  | Immutable revision records in ascending revision order. |
 
 ### Schema: MemoryDiff {#schema-memorydiff}
 
 Type: `object`
 
+Description: Current implementation is a placeholder projection and does not calculate a content diff; changed is always true.
 Required fields: `memory_id`, `from_revision`, `to_revision`, `changed`
 
 | Property | Type | Required | Constraints | Description |
 |---|---|---|---|---|
-| `memory_id` | `string` | yes |  |  |
-| `from_revision` | `string` | yes |  |  |
-| `to_revision` | `string` | yes |  |  |
-| `changed` | `boolean` | yes |  |  |
-| `current_body_md` | `string` | no |  |  |
+| `memory_id` | `string` | yes |  | Requested memory identifier. |
+| `from_revision` | `string` | yes |  | Requested source revision label, default 1; echoed without lookup. |
+| `to_revision` | `string` | yes |  | Requested target revision label, default latest; echoed without lookup. |
+| `changed` | `boolean` | yes |  | Currently always true; not computed by comparing revisions. |
+| `current_body_md` | `string` | no |  | Current memory body after heuristic text redaction; this is not a patch or unified diff. |
 
 ### Schema: MemoryGraph {#schema-memorygraph}
 
 Type: `object`
 
+Description: Alias records connecting this memory ID to canonical merge records.
 Required fields: `memory_id`, `aliases`
 
 | Property | Type | Required | Constraints | Description |
 |---|---|---|---|---|
-| `memory_id` | `string` | yes |  |  |
-| `aliases` | array of object (any value) | yes |  |  |
+| `memory_id` | `string` | yes |  | Memory whose alias relationships were queried. |
+| `aliases` | array of object (no additional properties) | yes |  | Rows where memory_id appears as alias_id or canonical_id, ordered by created_at. |
+| `aliases[].alias_id` | `string` | yes |  | Redirected source memory ID. |
+| `aliases[].canonical_id` | `string` | yes |  | Canonical memory ID for the alias. |
+| `aliases[].reason` | `string` | yes |  | Merge reason after heuristic text redaction. |
+| `aliases[].created_by` | `string` | yes |  | Actor ID after heuristic text redaction. |
+| `aliases[].created_at` | `string` | yes | format="date-time" | Alias row creation time. |
 
 ### Schema: MemorySourceChain {#schema-memorysourcechain}
 
 Type: `object`
 
+Description: Structured provenance edges for a memory, separate from free-form provenance JSON.
 Required fields: `memory_id`, `edges`
 
 | Property | Type | Required | Constraints | Description |
 |---|---|---|---|---|
-| `memory_id` | `string` | yes |  |  |
-| `edges` | array of object (any value) | yes |  |  |
+| `memory_id` | `string` | yes |  | Memory whose source relationships were queried. |
+| `edges` | array of object (no additional properties) | yes |  | Provenance edges ordered by created_at. |
+| `edges[].source_type` | `string` | yes |  | Category of the source record. |
+| `edges[].source_id` | `string` | yes |  | Source record identifier after heuristic text redaction. |
+| `edges[].relation` | `string` | yes |  | Relationship label connecting the source to this memory. |
+| `edges[].created_at` | `string` | yes | format="date-time" | Provenance edge creation time. |
 
 ### Schema: Notification {#schema-notification}
 

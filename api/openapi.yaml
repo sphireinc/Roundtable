@@ -812,15 +812,16 @@ paths:
       description: Returns the current event sequence, workspace state, bounded domain counts, version markers, and the resume/retention contract. Clients use this after a sequence gap, restart, retention truncation, or prolonged sleep, then refetch only domains whose markers changed; the endpoint never returns unbounded event history.
       responses: {'200': {description: Resynchronization snapshot, content: {application/json: {schema: {$ref: '#/components/schemas/EventSnapshot'}}}}, '404': {$ref: '#/components/responses/Problem'}}
   /api/v1/workspaces/{id}/memories:
-    parameters: [{name: id, in: path, required: true, schema: {type: string}}, {name: q, in: query, schema: {type: string}}, {name: scope, in: query, schema: {type: string}}, {name: kind, in: query, schema: {type: string}}, {name: status, in: query, schema: {type: string}}, {name: cursor, in: query, schema: {type: string}}, {name: limit, in: query, schema: {type: integer, minimum: 1, maximum: 200, default: 50}}]
+    parameters: [{name: id, in: path, required: true, schema: {type: string}}, {name: q, in: query, description: "Trimmed substring searched with SQL LIKE against title and body_md; percent and underscore retain SQL wildcard meaning.", schema: {type: string}}, {name: scope, in: query, description: "Optional exact scope filter after trimming whitespace; matching is case-sensitive according to the database collation.", schema: {type: string}}, {name: kind, in: query, description: "Optional exact kind filter after trimming whitespace.", schema: {type: string}}, {name: status, in: query, description: "Optional exact status filter after trimming whitespace. Archived rows are always excluded by the base query, even when status=archived.", schema: {type: string, enum: [active, archived, merged]}}, {name: cursor, in: query, description: "Raw-base64url encoding of the last item's created_at, newline, and id. Results are ordered ascending by created_at then id.", schema: {type: string}}, {name: limit, in: query, description: "Page size from 1 to 200; defaults to 50. The handler fetches one extra row to decide whether to return a next_cursor.", schema: {type: integer, minimum: 1, maximum: 200, default: 50}}]
     get:
       operationId: listMemories
       summary: Search and list workspace memories
-      description: Search is bounded and cursor-paginated. Body and provenance values are redacted before serialization.
+      description: Searches workspace-owned and legacy shared (workspace_id null) memory rows; archived rows are excluded even when status=archived is requested. Search and exact filters are described by the query parameters. The cursor is a raw-base64url keyset cursor over created_at and id. Returned title/body and provenance are redacted before serialization.
       responses: {'200': {description: Memory collection, content: {application/json: {schema: {$ref: '#/components/schemas/Memories'}}}}, '404': {$ref: '#/components/responses/Problem'}}
     post:
       operationId: createMemoryNote
       summary: Create a human memory note
+      description: Creates an active revision-1 note, redacts its body before storage and title/body on reads, then writes a memory audit row and event. Only title and body_md are checked for non-blank values by the handler; scope/kind are not validated, and omitted confidence/reliability default to 0.5 while omitted importance is stored as 0. A mutation requires X-Actor-ID.
       parameters: [{$ref: '#/components/parameters/ActorID'}, {$ref: '#/components/parameters/IdempotencyKey'}]
       requestBody: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/MemoryInput'}}}}
       responses: {'201': {description: Memory created, content: {application/json: {schema: {$ref: '#/components/schemas/Memory'}}}}, '400': {$ref: '#/components/responses/Problem'}, '403': {$ref: '#/components/responses/Problem'}, '409': {$ref: '#/components/responses/Problem'}}
@@ -829,41 +830,48 @@ paths:
     get:
       operationId: getMemory
       summary: Get one memory with provenance and revision metadata
+      description: Reads a workspace-owned or legacy shared memory entry. Title and body are text-redacted; tags and provenance serialize as an empty array/object when stored JSON is absent or invalid. A memory outside this workspace or a missing memory returns 404.
       responses: {'200': {description: Memory, content: {application/json: {schema: {$ref: '#/components/schemas/Memory'}}}}, '404': {$ref: '#/components/responses/Problem'}}
   /api/v1/workspaces/{id}/memories/{memory_id}/revisions:
     parameters: [{name: id, in: path, required: true, schema: {type: string}}, {name: memory_id, in: path, required: true, schema: {type: string}}, {$ref: '#/components/parameters/ActorID'}, {$ref: '#/components/parameters/IdempotencyKey'}]
     post:
       operationId: createMemoryRevision
       summary: Edit a memory as a new immutable revision
+      description: Requires expected_revision to match the currently stored revision; stale edits return 409. The body is required and text-redacted before storage. A non-empty title replaces the current title; reason is accepted by the request type but currently is not persisted (revision provenance is stored as reason=revision). Revision history is immutable and the mutation requires X-Actor-ID.
       requestBody: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/MemoryRevisionInput'}}}}
       responses: {'200': {description: Revised memory, content: {application/json: {schema: {$ref: '#/components/schemas/Memory'}}}}, '400': {$ref: '#/components/responses/Problem'}, '403': {$ref: '#/components/responses/Problem'}, '404': {$ref: '#/components/responses/Problem'}, '409': {$ref: '#/components/responses/Problem'}}
     get:
       operationId: listMemoryRevisions
       summary: List immutable memory revisions
+      description: Returns all stored revisions in ascending revision order, without pagination. Revision bodies and provenance are redacted for the response. The current memory must be visible in this workspace.
       responses: {'200': {description: Revision history, content: {application/json: {schema: {$ref: '#/components/schemas/MemoryRevisions'}}}}, '404': {$ref: '#/components/responses/Problem'}}
   /api/v1/workspaces/{id}/memories/{memory_id}/diff:
-    parameters: [{name: id, in: path, required: true, schema: {type: string}}, {name: memory_id, in: path, required: true, schema: {type: string}}, {name: from, in: query, schema: {type: integer, minimum: 1}}, {name: to, in: query, schema: {type: integer, minimum: 1}}]
+    parameters: [{name: id, in: path, required: true, schema: {type: string}}, {name: memory_id, in: path, required: true, schema: {type: string}}, {name: from, in: query, description: "Revision label echoed in the response; defaults to the string 1. The current implementation does not calculate a textual diff or validate the requested revision exists.", schema: {type: string, default: '1'}}, {name: to, in: query, description: "Revision label echoed in the response; defaults to latest. The current implementation does not calculate a textual diff or validate the requested revision exists.", schema: {type: string, default: latest}}]
     get:
       operationId: getMemoryRevisionDiff
       summary: Return a bounded memory revision diff
+      description: Despite the operation name, this currently returns changed=true, echoes the requested from/to labels, and includes the current redacted body; it does not compute a revision-to-revision diff.
       responses: {'200': {description: Revision diff, content: {application/json: {schema: {$ref: '#/components/schemas/MemoryDiff'}}}}, '404': {$ref: '#/components/responses/Problem'}}
   /api/v1/workspaces/{id}/memories/{memory_id}/graph:
     parameters: [{name: id, in: path, required: true, schema: {type: string}}, {name: memory_id, in: path, required: true, schema: {type: string}}]
     get:
       operationId: getMemoryGraph
       summary: Return memory aliases and merge redirects
+      description: Returns alias rows where this memory is either alias_id or canonical_id, ordered by creation time. Alias reason and creator are text-redacted.
       responses: {'200': {description: Related memory graph, content: {application/json: {schema: {$ref: '#/components/schemas/MemoryGraph'}}}}, '404': {$ref: '#/components/responses/Problem'}}
   /api/v1/workspaces/{id}/memories/{memory_id}/source-chain:
     parameters: [{name: id, in: path, required: true, schema: {type: string}}, {name: memory_id, in: path, required: true, schema: {type: string}}]
     get:
       operationId: getMemorySourceChain
       summary: Return source and provenance edges for a memory
+      description: Returns provenance edges for this memory ordered by creation time. Source IDs are text-redacted; this response is separate from the memory's free-form provenance JSON.
       responses: {'200': {description: Source chain, content: {application/json: {schema: {$ref: '#/components/schemas/MemorySourceChain'}}}}, '404': {$ref: '#/components/responses/Problem'}}
   /api/v1/workspaces/{id}/memories/{memory_id}/{action}:
-    parameters: [{name: id, in: path, required: true, schema: {type: string}}, {name: memory_id, in: path, required: true, schema: {type: string}}, {name: action, in: path, required: true, schema: {type: string, enum: [pin, unpin, archive, restore, merge, resynthesize]}}, {name: target_id, in: query, description: Required for merge., schema: {type: string}}, {$ref: '#/components/parameters/ActorID'}, {$ref: '#/components/parameters/IdempotencyKey'}]
+    parameters: [{name: id, in: path, required: true, schema: {type: string}}, {name: memory_id, in: path, required: true, schema: {type: string}}, {name: action, in: path, required: true, description: "pin/unpin change the pinned flag; archive/restore change status; merge creates a canonical combined record; merge-legacy marks the source merged into its target; resynthesize only sets resynthesis_status=requested.", schema: {type: string, enum: [pin, unpin, archive, restore, merge, merge-legacy, resynthesize]}}, {name: target_id, in: query, required: false, description: Required for merge and merge-legacy; must identify a different visible memory. Canonical merge adopts the target's scope, kind, title, tags, and importance, concatenates target then source body, averages confidence/reliability, and leaves both inputs as merged aliases. Legacy merge only redirects source to target.", schema: {type: string}}, {$ref: '#/components/parameters/ActorID'}, {$ref: '#/components/parameters/IdempotencyKey'}]
     post:
       operationId: transitionMemory
       summary: Pin, archive, restore, merge, or request memory resynthesis
+      description: Requires X-Actor-ID and records an audit/event after the state transition. Resynthesis is a request marker only; it does not run a resynthesis process. merge-legacy is accepted by the handler for compatibility in addition to canonical merge.
       responses: {'200': {description: Updated memory, content: {application/json: {schema: {$ref: '#/components/schemas/Memory'}}}}, '400': {$ref: '#/components/responses/Problem'}, '403': {$ref: '#/components/responses/Problem'}, '404': {$ref: '#/components/responses/Problem'}, '409': {$ref: '#/components/responses/Problem'}}
   /api/v1/workspaces/{id}/notifications:
     parameters: [{name: id, in: path, required: true, schema: {type: string}}, {name: recipient_id, in: query, description: "Recipient filter; omission falls back to X-Actor-ID, and if both are empty the handler does not filter by recipient.", schema: {type: string}}, {name: category, in: query, description: "Exact stored category match after whitespace trimming; not normalized to lowercase by this handler.", schema: {type: string}}, {name: severity, in: query, description: "Exact stored severity match after whitespace trimming; not normalized to lowercase by this handler.", schema: {type: string}}, {name: unread, in: query, description: "When exactly true, returns notifications whose read_at is null; false or omitted adds no filter.", schema: {type: boolean}}, {name: actionable, in: query, description: "When exactly true, returns actionable notifications whose resolved_at is null; this filter does not require the notification to be unread.", schema: {type: boolean}}, {name: cursor, in: query, description: "Raw-base64url encoding of the last returned created_at, newline, and ID; used for descending keyset pagination.", schema: {type: string}}, {name: limit, in: query, description: "Page size from 1 to 200; defaults to 50.", schema: {type: integer, minimum: 1, maximum: 200, default: 50}}]
@@ -1961,83 +1969,99 @@ components:
     Memory:
       type: object
       required: [id, scope, kind, title, body_md, tags, provenance, confidence, reliability, importance, pinned, revision, status, resynthesis_status, created_at, updated_at]
+      description: Current memory projection. Workspace-owned and legacy shared rows are readable within the workspace; optional source identifiers and workspace_id are omitted when empty. Title/body and selected provenance data are redacted heuristically on output. Confidence, reliability, and importance range metadata describe intended scale but creation currently does not enforce those bounds.
       properties:
-        id: {type: string}
-        workspace_id: {type: string}
-        scope: {type: string}
-        kind: {type: string}
-        title: {type: string}
-        body_md: {type: string}
-        tags: {type: array, items: {type: string}}
-        provenance: {type: object, additionalProperties: true}
-        source_event_id: {type: integer, format: int64}
-        source_session_id: {type: string}
-        source_proposal_id: {type: string}
-        confidence: {type: number, minimum: 0, maximum: 1}
-        reliability: {type: number, minimum: 0, maximum: 1}
-        importance: {type: integer, minimum: 0, maximum: 100}
-        pinned: {type: boolean}
-        revision: {type: integer, minimum: 1}
-        status: {type: string, enum: [active, archived, merged]}
-        resynthesis_status: {type: string}
-        created_at: {type: string, format: date-time}
-        updated_at: {type: string, format: date-time}
+        id: {type: string, description: "Stable memory identifier; created notes use an M-prefixed time-derived identifier and canonical merges create a new identifier."}
+        workspace_id: {type: string, description: "Owning workspace; omitted for legacy shared rows."}
+        scope: {type: string, description: "Caller-supplied scope label; creation does not validate or normalize it."}
+        kind: {type: string, description: "Caller-supplied memory kind label; creation does not validate or normalize it."}
+        title: {type: string, description: "Memory title after heuristic text redaction on output."}
+        body_md: {type: string, description: "Markdown body after heuristic redaction before persistence and on output."}
+        tags: {type: array, items: {type: string}, description: "Tag strings; missing or invalid stored JSON is returned as an empty array."}
+        provenance: {type: object, additionalProperties: true, description: "Caller-provided provenance JSON object; missing or invalid stored JSON is returned as an empty object and response values are redacted."}
+        source_event_id: {type: integer, format: int64, description: "Optional originating event row ID; omitted when zero or absent."}
+        source_session_id: {type: string, description: "Optional source session identifier; omitted when empty."}
+        source_proposal_id: {type: string, description: "Optional source proposal identifier; omitted when empty."}
+        confidence: {type: number, minimum: 0, maximum: 1, description: "Confidence score; defaults to 0.5 on creation. Bounds are documented but not enforced by the current handler."}
+        reliability: {type: number, minimum: 0, maximum: 1, description: "Reliability score; defaults to 0.5 on creation. Bounds are documented but not enforced by the current handler."}
+        importance: {type: integer, minimum: 0, maximum: 100, description: "Importance score; omitted input currently persists as 0 despite the database column default. Bounds are not enforced by the handler."}
+        pinned: {type: boolean, description: "Whether the note is pinned; changed through the pin and unpin actions."}
+        revision: {type: integer, minimum: 1, description: "Current revision number; newly created notes start at 1 and successful revision writes increment it after an expected_revision check."}
+        status: {type: string, enum: [active, archived, merged], description: "Lifecycle state. Listing always excludes archived rows; restore changes status to active; merges mark source records merged."}
+        resynthesis_status: {type: string, description: "Resynthesis lifecycle marker; the resynthesize action sets requested but does not execute a worker."}
+        created_at: {type: string, format: date-time, description: "Database creation timestamp."}
+        updated_at: {type: string, format: date-time, description: "Database update timestamp, changed by lifecycle actions and revision writes."}
     Memories:
       type: object
       required: [items]
+      description: One ascending keyset-paginated memory page; next_cursor is null when no further row was observed.
       properties:
-        items: {type: array, items: {$ref: '#/components/schemas/Memory'}}
-        next_cursor: {type: [string, 'null']}
+        items: {type: array, items: {$ref: '#/components/schemas/Memory'}, description: "Memory rows matching the list filters, ordered by created_at then id ascending."}
+        next_cursor: {type: [string, 'null'], description: "Raw-base64url keyset cursor derived from the last returned created_at and id when an additional row exists."}
     MemoryInput:
       type: object
-      required: [title, body_md, scope, kind]
+      required: [title, body_md]
+      additionalProperties: false
+      description: Strict JSON request for note creation. Only title and body_md are validated as non-blank; scope and kind are accepted as empty when omitted. Confidence/reliability default to 0.5 and importance defaults to 0 in current handler behavior.
       properties:
-        scope: {type: string}
-        kind: {type: string}
-        title: {type: string}
-        body_md: {type: string}
-        tags: {type: array, items: {type: string}}
-        provenance: {type: object, additionalProperties: true}
-        source_event_id: {type: integer, format: int64}
-        source_session_id: {type: string}
-        source_proposal_id: {type: string}
-        confidence: {type: number, minimum: 0, maximum: 1}
-        reliability: {type: number, minimum: 0, maximum: 1}
-        importance: {type: integer, minimum: 0, maximum: 100}
+        scope: {type: string, description: "Optional caller-defined scope label; no enum or non-empty validation is currently applied."}
+        kind: {type: string, description: "Optional caller-defined kind label; no enum or non-empty validation is currently applied."}
+        title: {type: string, minLength: 1, description: "Required non-blank title; trimmed only for validation, not before persistence."}
+        body_md: {type: string, minLength: 1, description: "Required non-blank markdown body; text-redacted before persistence."}
+        tags: {type: array, items: {type: string}, description: "Optional tag list; omitted/null is returned as an empty array."}
+        provenance: {type: object, additionalProperties: true, description: "Optional free-form provenance object; returned values are heuristically redacted."}
+        source_event_id: {type: integer, format: int64, description: "Optional source event row ID; zero is persisted as SQL null."}
+        source_session_id: {type: string, description: "Optional source session ID; empty string is persisted as SQL null."}
+        source_proposal_id: {type: string, description: "Optional source proposal ID; empty string is persisted as SQL null."}
+        confidence: {type: number, minimum: 0, maximum: 1, description: "Optional intended 0..1 score; omission defaults to 0.5. The handler does not enforce the range."}
+        reliability: {type: number, minimum: 0, maximum: 1, description: "Optional intended 0..1 score; omission defaults to 0.5. The handler does not enforce the range."}
+        importance: {type: integer, minimum: 0, maximum: 100, description: "Optional intended 0..100 score; omission currently persists as 0. The handler does not enforce the range."}
     MemoryRevisionInput:
       type: object
-      required: [body_md]
+      required: [body_md, expected_revision]
+      additionalProperties: false
+      description: Strict JSON revision request using optimistic concurrency. expected_revision must be positive and equal the current revision; stale writes return 409.
       properties:
-        body_md: {type: string}
-        title: {type: string}
-        reason: {type: string}
+        body_md: {type: string, minLength: 1, description: "Required non-blank replacement markdown body; text-redacted before persistence."}
+        title: {type: string, description: "Optional replacement title; an empty value leaves the current title unchanged."}
+        reason: {type: string, description: "Accepted but currently ignored; stored revision provenance uses the fixed reason revision."}
+        expected_revision: {type: integer, minimum: 1, description: "Required current revision number used to reject stale edits; must be at least 1."}
     MemoryRevision:
       type: object
       required: [id, memory_id, revision, body_md, provenance, created_by, created_at]
+      description: Immutable revision record returned in ascending revision order.
       properties:
-        id: {type: string}
-        memory_id: {type: string}
-        revision: {type: integer, minimum: 1}
-        body_md: {type: string}
-        provenance: {type: object, additionalProperties: true}
-        created_by: {type: string}
-        created_at: {type: string, format: date-time}
+        id: {type: string, description: "Revision row identifier, conventionally memory ID followed by -r and the revision number."}
+        memory_id: {type: string, description: "Memory whose history contains this revision."}
+        revision: {type: integer, minimum: 1, description: "Monotonically increasing revision number."}
+        body_md: {type: string, description: "Persisted markdown body after heuristic text redaction and redacted again on output."}
+        provenance: {type: object, additionalProperties: true, description: "Revision provenance JSON; current writes record the fixed reason revision."}
+        created_by: {type: string, description: "Actor ID that submitted the revision."}
+        created_at: {type: string, format: date-time, description: "Revision creation timestamp."}
     MemoryRevisions:
       type: object
       required: [items]
-      properties: {items: {type: array, items: {$ref: '#/components/schemas/MemoryRevision'}}}
+      description: Complete unpaginated memory revision history.
+      properties: {items: {type: array, items: {$ref: '#/components/schemas/MemoryRevision'}, description: "Immutable revision records in ascending revision order."}}
     MemoryDiff:
       type: object
       required: [memory_id, from_revision, to_revision, changed]
-      properties: {memory_id: {type: string}, from_revision: {type: string}, to_revision: {type: string}, changed: {type: boolean}, current_body_md: {type: string}}
+      description: Current implementation is a placeholder projection and does not calculate a content diff; changed is always true.
+      properties: {memory_id: {type: string, description: "Requested memory identifier."}, from_revision: {type: string, description: "Requested source revision label, default 1; echoed without lookup."}, to_revision: {type: string, description: "Requested target revision label, default latest; echoed without lookup."}, changed: {type: boolean, description: "Currently always true; not computed by comparing revisions."}, current_body_md: {type: string, description: "Current memory body after heuristic text redaction; this is not a patch or unified diff."}}
     MemoryGraph:
       type: object
       required: [memory_id, aliases]
-      properties: {memory_id: {type: string}, aliases: {type: array, items: {type: object, additionalProperties: true}}}
+      description: Alias records connecting this memory ID to canonical merge records.
+      properties:
+        memory_id: {type: string, description: "Memory whose alias relationships were queried."}
+        aliases: {type: array, description: "Rows where memory_id appears as alias_id or canonical_id, ordered by created_at.", items: {type: object, required: [alias_id, canonical_id, reason, created_by, created_at], additionalProperties: false, properties: {alias_id: {type: string, description: "Redirected source memory ID."}, canonical_id: {type: string, description: "Canonical memory ID for the alias."}, reason: {type: string, description: "Merge reason after heuristic text redaction."}, created_by: {type: string, description: "Actor ID after heuristic text redaction."}, created_at: {type: string, format: date-time, description: "Alias row creation time."}}}}
     MemorySourceChain:
       type: object
       required: [memory_id, edges]
-      properties: {memory_id: {type: string}, edges: {type: array, items: {type: object, additionalProperties: true}}}
+      description: Structured provenance edges for a memory, separate from free-form provenance JSON.
+      properties:
+        memory_id: {type: string, description: "Memory whose source relationships were queried."}
+        edges: {type: array, description: "Provenance edges ordered by created_at.", items: {type: object, required: [source_type, source_id, relation, created_at], additionalProperties: false, properties: {source_type: {type: string, description: "Category of the source record."}, source_id: {type: string, description: "Source record identifier after heuristic text redaction."}, relation: {type: string, description: "Relationship label connecting the source to this memory."}, created_at: {type: string, format: date-time, description: "Provenance edge creation time."}}}}
     Notification:
       type: object
       required: [id, workspace_id, recipient_id, severity, category, title, body, actionable, created_at]
