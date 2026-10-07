@@ -20,6 +20,8 @@ The local runtime stores tasks in the configured SQLite database. `task.create`,
 
 The response is `{"task": ...}`. `task.get` requires `task_id` and fails for a missing row. `task.list` returns `{"tasks": ...}` for all local tasks, ordered by ascending priority, creation timestamp, then ID. It has no pagination or status/agent/run filters; an empty result can serialize as `null` rather than `[]`.
 
+The local handlers use string values only when JSON values are actually strings; a number/object supplied for an optional string becomes empty and therefore selects its default or leaves an update field unchanged. A non-string required title/body fails the same required-field check as omission. Required checks test exact emptiness rather than trimming, so whitespace-only titles and bodies are accepted. Integer priority accepts integer/JSON-number values via the runtime integer helper; floating-point numbers are truncated and nonnumeric/string values fall back to the default. These permissive local MCP conversions are distinct from HTTP API JSON decoding.
+
 ## Status and assignment updates
 
 `task.update_status` requires an existing `task_id`. A nonempty string `status` changes status; a nonempty string `assigned_agent_id` changes assignment. Empty or omitted values preserve their existing fields. Consequently this operation cannot clear an assignment by sending an empty string. A call with neither optional field still upserts the task and advances `updated_at`. It returns the saved `task`.
