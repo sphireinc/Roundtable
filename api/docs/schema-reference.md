@@ -437,46 +437,74 @@ Required fields: `items`
 
 Type: `object`
 
+Description: Offset-paginated claims belonging to the session agent. The item wire shape mirrors internal/db.Claim without JSON tags, so keys are Go-style capitalized names rather than the normalized Claim API schema.
 Required fields: `items`
 
 | Property | Type | Required | Constraints | Description |
 |---|---|---|---|---|
-| `items` | array of `object` | yes |  |  |
-| `next_cursor` | `string or null` | no |  |  |
+| `items` | array of object (no additional properties) | yes |  | Claims ordered by created_at then id and filtered by exact session agent ID; RationaleMD is text-redacted. |
+| `items[].ID` | `string` | yes |  | Claim identifier. |
+| `items[].ResourceID` | `string` | yes |  | Claimed resource identifier. |
+| `items[].AgentID` | `string` | yes |  | Agent owning the claim; equals the resolved session's agent for every item. |
+| `items[].TaskID` | `string` | yes |  | Task associated with the claim. |
+| `items[].ClaimType` | `string` | yes |  | Stored claim mode/type. |
+| `items[].BaseHash` | `string` | yes |  | Stored base hash evidence, empty when absent. |
+| `items[].Status` | `string` | yes |  | Stored claim lifecycle status. |
+| `items[].ExpiresAt` | `string` | yes | format="date-time" | Lease expiration time. |
+| `items[].HeartbeatAt` | `string` | yes | format="date-time" | Last stored heartbeat, empty when absent. |
+| `items[].Renewable` | `boolean` | yes |  | Whether the claim is renewable. |
+| `items[].ResumePolicy` | `string` | yes |  | Stored session-resume behavior label. |
+| `items[].RationaleMD` | `string` | yes |  | Rationale after heuristic text redaction. |
+| `items[].CreatedAt` | `string` | yes | format="date-time" | Claim creation time. |
+| `next_cursor` | `string or null` | no |  | Raw-base64url encoded decimal offset for the next page, or null when exhausted. |
 
 ### Schema: PaginatedSessionProposals {#schema-paginatedsessionproposals}
 
 Type: `object`
 
+Description: Offset-paginated proposal references for the resolved session's agent. Items use a dedicated lower-case projection and redact title and summary text.
 Required fields: `items`
 
 | Property | Type | Required | Constraints | Description |
 |---|---|---|---|---|
-| `items` | array of `object` | yes |  |  |
-| `next_cursor` | `string or null` | no |  |  |
+| `items` | array of object (no additional properties) | yes |  | Matching proposals ordered by created_at then id before in-memory pagination. |
+| `items[].id` | `string` | yes |  | Proposal identifier. |
+| `items[].task_id` | `string` | yes |  | Associated task identifier. |
+| `items[].title` | `string` | yes |  | Proposal title after text redaction. |
+| `items[].summary_md` | `string` | yes |  | Proposal summary after text redaction. |
+| `items[].status` | `string` | yes |  | Stored proposal status. |
+| `items[].risk` | `string` | yes |  | Stored risk label. |
+| `items[].created_at` | `string` | yes | format="date-time" | Proposal creation time. |
+| `next_cursor` | `string or null` | no |  | Raw-base64url encoded decimal offset for the next page, or null when exhausted. |
 
 ### Schema: SessionMetrics {#schema-sessionmetrics}
 
 Type: `object`
 
+Description: Adapter-reported numeric usage values retained from the session metadata usage object. Key names containing secret, password, api_key, or authorization are excluded case-insensitively; nonnumeric values are discarded. This is not verified billing or runtime telemetry.
 Required fields: `session_id`, `usage`, `source`
 
 | Property | Type | Required | Constraints | Description |
 |---|---|---|---|---|
-| `session_id` | `string` | yes |  |  |
-| `usage` | object (values of `number`) | yes |  |  |
-| `source` | `string` | yes |  |  |
+| `session_id` | `string` | yes |  | Identifier of the workspace-associated session. |
+| `usage` | object (values of `number`) | yes |  | Possibly empty map of safe numeric adapter metadata values; strings, booleans, arrays, and objects are not included. |
+| `source` | `string` | yes | const="adapter_metadata" | Fixed provenance label; values originate in stored adapter metadata. |
 
 ### Schema: SessionEnvironment {#schema-sessionenvironment}
 
 Type: `object`
 
+Description: Small runtime fingerprint, not a complete environment dump. It includes server runtime/build platform data and the session's adapter label, not variables, secrets, or session environment variables.
 Required fields: `session_id`, `fingerprint`
 
 | Property | Type | Required | Constraints | Description |
 |---|---|---|---|---|
-| `session_id` | `string` | yes |  |  |
-| `fingerprint` | object (values of `string`) | yes |  |  |
+| `session_id` | `string` | yes |  | Identifier of the workspace-associated session. |
+| `fingerprint` | object (no additional properties) | yes |  | Fixed safe fingerprint keys returned by the current handler. |
+| `fingerprint.go_version` | `string` | yes |  | Go runtime version of the API server process. |
+| `fingerprint.os` | `string` | yes |  | Operating system of the API server process. |
+| `fingerprint.arch` | `string` | yes |  | CPU architecture of the API server process. |
+| `fingerprint.adapter` | `string` | yes |  | Adapter label stored on the session record. |
 
 ### Schema: DeliberationInput {#schema-deliberationinput}
 

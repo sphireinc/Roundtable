@@ -497,16 +497,18 @@ paths:
       description: Scans workspace-run events and retains records whose type begins tool. or whose payload text contains a tool key. Tool is taken from payload when present, otherwise from the event type; tool/action/status are text-redacted. Pagination is an in-memory offset page over the filtered records and does not prove that an external tool process ran.
       responses: {'200': {description: Tool calls, content: {application/json: {schema: {$ref: '#/components/schemas/SessionToolCalls'}}}}, '404': {$ref: '#/components/responses/Problem'}}
   /api/v1/workspaces/{id}/sessions/{session_id}/claims:
-    parameters: [{name: id, in: path, required: true, schema: {type: string}}, {name: session_id, in: path, required: true, schema: {type: string}}, {name: cursor, in: query, schema: {type: string}}, {name: limit, in: query, schema: {type: integer, minimum: 1, maximum: 200, default: 50}}]
+    parameters: [{name: id, in: path, required: true, schema: {type: string}}, {name: session_id, in: path, required: true, schema: {type: string}}, {name: cursor, in: query, description: "Raw-base64url encoding of a decimal offset into the agent's ordered claim list.", schema: {type: string}}, {name: limit, in: query, description: "Page size from 1 to 200; defaults to 50.", schema: {type: integer, minimum: 1, maximum: 200, default: 50}}]
     get:
       operationId: listSessionClaims
       summary: List current and historical claims for the session agent
+      description: Resolves the session by matching its stored workspace_id metadata to this workspace, then returns all claims for the session's agent from the global claim list, including claims not scoped to this workspace. Claims are ordered by creation time then ID before offset pagination. The handler redacts RationaleMD but serializes the raw database struct with Go-style capitalized field names.
       responses: {'200': {description: Claims, content: {application/json: {schema: {$ref: '#/components/schemas/PaginatedClaims'}}}}, '404': {$ref: '#/components/responses/Problem'}}
   /api/v1/workspaces/{id}/sessions/{session_id}/proposals:
-    parameters: [{name: id, in: path, required: true, schema: {type: string}}, {name: session_id, in: path, required: true, schema: {type: string}}, {name: cursor, in: query, schema: {type: string}}, {name: limit, in: query, schema: {type: integer, minimum: 1, maximum: 200, default: 50}}]
+    parameters: [{name: id, in: path, required: true, schema: {type: string}}, {name: session_id, in: path, required: true, schema: {type: string}}, {name: cursor, in: query, description: "Raw-base64url encoding of a decimal offset into the agent's ordered proposal list.", schema: {type: string}}, {name: limit, in: query, description: "Page size from 1 to 200; defaults to 50.", schema: {type: integer, minimum: 1, maximum: 200, default: 50}}]
     get:
       operationId: listSessionProposals
       summary: List proposal references for the session agent
+      description: Resolves the session within this workspace, then scans the global proposal list and returns every proposal whose agent_id matches the session agent, regardless of the proposal's workspace_id. Items are projected to seven lower-case fields, with title and summary_md text-redacted, then paginated in memory by offset.
       responses: {'200': {description: Proposals, content: {application/json: {schema: {$ref: '#/components/schemas/PaginatedSessionProposals'}}}}, '404': {$ref: '#/components/responses/Problem'}}
   /api/v1/workspaces/{id}/sessions/{session_id}/metrics:
     parameters: [{name: id, in: path, required: true, schema: {type: string}}, {name: session_id, in: path, required: true, schema: {type: string}}]
@@ -1328,28 +1330,32 @@ components:
     PaginatedClaims:
       type: object
       required: [items]
+      description: Offset-paginated claims belonging to the session agent. The item wire shape mirrors internal/db.Claim without JSON tags, so keys are Go-style capitalized names rather than the normalized Claim API schema.
       properties:
-        items: {type: array, items: {type: object}}
-        next_cursor: {type: [string, 'null']}
+        items: {type: array, description: "Claims ordered by created_at then id and filtered by exact session agent ID; RationaleMD is text-redacted.", items: {type: object, required: [ID, ResourceID, AgentID, TaskID, ClaimType, BaseHash, Status, ExpiresAt, HeartbeatAt, Renewable, ResumePolicy, RationaleMD, CreatedAt], additionalProperties: false, properties: {ID: {type: string, description: "Claim identifier."}, ResourceID: {type: string, description: "Claimed resource identifier."}, AgentID: {type: string, description: "Agent owning the claim; equals the resolved session's agent for every item."}, TaskID: {type: string, description: "Task associated with the claim."}, ClaimType: {type: string, description: "Stored claim mode/type."}, BaseHash: {type: string, description: "Stored base hash evidence, empty when absent."}, Status: {type: string, description: "Stored claim lifecycle status."}, ExpiresAt: {type: string, format: date-time, description: "Lease expiration time."}, HeartbeatAt: {type: string, format: date-time, description: "Last stored heartbeat, empty when absent."}, Renewable: {type: boolean, description: "Whether the claim is renewable."}, ResumePolicy: {type: string, description: "Stored session-resume behavior label."}, RationaleMD: {type: string, description: "Rationale after heuristic text redaction."}, CreatedAt: {type: string, format: date-time, description: "Claim creation time."}}}}
+        next_cursor: {type: [string, 'null'], description: "Raw-base64url encoded decimal offset for the next page, or null when exhausted."}
     PaginatedSessionProposals:
       type: object
       required: [items]
+      description: Offset-paginated proposal references for the resolved session's agent. Items use a dedicated lower-case projection and redact title and summary text.
       properties:
-        items: {type: array, items: {type: object}}
-        next_cursor: {type: [string, 'null']}
+        items: {type: array, description: "Matching proposals ordered by created_at then id before in-memory pagination.", items: {type: object, required: [id, task_id, title, summary_md, status, risk, created_at], additionalProperties: false, properties: {id: {type: string, description: "Proposal identifier."}, task_id: {type: string, description: "Associated task identifier."}, title: {type: string, description: "Proposal title after text redaction."}, summary_md: {type: string, description: "Proposal summary after text redaction."}, status: {type: string, description: "Stored proposal status."}, risk: {type: string, description: "Stored risk label."}, created_at: {type: string, format: date-time, description: "Proposal creation time."}}}}
+        next_cursor: {type: [string, 'null'], description: "Raw-base64url encoded decimal offset for the next page, or null when exhausted."}
     SessionMetrics:
       type: object
       required: [session_id, usage, source]
+      description: Adapter-reported numeric usage values retained from the session metadata usage object. Key names containing secret, password, api_key, or authorization are excluded case-insensitively; nonnumeric values are discarded. This is not verified billing or runtime telemetry.
       properties:
-        session_id: {type: string}
-        usage: {type: object, additionalProperties: {type: number}}
-        source: {type: string}
+        session_id: {type: string, description: "Identifier of the workspace-associated session."}
+        usage: {type: object, additionalProperties: {type: number}, description: "Possibly empty map of safe numeric adapter metadata values; strings, booleans, arrays, and objects are not included."}
+        source: {type: string, const: adapter_metadata, description: "Fixed provenance label; values originate in stored adapter metadata."}
     SessionEnvironment:
       type: object
       required: [session_id, fingerprint]
+      description: Small runtime fingerprint, not a complete environment dump. It includes server runtime/build platform data and the session's adapter label, not variables, secrets, or session environment variables.
       properties:
-        session_id: {type: string}
-        fingerprint: {type: object, additionalProperties: {type: string}}
+        session_id: {type: string, description: "Identifier of the workspace-associated session."}
+        fingerprint: {type: object, required: [go_version, os, arch, adapter], additionalProperties: false, description: "Fixed safe fingerprint keys returned by the current handler.", properties: {go_version: {type: string, description: "Go runtime version of the API server process."}, os: {type: string, description: "Operating system of the API server process."}, arch: {type: string, description: "CPU architecture of the API server process."}, adapter: {type: string, description: "Adapter label stored on the session record."}}}
     DeliberationInput:
       type: object
       required: [goal, agent_pool]
