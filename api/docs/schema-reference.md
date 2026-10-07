@@ -487,14 +487,14 @@ Additional properties: forbidden.
 
 | Property | Type | Required | Constraints | Description |
 |---|---|---|---|---|
-| `goal` | `string` | yes |  |  |
-| `agent_pool` | array of `string` | yes | minItems=1 |  |
-| `governance_profile` | `string` | no |  |  |
-| `initial_resource_scope` | array of `string` | no |  |  |
-| `budget_limit` | `integer` | no | minimum=0 |  |
-| `time_limit_seconds` | `integer` | no | minimum=0 |  |
-| `human_constraints` | array of `string` | no |  |  |
-| `moderator_id` | `string` | no |  |  |
+| `goal` | `string` | yes |  | Required deliberation goal; trimmed and stored as the deliberation title and metadata goal. |
+| `agent_pool` | array of `string` | yes | minItems=1 | Required nonempty list of existing global agent IDs; values are trimmed and persisted as participant rows, without checking enablement or launching agents. |
+| `governance_profile` | `string` | no |  | Optional profile label retained in deliberation metadata; this endpoint does not itself load or enforce the named policy profile. |
+| `initial_resource_scope` | array of `string` | no |  | Optional resource identifiers retained as deliberation metadata; not a filesystem permission boundary. |
+| `budget_limit` | `integer` | no | minimum=0 | Optional nonnegative budget metadata; persistence does not enforce spending or token limits. |
+| `time_limit_seconds` | `integer` | no | minimum=0 | Optional nonnegative time-limit metadata; persistence does not schedule automatic timeout or termination. |
+| `human_constraints` | array of `string` | no |  | Optional human-provided constraints retained in metadata; this endpoint does not independently evaluate compliance. |
+| `moderator_id` | `string` | no |  | Optional moderator label stored with the deliberation; it is not authenticated or launched as an agent. |
 
 ### Schema: Deliberation {#schema-deliberation}
 
@@ -504,26 +504,26 @@ Required fields: `id`, `workspace_id`, `goal`, `status`, `created_by`, `agent_po
 
 | Property | Type | Required | Constraints | Description |
 |---|---|---|---|---|
-| `id` | `string` | yes |  |  |
-| `workspace_id` | `string` | yes |  |  |
-| `goal` | `string` | yes |  |  |
-| `status` | `string` | yes | enum=["draft","running","paused","terminated"] |  |
-| `created_by` | `string` | yes |  |  |
-| `moderator_id` | `string` | no |  |  |
-| `agent_pool` | array of `string` | yes |  |  |
-| `participants` | array of `string` | yes |  |  |
-| `governance_profile` | `string` | no |  |  |
-| `initial_resource_scope` | array of `string` | no |  |  |
-| `budget_limit` | `integer` | no |  |  |
-| `time_limit_seconds` | `integer` | no |  |  |
-| `human_constraints` | array of `string` | no |  |  |
-| `round` | `integer` | yes | minimum=0 |  |
-| `unresolved_conflicts` | array of `string` | yes |  |  |
-| `linked_proposals` | array of `string` | yes |  |  |
-| `started_at` | `string` | no | format="date-time" |  |
-| `ended_at` | `string` | no | format="date-time" |  |
-| `created_at` | `string` | yes | format="date-time" |  |
-| `updated_at` | `string` | yes | format="date-time" |  |
+| `id` | `string` | yes |  | Timestamp-derived deliberation identifier; the record is workspace-scoped. |
+| `workspace_id` | `string` | yes |  | Workspace registry identifier that scopes reads and lifecycle changes for this deliberation. |
+| `goal` | `string` | yes |  | Trimmed goal text stored as the deliberation title and returned as its goal. |
+| `status` | `string` | yes | enum=["draft","running","paused","terminated"] | Persisted control-plane lifecycle state; it does not prove that agents are executing or enforce budget/time metadata. |
+| `created_by` | `string` | yes |  | Actor ID attributed to the creation request; it is caller-supplied identity metadata. |
+| `moderator_id` | `string` | no |  | Optional moderator label from creation metadata; omitted when empty and not proof of an active moderator process. |
+| `agent_pool` | array of `string` | yes |  | Agent IDs projected from the deliberation participant rows; currently the same set as participants. |
+| `participants` | array of `string` | yes |  | Persisted participant agent IDs, returned in sorted order; participation does not launch or authenticate agents. |
+| `governance_profile` | `string` | no |  | Optional profile label recovered from metadata; omitted when absent and not evidence that the profile was applied. |
+| `initial_resource_scope` | array of `string` | no |  | Optional resource identifiers recovered from metadata; omitted when absent and not an access-control boundary. |
+| `budget_limit` | `integer` | no |  | Optional budget value recovered from metadata; zero may be omitted and no spend enforcement is implied. |
+| `time_limit_seconds` | `integer` | no |  | Optional time limit recovered from metadata; zero may be omitted and no automatic timeout is implemented by this record. |
+| `human_constraints` | array of `string` | no |  | Optional constraint strings recovered from metadata with text redaction; omitted when absent. |
+| `round` | `integer` | yes | minimum=0 | Maximum round number stored for this deliberation, defaulting to zero; it is not a count of completed discussions. |
+| `unresolved_conflicts` | array of `string` | yes |  | Summaries of conflicts whose stored status is exactly open, in creation order, with text redaction applied. |
+| `linked_proposals` | array of `string` | yes |  | Proposal identifiers associated with this deliberation; the current response reader does not populate this field, so it may serialize as null/empty despite being required by the schema. |
+| `started_at` | `string` | no | format="date-time" | Timestamp set on the first transition into running; subsequent resumes preserve the original start time. |
+| `ended_at` | `string` | no | format="date-time" | Timestamp set when the deliberation is terminated; omitted before termination. |
+| `created_at` | `string` | yes | format="date-time" | UTC timestamp recorded when the deliberation row was created. |
+| `updated_at` | `string` | yes | format="date-time" | UTC timestamp last written by a lifecycle transition. |
 
 ### Schema: Deliberations {#schema-deliberations}
 
@@ -533,19 +533,20 @@ Required fields: `items`
 
 | Property | Type | Required | Constraints | Description |
 |---|---|---|---|---|
-| `items` | array of `Deliberation` | yes |  |  |
-| `next_cursor` | `string or null` | no |  |  |
+| `items` | array of `Deliberation` | yes |  | Workspace deliberations ordered by creation time and ID before in-memory pagination. |
+| `next_cursor` | `string or null` | no |  | Opaque base64url-encoded offset cursor for the next page, or null when no further page is available. |
 
 ### Schema: DeliberationMessageInput {#schema-deliberationmessageinput}
 
-Type: `object`
+Type: object (no additional properties)
 
 Required fields: `body`
+Additional properties: forbidden.
 
 | Property | Type | Required | Constraints | Description |
 |---|---|---|---|---|
-| `message_type` | `string` | no | default="human_instruction" |  |
-| `body` | `string` | yes |  |  |
+| `message_type` | `string` | no | default="human_instruction" | Optional message category; an empty or omitted value becomes human_instruction, while other nonempty labels are stored without enum validation. |
+| `body` | `string` | yes |  | Required nonblank message content; the handler applies text redaction before persisting and returning it. |
 
 ### Schema: TranscriptEntry {#schema-transcriptentry}
 
@@ -555,20 +556,20 @@ Required fields: `id`, `round`, `actor`, `kind`, `visibility_class`, `rendering`
 
 | Property | Type | Required | Constraints | Description |
 |---|---|---|---|---|
-| `id` | `string` | yes |  |  |
-| `round` | `integer` | yes | minimum=0 |  |
-| `actor` | `string` | yes |  |  |
-| `kind` | `string` | yes | enum=["message","event"] |  |
-| `message_type` | `string` | no |  |  |
-| `summary` | `string` | no |  |  |
-| `content` | `string` | no |  |  |
-| `tool_references` | array of `string` | no |  |  |
-| `claim_references` | array of `string` | no |  |  |
-| `proposal_references` | array of `string` | no |  |  |
-| `vote_references` | array of `string` | no |  |  |
-| `visibility_class` | `string` | yes | enum=["user_visible","operational"] |  |
-| `rendering` | object (any value) | yes |  |  |
-| `created_at` | `string` | yes | format="date-time" |  |
+| `id` | `string` | yes |  | Source-prefixed message:<id> or event:<numeric-id>; the detail endpoint also accepts the unprefixed source ID. |
+| `round` | `integer` | yes | minimum=0 | Current deliberation round copied onto every projected transcript row, not a historical per-entry round lookup. |
+| `actor` | `string` | yes |  | Redacted actor label from the message or event record. |
+| `kind` | `string` | yes | enum=["message","event"] | Source record category: human/agent deliberation message or operational event. |
+| `message_type` | `string` | no |  | Redacted message category for message entries; omitted for event entries. |
+| `summary` | `string` | no |  | Redacted event type for operational event entries; omitted for message entries. |
+| `content` | `string` | no |  | Redacted message body for message entries; operational event payloads are not exposed as transcript content. |
+| `tool_references` | array of `string` | no |  | References heuristically extracted from selected string fields in an event JSON payload; not a complete tool-call trace. |
+| `claim_references` | array of `string` | no |  | Claim references heuristically extracted from event payload claim/claim_id string fields. |
+| `proposal_references` | array of `string` | no |  | Proposal references heuristically extracted from event payload proposal/proposal_id string fields. |
+| `vote_references` | array of `string` | no |  | Vote references heuristically extracted from event payload vote/vote_id string fields. |
+| `visibility_class` | `string` | yes | enum=["user_visible","operational"] | Fixed projection label: messages are user_visible and event records are operational; it is not a complete authorization or redaction policy. |
+| `rendering` | object (any value) | yes |  | Fixed rendering hints currently declaring Markdown format, HTML disallowed, and links untrusted. |
+| `created_at` | `string` | yes | format="date-time" | Source record creation timestamp used to merge messages and events into transcript order. |
 
 ### Schema: TranscriptEntries {#schema-transcriptentries}
 
@@ -578,8 +579,8 @@ Required fields: `items`
 
 | Property | Type | Required | Constraints | Description |
 |---|---|---|---|---|
-| `items` | array of `TranscriptEntry` | yes |  |  |
-| `next_cursor` | `string or null` | no |  |  |
+| `items` | array of `TranscriptEntry` | yes |  | Merged message and operational-event transcript entries sorted by creation time, then entry ID. |
+| `next_cursor` | `string or null` | no |  | Opaque base64url-encoded offset cursor for the next page, or null when no further page is available. |
 
 ### Schema: ProposalInput {#schema-proposalinput}
 

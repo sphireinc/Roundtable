@@ -1337,74 +1337,75 @@ components:
       required: [goal, agent_pool]
       additionalProperties: false
       properties:
-        goal: {type: string}
-        agent_pool: {type: array, minItems: 1, items: {type: string}}
-        governance_profile: {type: string}
-        initial_resource_scope: {type: array, items: {type: string}}
-        budget_limit: {type: integer, minimum: 0}
-        time_limit_seconds: {type: integer, minimum: 0}
-        human_constraints: {type: array, items: {type: string}}
-        moderator_id: {type: string}
+        goal: {type: string, description: "Required deliberation goal; trimmed and stored as the deliberation title and metadata goal."}
+        agent_pool: {type: array, minItems: 1, items: {type: string}, description: "Required nonempty list of existing global agent IDs; values are trimmed and persisted as participant rows, without checking enablement or launching agents."}
+        governance_profile: {type: string, description: "Optional profile label retained in deliberation metadata; this endpoint does not itself load or enforce the named policy profile."}
+        initial_resource_scope: {type: array, items: {type: string}, description: "Optional resource identifiers retained as deliberation metadata; not a filesystem permission boundary."}
+        budget_limit: {type: integer, minimum: 0, description: "Optional nonnegative budget metadata; persistence does not enforce spending or token limits."}
+        time_limit_seconds: {type: integer, minimum: 0, description: "Optional nonnegative time-limit metadata; persistence does not schedule automatic timeout or termination."}
+        human_constraints: {type: array, items: {type: string}, description: "Optional human-provided constraints retained in metadata; this endpoint does not independently evaluate compliance."}
+        moderator_id: {type: string, description: "Optional moderator label stored with the deliberation; it is not authenticated or launched as an agent."}
     Deliberation:
       type: object
       required: [id, workspace_id, goal, status, created_by, agent_pool, participants, round, unresolved_conflicts, linked_proposals, created_at, updated_at]
       properties:
-        id: {type: string}
-        workspace_id: {type: string}
-        goal: {type: string}
-        status: {type: string, enum: [draft, running, paused, terminated]}
-        created_by: {type: string}
-        moderator_id: {type: string}
-        agent_pool: {type: array, items: {type: string}}
-        participants: {type: array, items: {type: string}}
-        governance_profile: {type: string}
-        initial_resource_scope: {type: array, items: {type: string}}
-        budget_limit: {type: integer}
-        time_limit_seconds: {type: integer}
-        human_constraints: {type: array, items: {type: string}}
-        round: {type: integer, minimum: 0}
-        unresolved_conflicts: {type: array, items: {type: string}}
-        linked_proposals: {type: array, items: {type: string}}
-        started_at: {type: string, format: date-time}
-        ended_at: {type: string, format: date-time}
-        created_at: {type: string, format: date-time}
-        updated_at: {type: string, format: date-time}
+        id: {type: string, description: "Timestamp-derived deliberation identifier; the record is workspace-scoped."}
+        workspace_id: {type: string, description: "Workspace registry identifier that scopes reads and lifecycle changes for this deliberation."}
+        goal: {type: string, description: "Trimmed goal text stored as the deliberation title and returned as its goal."}
+        status: {type: string, enum: [draft, running, paused, terminated], description: "Persisted control-plane lifecycle state; it does not prove that agents are executing or enforce budget/time metadata."}
+        created_by: {type: string, description: "Actor ID attributed to the creation request; it is caller-supplied identity metadata."}
+        moderator_id: {type: string, description: "Optional moderator label from creation metadata; omitted when empty and not proof of an active moderator process."}
+        agent_pool: {type: array, items: {type: string}, description: "Agent IDs projected from the deliberation participant rows; currently the same set as participants."}
+        participants: {type: array, items: {type: string}, description: "Persisted participant agent IDs, returned in sorted order; participation does not launch or authenticate agents."}
+        governance_profile: {type: string, description: "Optional profile label recovered from metadata; omitted when absent and not evidence that the profile was applied."}
+        initial_resource_scope: {type: array, items: {type: string}, description: "Optional resource identifiers recovered from metadata; omitted when absent and not an access-control boundary."}
+        budget_limit: {type: integer, description: "Optional budget value recovered from metadata; zero may be omitted and no spend enforcement is implied."}
+        time_limit_seconds: {type: integer, description: "Optional time limit recovered from metadata; zero may be omitted and no automatic timeout is implemented by this record."}
+        human_constraints: {type: array, items: {type: string}, description: "Optional constraint strings recovered from metadata with text redaction; omitted when absent."}
+        round: {type: integer, minimum: 0, description: "Maximum round number stored for this deliberation, defaulting to zero; it is not a count of completed discussions."}
+        unresolved_conflicts: {type: array, items: {type: string}, description: "Summaries of conflicts whose stored status is exactly open, in creation order, with text redaction applied."}
+        linked_proposals: {type: array, items: {type: string}, description: "Proposal identifiers associated with this deliberation; the current response reader does not populate this field, so it may serialize as null/empty despite being required by the schema."}
+        started_at: {type: string, format: date-time, description: "Timestamp set on the first transition into running; subsequent resumes preserve the original start time."}
+        ended_at: {type: string, format: date-time, description: "Timestamp set when the deliberation is terminated; omitted before termination."}
+        created_at: {type: string, format: date-time, description: "UTC timestamp recorded when the deliberation row was created."}
+        updated_at: {type: string, format: date-time, description: "UTC timestamp last written by a lifecycle transition."}
     Deliberations:
       type: object
       required: [items]
       properties:
-        items: {type: array, items: {$ref: '#/components/schemas/Deliberation'}}
-        next_cursor: {type: [string, 'null']}
+        items: {type: array, items: {$ref: '#/components/schemas/Deliberation'}, description: "Workspace deliberations ordered by creation time and ID before in-memory pagination."}
+        next_cursor: {type: [string, 'null'], description: "Opaque base64url-encoded offset cursor for the next page, or null when no further page is available."}
     DeliberationMessageInput:
       type: object
       required: [body]
+      additionalProperties: false
       properties:
-        message_type: {type: string, default: human_instruction}
-        body: {type: string}
+        message_type: {type: string, default: human_instruction, description: "Optional message category; an empty or omitted value becomes human_instruction, while other nonempty labels are stored without enum validation."}
+        body: {type: string, description: "Required nonblank message content; the handler applies text redaction before persisting and returning it."}
     TranscriptEntry:
       type: object
       required: [id, round, actor, kind, visibility_class, rendering, created_at]
       properties:
-        id: {type: string}
-        round: {type: integer, minimum: 0}
-        actor: {type: string}
-        kind: {type: string, enum: [message, event]}
-        message_type: {type: string}
-        summary: {type: string}
-        content: {type: string}
-        tool_references: {type: array, items: {type: string}}
-        claim_references: {type: array, items: {type: string}}
-        proposal_references: {type: array, items: {type: string}}
-        vote_references: {type: array, items: {type: string}}
-        visibility_class: {type: string, enum: [user_visible, operational]}
-        rendering: {type: object, additionalProperties: true}
-        created_at: {type: string, format: date-time}
+        id: {type: string, description: "Source-prefixed message:<id> or event:<numeric-id>; the detail endpoint also accepts the unprefixed source ID."}
+        round: {type: integer, minimum: 0, description: "Current deliberation round copied onto every projected transcript row, not a historical per-entry round lookup."}
+        actor: {type: string, description: "Redacted actor label from the message or event record."}
+        kind: {type: string, enum: [message, event], description: "Source record category: human/agent deliberation message or operational event."}
+        message_type: {type: string, description: "Redacted message category for message entries; omitted for event entries."}
+        summary: {type: string, description: "Redacted event type for operational event entries; omitted for message entries."}
+        content: {type: string, description: "Redacted message body for message entries; operational event payloads are not exposed as transcript content."}
+        tool_references: {type: array, items: {type: string}, description: "References heuristically extracted from selected string fields in an event JSON payload; not a complete tool-call trace."}
+        claim_references: {type: array, items: {type: string}, description: "Claim references heuristically extracted from event payload claim/claim_id string fields."}
+        proposal_references: {type: array, items: {type: string}, description: "Proposal references heuristically extracted from event payload proposal/proposal_id string fields."}
+        vote_references: {type: array, items: {type: string}, description: "Vote references heuristically extracted from event payload vote/vote_id string fields."}
+        visibility_class: {type: string, enum: [user_visible, operational], description: "Fixed projection label: messages are user_visible and event records are operational; it is not a complete authorization or redaction policy."}
+        rendering: {type: object, additionalProperties: true, description: "Fixed rendering hints currently declaring Markdown format, HTML disallowed, and links untrusted."}
+        created_at: {type: string, format: date-time, description: "Source record creation timestamp used to merge messages and events into transcript order."}
     TranscriptEntries:
       type: object
       required: [items]
       properties:
-        items: {type: array, items: {$ref: '#/components/schemas/TranscriptEntry'}}
-        next_cursor: {type: [string, 'null']}
+        items: {type: array, items: {$ref: '#/components/schemas/TranscriptEntry'}, description: "Merged message and operational-event transcript entries sorted by creation time, then entry ID."}
+        next_cursor: {type: [string, 'null'], description: "Opaque base64url-encoded offset cursor for the next page, or null when no further page is available."}
     ProposalInput:
       type: object
       required: [title, summary, patch_path]
