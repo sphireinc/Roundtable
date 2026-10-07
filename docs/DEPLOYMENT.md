@@ -27,6 +27,34 @@ Supported process flags are `-addr`, `-workspace-root`, `-database`, `-human-tok
 
 From `ui/`, install dependencies, set `NEXT_PUBLIC_API_BASE_URL`, `NEXT_PUBLIC_WS_URL`, and `NEXT_PUBLIC_WORKSPACE_ID`, then build and run with the package scripts. These public variables are embedded at build time. The browser UI currently does not add bearer tokens to API requests; do not place privileged secrets in `NEXT_PUBLIC_*` variables.
 
+### UI container configuration
+
+`ui/docker-compose.yml` defines one `ui` service, built from the `ui/` directory, and publishes `3000:3000` without a host-interface restriction. From the repository root it can be invoked with `docker compose -f ui/docker-compose.yml up --build`; the port mapping can expose the UI on every host interface allowed by Docker/network configuration, not just loopback. The file sets these Compose environment defaults:
+
+| Variable | Compose default | Notes |
+| --- | --- | --- |
+| `NEXT_PUBLIC_API_BASE_URL` | `http://127.0.0.1:8080` | Browser API origin; loopback refers to the browser user's host, not another Compose container. |
+| `NEXT_PUBLIC_WS_URL` | `ws://127.0.0.1:8080/api/v1/events` | Does not match the API's workspace WebSocket route `/api/v1/workspaces/{id}/events/ws`. It also lacks the `/workspaces/<id>/` segment that the UI replaces when switching workspace. |
+| `NEXT_PUBLIC_WORKSPACE_ID` | empty | Required by UI config; the built client reports incomplete configuration when it is empty. |
+| `NEXT_PUBLIC_BUILD_VERSION` | `dev` | Display metadata only. |
+| `NEXT_PUBLIC_ENABLE_DEV_MOCKS` | `false` | Parsed only when exactly `true`; no current route implements mock behavior. |
+
+**The current Compose environment block does not configure the browser bundle.** Compose injects those values when the container starts, but `ui/Dockerfile` runs `npm run build` earlier and does not declare matching build arguments or pass an environment file into that build stage. Next.js statically inlines direct `process.env.NEXT_PUBLIC_*` references during compilation, so runtime container environment values cannot repair missing or incorrect values in the generated JavaScript. The checked-in Compose defaults therefore do not produce a correctly configured UI/API/WebSocket integration. In particular, changing only the Compose runtime `environment:` values is insufficient.
+
+For a local native run, provide the values in the build process before compiling, then start the already-built app:
+
+```sh
+cd ui
+export NEXT_PUBLIC_API_BASE_URL=http://127.0.0.1:8080
+export NEXT_PUBLIC_WORKSPACE_ID=YOUR_REGISTERED_WORKSPACE_ID
+export NEXT_PUBLIC_WS_URL="ws://127.0.0.1:8080/api/v1/workspaces/${NEXT_PUBLIC_WORKSPACE_ID}/events/ws"
+npm ci
+npm run build
+npm run start
+```
+
+The current container path needs an implementation change before equivalent values can be supplied safely at build time: add explicit Docker build arguments/environment wiring before `npm run build`, then pass those arguments from Compose. Do not put bearer tokens in those build arguments; public values are embedded in client assets. The UI service has no authentication proxy or TLS configuration, and its broad port publication should only be used on a trusted development network.
+
 ## GitHub documentation site
 
 After the strict build, run `python scripts/verify-docs-navigation.py`. The GitHub workflow runs this check before uploading the Pages artifact. It compares the primary sidebar on every generated HTML page, including the 404 page, against the labels, order, and page targets in `mkdocs.yml`. It also verifies that each configured page has a rendered output file. Missing entries, changed order, wrong link targets, missing pages, or multiple/missing primary sidebars fail the command. The checker supports the configured directory URLs and Material sidebar markup; update it when changing themes or URL mode.

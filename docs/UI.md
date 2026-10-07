@@ -18,6 +18,8 @@ NEXT_PUBLIC_ENABLE_DEV_MOCKS=false
 
 The WebSocket URL should contain the workspace path segment because the context control replaces that segment when the selected workspace changes.
 
+The checked-in [UI Compose deployment](DEPLOYMENT.md#ui-container-configuration) currently passes these values only to the running container, after its Dockerfile has already built the Next.js bundle. Runtime environment changes cannot update statically inlined public values; the Compose file's blank workspace default and non-workspace WebSocket path are also invalid for the current UI/API integration. Use the documented native build flow or first add explicit container build-argument wiring.
+
 The API client sends `Accept: application/json`, a generated `X-Request-ID`, and `X-Workspace-ID` on each request; JSON writes also send `Content-Type: application/json`. It does not currently attach a bearer token. Do not expose a privileged human token in browser environment variables; deploy behind an appropriate same-origin/authentication boundary or complete the intended authenticated client flow before remote use.
 
 ## Implemented routes
