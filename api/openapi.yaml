@@ -1926,18 +1926,18 @@ components:
       type: object
       required: [workspace_id, generated_at, measurement_window, agents_online, proposal_queue, consensus_success_rate, policy_pass_rate, transaction_manager, mcp_enforcement, memory_oracle, run_state, repository]
       properties:
-        workspace_id: {type: string}
-        generated_at: {type: string, format: date-time}
-        measurement_window: {type: object, required: [from, to], properties: {from: {type: string, format: date-time}, to: {type: string, format: date-time}}}
-        agents_online: {type: integer, minimum: 0}
-        proposal_queue: {type: object, required: [pending, in_review, approved, rejected], properties: {pending: {type: integer}, in_review: {type: integer}, approved: {type: integer}, rejected: {type: integer}}}
-        consensus_success_rate: {type: number, minimum: 0, maximum: 1}
-        policy_pass_rate: {type: number, minimum: 0, maximum: 1}
-        transaction_manager: {type: string}
-        mcp_enforcement: {type: string}
-        memory_oracle: {type: string}
-        run_state: {type: string}
-        repository: {type: object, additionalProperties: true}
+        workspace_id: {type: string, description: "Workspace whose proposal queue, policy rate, run state, and repository status are summarized."}
+        generated_at: {type: string, format: date-time, description: "UTC time at which the dashboard projection was assembled."}
+        measurement_window: {type: object, required: [from, to], description: "Rolling 24-hour UTC interval used for consensus and policy rates; queue counts are current-state counts, not limited to this interval.", properties: {from: {type: string, format: date-time, description: "Inclusive lower boundary of the rate calculation interval."}, to: {type: string, format: date-time, description: "Exclusive upper boundary of the rate calculation interval, captured as generated_at."}}}
+        agents_online: {type: integer, minimum: 0, description: "Global enabled-agent count with status ready or idle; this count is not scoped to the selected workspace and does not probe process liveness."}
+        proposal_queue: {type: object, required: [pending, in_review, approved, rejected], description: "Workspace proposal counts grouped by stored lifecycle status; accepted is included in the approved count.", properties: {pending: {type: integer, description: "Workspace proposals with status pending."}, in_review: {type: integer, description: "Workspace proposals with status in_review."}, approved: {type: integer, description: "Workspace proposals with status accepted or approved."}, rejected: {type: integer, description: "Workspace proposals with status rejected."}}}
+        consensus_success_rate: {type: number, minimum: 0, maximum: 1, description: "Approved consensus snapshots divided by workspace snapshots with approved or blocked status inside the measurement window; zero when no finalized snapshots exist."}
+        policy_pass_rate: {type: number, minimum: 0, maximum: 1, description: "Passing workspace policy evaluations divided by all workspace evaluations in the measurement window; zero when there are no evaluations."}
+        transaction_manager: {type: string, description: "Currently hardcoded to ready; this dashboard field does not probe transaction execution or locks."}
+        mcp_enforcement: {type: string, description: "Currently hardcoded to orchestrator-only; it is an informational label, not a runtime policy verification."}
+        memory_oracle: {type: string, description: "Currently hardcoded to ready; this dashboard field does not probe memory service behavior."}
+        run_state: {type: string, description: "State from the most recently started workspace run, or stopped when no state is returned."}
+        repository: {type: object, additionalProperties: true, description: "Repository inspection result for the workspace; on inspection failure the handler returns an object with status unavailable. The detailed shape depends on repository status projection."}
     ActivityItem:
       type: object
       required: [id, type, category, entity_type, severity, title, metadata, created_at]
@@ -2123,41 +2123,42 @@ components:
       type: object
       required: [event_id, workspace_id, sequence, type, occurred_at, payload]
       properties:
-        event_id: {type: integer, format: int64}
-        workspace_id: {type: string}
-        sequence: {type: integer, format: int64}
-        type: {type: string}
-        occurred_at: {type: string, format: date-time}
-        actor: {type: string}
-        entity_type: {type: string}
-        entity_id: {type: string}
-        payload: {type: object, additionalProperties: true}
+        event_id: {type: integer, format: int64, description: "Global SQLite event row ID; IDs belonging to other workspaces can create gaps in this workspace's stream."}
+        workspace_id: {type: string, description: "Workspace whose membership filter selected this event."}
+        sequence: {type: integer, format: int64, description: "Currently identical to event_id (global event row ID), not a workspace-local consecutive counter."}
+        type: {type: string, description: "Persisted event type string."}
+        occurred_at: {type: string, format: date-time, description: "Persisted event creation timestamp projected as the occurrence time."}
+        actor: {type: string, description: "Text-redacted actor ID; omitted when empty."}
+        entity_type: {type: string, description: "Prefix of type before its first dot; this is a naming heuristic, not a foreign-key lookup."}
+        entity_id: {type: string, description: "First string value found among selected payload keys (proposal_id, claim_id, vote_id, approval_id, transaction_id, policy_id, session_id), text-redacted; omitted if none is found."}
+        payload: {type: object, additionalProperties: true, description: "Parsed and heuristically redacted JSON object. Invalid JSON falls back to an object with redacted text; redaction is not a guarantee that every secret format is removed."}
     LiveEventControl:
       type: object
       required: [kind, workspace_id]
       properties:
-        kind: {type: string, enum: [hello, ping, resync_required]}
-        schema_version: {type: string}
-        workspace_id: {type: string}
-        current_sequence: {type: integer, format: int64}
-        resumable: {type: boolean}
-        reason: {type: string}
+        kind: {type: string, enum: [hello, ping, resync_required], description: "Control message discriminator. hello is sent after upgrade, ping periodically reports sequence progress, and resync_required ends replay when the backlog exceeds the server limit."}
+        schema_version: {type: string, description: "Protocol schema version, currently 1 and present on hello."}
+        workspace_id: {type: string, description: "Workspace associated with the control message."}
+        current_sequence: {type: integer, format: int64, description: "Current global event ID included by hello and resync_required; ping uses the separate sequence field."}
+        sequence: {type: integer, format: int64, description: "Current global event ID included by ping controls; it is not a workspace-local sequence."}
+        resumable: {type: boolean, description: "Hello currently reports true to indicate that last_event_id replay is supported, subject to the bounded replay limit."}
+        reason: {type: string, description: "Resync explanation; currently cursor_not_retained when replay query finds more than 1,000 events, which indicates backlog size rather than verified event deletion."}
     EventVersionMarker:
       type: object
       required: [count]
       properties:
-        count: {type: integer, minimum: 0}
-        latest_at: {type: string, format: date-time}
+        count: {type: integer, minimum: 0, description: "Number of rows counted for the named domain marker; each domain query is independent."}
+        latest_at: {type: string, format: date-time, description: "Latest timestamp selected for that domain's marker; omitted when the source query has no timestamp."}
     EventSnapshot:
       type: object
       required: [workspace_id, sequence, generated_at, retention, version_markers, snapshot]
       properties:
-        workspace_id: {type: string}
-        sequence: {type: integer, format: int64, minimum: 0}
-        generated_at: {type: string, format: date-time}
-        retention: {type: object, required: [mode, resume_by, max_replay_events, resync_endpoint], properties: {mode: {type: string}, resume_by: {type: string}, max_replay_events: {type: integer, minimum: 1}, resync_endpoint: {type: string}}}
-        version_markers: {type: object, additionalProperties: {$ref: '#/components/schemas/EventVersionMarker'}}
-        snapshot: {type: object, required: [workspace, counts, run_state], properties: {workspace: {$ref: '#/components/schemas/Workspace'}, counts: {type: object, additionalProperties: {type: integer, minimum: 0}}, run_state: {type: string}}}
+        workspace_id: {type: string, description: "Workspace whose bounded event stream and selected domain counts are summarized."}
+        sequence: {type: integer, format: int64, minimum: 0, description: "Largest persisted global event ID belonging to the workspace filter, or zero when no matching event is present or the lookup fails."}
+        generated_at: {type: string, format: date-time, description: "UTC time when the snapshot response was assembled; component queries are not wrapped in one database transaction."}
+        retention: {type: object, required: [mode, resume_by, max_replay_events, resync_endpoint], description: "Fixed descriptors for WebSocket event replay behavior; these values do not configure data retention or event deletion.", properties: {mode: {type: string, description: "Currently append_only_bounded_replay."}, resume_by: {type: string, description: "Currently last_event_id; resume cursor is the global SQLite event ID."}, max_replay_events: {type: integer, minimum: 1, description: "Currently 1,000 replayed events; a larger pending replay produces resync_required and closes the socket."}, resync_endpoint: {type: string, description: "Workspace snapshot endpoint path suggested for reconciliation; this response is a partial summary, not a complete domain export."}}}
+        version_markers: {type: object, additionalProperties: {$ref: '#/components/schemas/EventVersionMarker'}, description: "Available per-domain row counts and latest timestamps. Failed marker queries omit that domain; markers are not content hashes or full revision tokens."}
+        snapshot: {type: object, required: [workspace, counts, run_state], description: "Partial state projection containing workspace metadata, selected domain counts, and latest run state; fetch collection endpoints for full records.", properties: {workspace: {$ref: '#/components/schemas/Workspace', description: "Workspace registry record at the time it was read."}, counts: {type: object, additionalProperties: {type: integer, minimum: 0}, description: "Counts for domains whose independent marker queries succeeded; values can be omitted when their queries fail."}, run_state: {type: string, description: "State of the latest workspace run, defaulting to stopped when no state is returned."}}}
     ContentionResolutionInput:
       type: object
       required: [resolution]

@@ -1353,24 +1353,24 @@ Required fields: `workspace_id`, `generated_at`, `measurement_window`, `agents_o
 
 | Property | Type | Required | Constraints | Description |
 |---|---|---|---|---|
-| `workspace_id` | `string` | yes |  |  |
-| `generated_at` | `string` | yes | format="date-time" |  |
-| `measurement_window` | `object` | yes |  |  |
-| `measurement_window.from` | `string` | yes | format="date-time" |  |
-| `measurement_window.to` | `string` | yes | format="date-time" |  |
-| `agents_online` | `integer` | yes | minimum=0 |  |
-| `proposal_queue` | `object` | yes |  |  |
-| `proposal_queue.pending` | `integer` | yes |  |  |
-| `proposal_queue.in_review` | `integer` | yes |  |  |
-| `proposal_queue.approved` | `integer` | yes |  |  |
-| `proposal_queue.rejected` | `integer` | yes |  |  |
-| `consensus_success_rate` | `number` | yes | minimum=0; maximum=1 |  |
-| `policy_pass_rate` | `number` | yes | minimum=0; maximum=1 |  |
-| `transaction_manager` | `string` | yes |  |  |
-| `mcp_enforcement` | `string` | yes |  |  |
-| `memory_oracle` | `string` | yes |  |  |
-| `run_state` | `string` | yes |  |  |
-| `repository` | object (any value) | yes |  |  |
+| `workspace_id` | `string` | yes |  | Workspace whose proposal queue, policy rate, run state, and repository status are summarized. |
+| `generated_at` | `string` | yes | format="date-time" | UTC time at which the dashboard projection was assembled. |
+| `measurement_window` | `object` | yes |  | Rolling 24-hour UTC interval used for consensus and policy rates; queue counts are current-state counts, not limited to this interval. |
+| `measurement_window.from` | `string` | yes | format="date-time" | Inclusive lower boundary of the rate calculation interval. |
+| `measurement_window.to` | `string` | yes | format="date-time" | Exclusive upper boundary of the rate calculation interval, captured as generated_at. |
+| `agents_online` | `integer` | yes | minimum=0 | Global enabled-agent count with status ready or idle; this count is not scoped to the selected workspace and does not probe process liveness. |
+| `proposal_queue` | `object` | yes |  | Workspace proposal counts grouped by stored lifecycle status; accepted is included in the approved count. |
+| `proposal_queue.pending` | `integer` | yes |  | Workspace proposals with status pending. |
+| `proposal_queue.in_review` | `integer` | yes |  | Workspace proposals with status in_review. |
+| `proposal_queue.approved` | `integer` | yes |  | Workspace proposals with status accepted or approved. |
+| `proposal_queue.rejected` | `integer` | yes |  | Workspace proposals with status rejected. |
+| `consensus_success_rate` | `number` | yes | minimum=0; maximum=1 | Approved consensus snapshots divided by workspace snapshots with approved or blocked status inside the measurement window; zero when no finalized snapshots exist. |
+| `policy_pass_rate` | `number` | yes | minimum=0; maximum=1 | Passing workspace policy evaluations divided by all workspace evaluations in the measurement window; zero when there are no evaluations. |
+| `transaction_manager` | `string` | yes |  | Currently hardcoded to ready; this dashboard field does not probe transaction execution or locks. |
+| `mcp_enforcement` | `string` | yes |  | Currently hardcoded to orchestrator-only; it is an informational label, not a runtime policy verification. |
+| `memory_oracle` | `string` | yes |  | Currently hardcoded to ready; this dashboard field does not probe memory service behavior. |
+| `run_state` | `string` | yes |  | State from the most recently started workspace run, or stopped when no state is returned. |
+| `repository` | object (any value) | yes |  | Repository inspection result for the workspace; on inspection failure the handler returns an object with status unavailable. The detailed shape depends on repository status projection. |
 
 ### Schema: ActivityItem {#schema-activityitem}
 
@@ -1710,15 +1710,15 @@ Required fields: `event_id`, `workspace_id`, `sequence`, `type`, `occurred_at`, 
 
 | Property | Type | Required | Constraints | Description |
 |---|---|---|---|---|
-| `event_id` | `integer` | yes | format="int64" |  |
-| `workspace_id` | `string` | yes |  |  |
-| `sequence` | `integer` | yes | format="int64" |  |
-| `type` | `string` | yes |  |  |
-| `occurred_at` | `string` | yes | format="date-time" |  |
-| `actor` | `string` | no |  |  |
-| `entity_type` | `string` | no |  |  |
-| `entity_id` | `string` | no |  |  |
-| `payload` | object (any value) | yes |  |  |
+| `event_id` | `integer` | yes | format="int64" | Global SQLite event row ID; IDs belonging to other workspaces can create gaps in this workspace's stream. |
+| `workspace_id` | `string` | yes |  | Workspace whose membership filter selected this event. |
+| `sequence` | `integer` | yes | format="int64" | Currently identical to event_id (global event row ID), not a workspace-local consecutive counter. |
+| `type` | `string` | yes |  | Persisted event type string. |
+| `occurred_at` | `string` | yes | format="date-time" | Persisted event creation timestamp projected as the occurrence time. |
+| `actor` | `string` | no |  | Text-redacted actor ID; omitted when empty. |
+| `entity_type` | `string` | no |  | Prefix of type before its first dot; this is a naming heuristic, not a foreign-key lookup. |
+| `entity_id` | `string` | no |  | First string value found among selected payload keys (proposal_id, claim_id, vote_id, approval_id, transaction_id, policy_id, session_id), text-redacted; omitted if none is found. |
+| `payload` | object (any value) | yes |  | Parsed and heuristically redacted JSON object. Invalid JSON falls back to an object with redacted text; redaction is not a guarantee that every secret format is removed. |
 
 ### Schema: LiveEventControl {#schema-liveeventcontrol}
 
@@ -1728,12 +1728,13 @@ Required fields: `kind`, `workspace_id`
 
 | Property | Type | Required | Constraints | Description |
 |---|---|---|---|---|
-| `kind` | `string` | yes | enum=["hello","ping","resync_required"] |  |
-| `schema_version` | `string` | no |  |  |
-| `workspace_id` | `string` | yes |  |  |
-| `current_sequence` | `integer` | no | format="int64" |  |
-| `resumable` | `boolean` | no |  |  |
-| `reason` | `string` | no |  |  |
+| `kind` | `string` | yes | enum=["hello","ping","resync_required"] | Control message discriminator. hello is sent after upgrade, ping periodically reports sequence progress, and resync_required ends replay when the backlog exceeds the server limit. |
+| `schema_version` | `string` | no |  | Protocol schema version, currently 1 and present on hello. |
+| `workspace_id` | `string` | yes |  | Workspace associated with the control message. |
+| `current_sequence` | `integer` | no | format="int64" | Current global event ID included by hello and resync_required; ping uses the separate sequence field. |
+| `sequence` | `integer` | no | format="int64" | Current global event ID included by ping controls; it is not a workspace-local sequence. |
+| `resumable` | `boolean` | no |  | Hello currently reports true to indicate that last_event_id replay is supported, subject to the bounded replay limit. |
+| `reason` | `string` | no |  | Resync explanation; currently cursor_not_retained when replay query finds more than 1,000 events, which indicates backlog size rather than verified event deletion. |
 
 ### Schema: EventVersionMarker {#schema-eventversionmarker}
 
@@ -1743,8 +1744,8 @@ Required fields: `count`
 
 | Property | Type | Required | Constraints | Description |
 |---|---|---|---|---|
-| `count` | `integer` | yes | minimum=0 |  |
-| `latest_at` | `string` | no | format="date-time" |  |
+| `count` | `integer` | yes | minimum=0 | Number of rows counted for the named domain marker; each domain query is independent. |
+| `latest_at` | `string` | no | format="date-time" | Latest timestamp selected for that domain's marker; omitted when the source query has no timestamp. |
 
 ### Schema: EventSnapshot {#schema-eventsnapshot}
 
@@ -1754,19 +1755,19 @@ Required fields: `workspace_id`, `sequence`, `generated_at`, `retention`, `versi
 
 | Property | Type | Required | Constraints | Description |
 |---|---|---|---|---|
-| `workspace_id` | `string` | yes |  |  |
-| `sequence` | `integer` | yes | format="int64"; minimum=0 |  |
-| `generated_at` | `string` | yes | format="date-time" |  |
-| `retention` | `object` | yes |  |  |
-| `retention.mode` | `string` | yes |  |  |
-| `retention.resume_by` | `string` | yes |  |  |
-| `retention.max_replay_events` | `integer` | yes | minimum=1 |  |
-| `retention.resync_endpoint` | `string` | yes |  |  |
-| `version_markers` | object (values of `EventVersionMarker`) | yes |  |  |
-| `snapshot` | `object` | yes |  |  |
-| `snapshot.workspace` | `Workspace` | yes |  |  |
-| `snapshot.counts` | object (values of `integer`) | yes |  |  |
-| `snapshot.run_state` | `string` | yes |  |  |
+| `workspace_id` | `string` | yes |  | Workspace whose bounded event stream and selected domain counts are summarized. |
+| `sequence` | `integer` | yes | format="int64"; minimum=0 | Largest persisted global event ID belonging to the workspace filter, or zero when no matching event is present or the lookup fails. |
+| `generated_at` | `string` | yes | format="date-time" | UTC time when the snapshot response was assembled; component queries are not wrapped in one database transaction. |
+| `retention` | `object` | yes |  | Fixed descriptors for WebSocket event replay behavior; these values do not configure data retention or event deletion. |
+| `retention.mode` | `string` | yes |  | Currently append_only_bounded_replay. |
+| `retention.resume_by` | `string` | yes |  | Currently last_event_id; resume cursor is the global SQLite event ID. |
+| `retention.max_replay_events` | `integer` | yes | minimum=1 | Currently 1,000 replayed events; a larger pending replay produces resync_required and closes the socket. |
+| `retention.resync_endpoint` | `string` | yes |  | Workspace snapshot endpoint path suggested for reconciliation; this response is a partial summary, not a complete domain export. |
+| `version_markers` | object (values of `EventVersionMarker`) | yes |  | Available per-domain row counts and latest timestamps. Failed marker queries omit that domain; markers are not content hashes or full revision tokens. |
+| `snapshot` | `object` | yes |  | Partial state projection containing workspace metadata, selected domain counts, and latest run state; fetch collection endpoints for full records. |
+| `snapshot.workspace` | `Workspace` | yes |  | Workspace registry record at the time it was read. |
+| `snapshot.counts` | object (values of `integer`) | yes |  | Counts for domains whose independent marker queries succeeded; values can be omitted when their queries fail. |
+| `snapshot.run_state` | `string` | yes |  | State of the latest workspace run, defaulting to stopped when no state is returned. |
 
 ### Schema: ContentionResolutionInput {#schema-contentionresolutioninput}
 
