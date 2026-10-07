@@ -49,6 +49,27 @@ roundtable watch [--root DIR] [--run RUN_ID] [--limit N] [--follow] [--interval 
 
 `table` prints run IDs/status/goals and counts for agents, tasks, claims, proposals, transactions, and memory entries. `watch` prints a snapshot of activity/blocked tasks/pending proposals/approvals/transactions/events. `--limit` defaults to `10`; `--follow` polls for updates; `--interval` defaults to `2s` and is clamped to a safe positive value. This is polling, not a push subscription.
 
+### Watch output and polling semantics
+
+`watch` opens the local runtime/database directly; it does not connect to the MCP socket or start an orchestrator. Each poll calls the same `table.watch` handler used by MCP, then formats the result as human-readable lines:
+
+| Prefix | Contents |
+| --- | --- |
+| `WATCH` | Requested run filter plus active-agent, open-task, active-claim, and suspended-claim counts. |
+| `BLOCKED` | ID and title for blocked tasks. |
+| `PROPOSAL` | ID, status, and title for pending or in-review proposals. |
+| `APPROVAL` | ID, status, and subject for requested human approvals. |
+| `TX` | ID, status, and proposal ID for recent transactions. |
+| `EVENT` | Database event ID, type, actor ID, and task ID. |
+
+The run filter scopes only the event list. Snapshot counts and the blocked-task, proposal, and approval lists, as well as the selected transaction tail, are read from workspace-wide state. These collections are loaded with separate queries rather than one read transaction, so concurrent changes can make a single printed snapshot internally time-skewed. Treat the display as an operator overview, not as an atomic authorization or write precondition.
+
+Without `--follow`, the command prints one poll and exits. Its event list is the newest `--limit` events for the requested run (or all runs when `--run` is empty), printed oldest-to-newest within that selected window; older omitted events are not reported. The transaction list is independently limited to the tail of the store's list order and is not filtered by `--run`. The MCP handler normalizes a nonpositive limit to `10` and caps values above `200`; the CLI does not validate or clamp the flag itself.
+
+With `--follow`, the command polls every interval and prints each `WATCH`/projection/transaction section again. It suppresses event lines whose database IDs are no greater than the largest ID already printed, so previously visible events are not repeated. It does **not** send `after_event_id` to the handler: each poll still asks only for the newest limited window. If more than `--limit` new events arrive between polls, events that have already fallen out of that window are permanently skipped by this CLI. For lossless event consumption, call MCP `table.watch` with its `after_event_id` cursor and continue paging while `has_more_events` is true; see [MCP Tools](MCP_TOOLS.md#run-state-and-turns).
+
+An interval of zero or less falls back to `2s`; a positive duration is used as supplied. Cancellation stops the polling loop and returns the context error, so an interrupted `--follow` invocation may exit nonzero. Poll, database, configuration, and formatting failures also terminate the command rather than being retried. The displayed enabled-agent count is configuration/state metadata, not proof that external agent processes are running.
+
 ## Claims
 
 ```sh
