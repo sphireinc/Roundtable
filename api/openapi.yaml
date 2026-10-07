@@ -1411,93 +1411,93 @@ components:
       required: [title, summary, patch_path]
       additionalProperties: false
       properties:
-        proposal_id: {type: string}
-        deliberation_id: {type: string}
-        proposer_session_id: {type: string}
-        title: {type: string}
-        summary: {type: string}
-        patch_path: {type: string}
-        base_revision: {type: string}
-        risk: {type: string, enum: [normal, high]}
-        resource_ids: {type: array, items: {type: string}}
+        proposal_id: {type: string, description: "Optional caller-supplied proposal identifier; when empty the server generates a timestamp-based ID. Repeating the same request with its idempotency key replays the middleware-cached response; a conflicting identifier can still fail at persistence."}
+        deliberation_id: {type: string, description: "Optional deliberation association stored as supplied; creation does not verify that a corresponding deliberation exists."}
+        proposer_session_id: {type: string, description: "Optional session identifier recorded as proposal provenance; creation does not validate that the session exists."}
+        title: {type: string, description: "Required nonblank proposal title; surrounding whitespace is trimmed and the returned value is text-redacted."}
+        summary: {type: string, description: "Required nonblank proposal summary; redaction is applied before persistence and again when read."}
+        patch_path: {type: string, description: "Required repository-relative patch artifact path. Creation rejects absolute paths and any path containing '..'; patch reads apply workspace-root containment checks."}
+        base_revision: {type: string, description: "Optional repository revision the proposed patch is based on; stored as evidence and compared with current HEAD by patch metadata, not enforced during proposal creation."}
+        risk: {type: string, enum: [normal, high], description: "Proposal risk label; omission defaults to normal. The handler stores other supplied strings without validating the documented enum."}
+        resource_ids: {type: array, items: {type: string}, description: "Optional resource identifiers associated with the proposal in the same database transaction; referenced resources are not validated here."}
     Proposal:
       type: object
       required: [proposal_id, workspace_id, title, summary, patch_path, state, vote_state, policy_state, approval_state, transaction_state, risk, created_at, updated_at]
       properties:
-        proposal_id: {type: string}
-        workspace_id: {type: string}
-        deliberation_id: {type: string}
-        proposer_session_id: {type: string}
-        title: {type: string}
-        summary: {type: string}
-        patch_path: {type: string}
-        base_revision: {type: string}
-        state: {type: string, enum: [pending, in_review, accepted, rejected, withdrawn]}
-        vote_state: {type: string}
-        policy_state: {type: string}
-        approval_state: {type: string}
-        transaction_state: {type: string}
-        risk: {type: string}
-        created_at: {type: string, format: date-time}
-        updated_at: {type: string, format: date-time}
+        proposal_id: {type: string, description: "Stable proposal identifier assigned on creation or supplied by the caller."}
+        workspace_id: {type: string, description: "Workspace that owns the proposal; reads are scoped to this workspace."}
+        deliberation_id: {type: string, description: "Optional recorded deliberation association; empty values are omitted from JSON."}
+        proposer_session_id: {type: string, description: "Optional recorded proposer session; empty values are omitted from JSON."}
+        title: {type: string, description: "Proposal title after text redaction on read."}
+        summary: {type: string, description: "Proposal summary after text redaction on read."}
+        patch_path: {type: string, description: "Workspace-relative patch artifact path after text redaction on read."}
+        base_revision: {type: string, description: "Optional revision recorded as the patch base; empty values are omitted."}
+        state: {type: string, enum: [pending, in_review, accepted, rejected, withdrawn], description: "Lifecycle state stored on the proposal; supported human actions move pending to in_review, rejected, or withdrawn, and in_review to rejected or withdrawn."}
+        vote_state: {type: string, description: "Stored vote projection state, defaulting to pending when the database value is null; this read field is not recalculated as part of proposal retrieval."}
+        policy_state: {type: string, description: "Stored policy projection state, defaulting to pending when the database value is null."}
+        approval_state: {type: string, description: "Stored approval projection state, defaulting to pending when the database value is null."}
+        transaction_state: {type: string, description: "Stored transaction projection state, defaulting to not_started when the database value is null."}
+        risk: {type: string, description: "Risk label persisted at creation; the current handler defaults omission to normal but does not validate the input against the documented values."}
+        created_at: {type: string, format: date-time, description: "Proposal creation timestamp returned from its stored record."}
+        updated_at: {type: string, format: date-time, description: "Most recent lifecycle update timestamp, falling back to created_at when the stored update value is null."}
     Proposals:
       type: object
       required: [items]
       properties:
-        items: {type: array, items: {$ref: '#/components/schemas/Proposal'}}
-        next_cursor: {type: [string, 'null']}
+        items: {type: array, items: {$ref: '#/components/schemas/Proposal'}, description: "Proposals owned by the selected workspace, ordered by creation time and ID before pagination."}
+        next_cursor: {type: [string, 'null'], description: "Opaque cursor for the next response page, or null when no further page is available."}
     PatchMetadata:
       type: object
       required: [proposal_id, patch_path, current_head, stale_base, file_count, added_lines, removed_lines, binary_files]
       properties:
-        proposal_id: {type: string}
-        patch_path: {type: string}
-        base_revision: {type: string}
-        current_head: {type: string}
-        stale_base: {type: boolean}
-        file_count: {type: integer, minimum: 0}
-        added_lines: {type: integer, minimum: 0}
-        removed_lines: {type: integer, minimum: 0}
-        binary_files: {type: integer, minimum: 0}
+        proposal_id: {type: string, description: "Proposal whose patch artifact was loaded."}
+        patch_path: {type: string, description: "Stored workspace-relative path used to read the patch artifact."}
+        base_revision: {type: string, description: "Recorded base revision; omitted when empty."}
+        current_head: {type: string, description: "HEAD revision observed from repository inspection; inspection errors are ignored and can therefore produce an empty value."}
+        stale_base: {type: boolean, description: "True only when a nonempty recorded base revision differs from the observed HEAD; this is an informational comparison, not a freshness guarantee."}
+        file_count: {type: integer, minimum: 0, description: "Number of unique touched file paths parsed from the patch."}
+        added_lines: {type: integer, minimum: 0, description: "Current parser projection counts parsed change ranges (hunk headers), not individual added lines; treat as approximate metadata."}
+        removed_lines: {type: integer, minimum: 0, description: "Current projection increments once per deleted file, not once per removed line; it is not a removed-line total."}
+        binary_files: {type: integer, minimum: 0, description: "Reserved binary-file count; the current metadata handler leaves this at zero."}
     PatchFile:
       type: object
       required: [path, operation, binary]
       properties:
-        path: {type: string}
-        old_path: {type: string}
-        new_path: {type: string}
-        operation: {type: string, enum: [create, modify, delete, rename]}
-        binary: {type: boolean}
-        added_lines: {type: integer}
-        removed_lines: {type: integer}
+        path: {type: string, description: "Primary file path, using the new path when present and otherwise the old path."}
+        old_path: {type: string, description: "Old path from the parsed patch header; omitted when absent."}
+        new_path: {type: string, description: "New path from the parsed patch header; omitted when absent."}
+        operation: {type: string, enum: [create, modify, delete, rename], description: "Operation inferred from parsed new, deleted, and rename header flags; otherwise reported as modify."}
+        binary: {type: boolean, description: "Whether the raw patch contains a matching conventional 'Binary files a/... b/...' marker; this is a textual heuristic."}
+        added_lines: {type: integer, description: "Currently returned as zero; per-file added-line counts are not populated by this handler."}
+        removed_lines: {type: integer, description: "Currently returned as zero; per-file removed-line counts are not populated by this handler."}
     PatchFiles:
       type: object
       required: [items]
       properties:
-        items: {type: array, items: {$ref: '#/components/schemas/PatchFile'}}
-        next_cursor: {type: [string, 'null']}
+        items: {type: array, items: {$ref: '#/components/schemas/PatchFile'}, description: "File-change headers parsed from the patch artifact; patch application or semantic validity is not established by this listing."}
+        next_cursor: {type: [string, 'null'], description: "Opaque cursor for the next response page, or null when no further page is available."}
     PatchDiff:
       type: object
       required: [items]
       properties:
-        items: {type: array, items: {type: string}}
-        next_cursor: {type: [string, 'null']}
+        items: {type: array, items: {type: string}, description: "Redacted patch text split into newline-delimited strings; pagination is applied to those lines."}
+        next_cursor: {type: [string, 'null'], description: "Opaque cursor for the next response page, or null when no further page is available."}
     PatchSymbol:
       type: object
       required: [path, resource_id, kind, name, start_line, end_line]
       properties:
-        path: {type: string}
-        resource_id: {type: string}
-        kind: {type: string}
-        name: {type: string}
-        start_line: {type: integer}
-        end_line: {type: integer}
+        path: {type: string, description: "Indexed workspace path for the symbol, limited to currently existing files touched by the patch."}
+        resource_id: {type: string, description: "Resource identifier produced by the symbol indexer for this symbol."}
+        kind: {type: string, description: "Language/indexer-specific symbol kind."}
+        name: {type: string, description: "Symbol name reported by the indexer."}
+        start_line: {type: integer, description: "One-based start line from indexing the current workspace file, not a projected post-patch location."}
+        end_line: {type: integer, description: "One-based end line from indexing the current workspace file, not a projected post-patch location."}
     PatchSymbols:
       type: object
       required: [items]
       properties:
-        items: {type: array, items: {$ref: '#/components/schemas/PatchSymbol'}}
-        next_cursor: {type: [string, 'null']}
+        items: {type: array, items: {$ref: '#/components/schemas/PatchSymbol'}, description: "Symbols discovered in current workspace contents of parsed touched files; unsafe paths and indexing failures are skipped, and proposed patch contents are not indexed."}
+        next_cursor: {type: [string, 'null'], description: "Opaque cursor for the next response page, or null when no further page is available."}
     ValidationInput:
       type: object
       additionalProperties: false
@@ -1590,54 +1590,55 @@ components:
       type: object
       required: [id, proposal_id, agent_id, decision, policy_weight, policy_version, created_at]
       properties:
-        id: {type: string}
-        proposal_id: {type: string}
-        agent_id: {type: string}
-        session_id: {type: string}
-        decision: {type: string, enum: [approve, reject, abstain, veto]}
-        policy_weight: {type: integer, minimum: 1}
-        policy_version: {type: string}
-        rationale: {type: string}
-        confidence: {type: number, minimum: 0, maximum: 1}
-        created_at: {type: string, format: date-time}
+        id: {type: string, description: "Vote row identifier; a caller-supplied identifier can update an existing row with the same ID."}
+        proposal_id: {type: string, description: "Proposal receiving this vote."}
+        agent_id: {type: string, description: "Agent identity attributed to the vote; the server derives policy weight from the stored agent role, or uses weight 1 when unavailable."}
+        session_id: {type: string, description: "Optional session attributed to the vote; omitted when empty."}
+        decision: {type: string, enum: [approve, reject, abstain, veto], description: "Normalized decision used in consensus aggregation."}
+        policy_weight: {type: integer, minimum: 1, description: "Weight stored when the vote is cast: security role 3, architect or reviewer role 2, and all other or missing roles 1."}
+        policy_version: {type: string, description: "Policy label recorded for the vote; the current implementation uses default-v1."}
+        rationale: {type: string, description: "Text-redacted rationale; omitted when empty."}
+        confidence: {type: number, minimum: 0, maximum: 1, description: "Optional caller-provided confidence; the server does not currently enforce the documented numeric range."}
+        created_at: {type: string, format: date-time, description: "Stored vote creation timestamp used for stable list ordering."}
     Votes:
       type: object
       required: [items]
       properties:
-        items: {type: array, items: {$ref: '#/components/schemas/Vote'}}
-        next_cursor: {type: [string, 'null']}
+        items: {type: array, items: {$ref: '#/components/schemas/Vote'}, description: "Votes for the workspace-scoped proposal, ordered by creation timestamp and ID before pagination."}
+        next_cursor: {type: [string, 'null'], description: "Opaque cursor for the next response page, or null when no further page is available."}
     VoteInput:
       type: object
       required: [agent_id, decision, rationale]
+      additionalProperties: false
       properties:
-        id: {type: string}
-        agent_id: {type: string}
-        session_id: {type: string}
-        decision: {type: string, enum: [approve, reject, abstain, veto]}
-        rationale: {type: string}
-        confidence: {type: number, minimum: 0, maximum: 1}
+        id: {type: string, description: "Optional vote row ID; when omitted a timestamp-based ID is generated. Reusing an ID updates that vote row."}
+        agent_id: {type: string, description: "Required nonblank agent identifier used for attribution and role-based weight lookup; existence is not required for a default weight of 1."}
+        session_id: {type: string, description: "Optional session attribution stored with the vote; surrounding whitespace is trimmed."}
+        decision: {type: string, enum: [approve, reject, abstain, veto], description: "Required decision; the handler trims and lowercases it before checking the four supported values."}
+        rationale: {type: string, description: "Required nonblank rationale, text-redacted before persistence and in the response."}
+        confidence: {type: number, minimum: 0, maximum: 1, description: "Optional confidence value persisted with the vote; the handler currently does not enforce the documented 0-to-1 range."}
     VoteResult:
       type: object
       required: [vote, consensus]
       properties:
-        vote: {$ref: '#/components/schemas/Vote'}
-        consensus: {$ref: '#/components/schemas/Consensus'}
+        vote: {$ref: '#/components/schemas/Vote', description: "The recorded or updated vote with server-derived policy weight and version."}
+        consensus: {$ref: '#/components/schemas/Consensus', description: "Consensus recalculated from stored votes in the same transaction as this vote."}
     Consensus:
       type: object
       required: [proposal_id, outcome, approve_weight, reject_weight, abstain_weight, veto_weight, quorum, threshold, votes_cast, policy_version, explanation, calculated_at]
       properties:
-        proposal_id: {type: string}
-        outcome: {type: string, enum: [pending, approved, blocked]}
-        approve_weight: {type: integer, minimum: 0}
-        reject_weight: {type: integer, minimum: 0}
-        abstain_weight: {type: integer, minimum: 0}
-        veto_weight: {type: integer, minimum: 0}
-        quorum: {type: integer, minimum: 1}
-        threshold: {type: integer, minimum: 1}
-        votes_cast: {type: integer, minimum: 0}
-        policy_version: {type: string}
-        explanation: {type: string}
-        calculated_at: {type: string, format: date-time}
+        proposal_id: {type: string, description: "Proposal whose stored votes were aggregated."}
+        outcome: {type: string, enum: [pending, approved, blocked], description: "Approved requires approve weight at least the threshold, no rejects or vetoes, and votes cast at least quorum; any reject or veto blocks; otherwise outcome is pending."}
+        approve_weight: {type: integer, minimum: 0, description: "Sum of stored policy weights for approve votes."}
+        reject_weight: {type: integer, minimum: 0, description: "Sum of stored policy weights for reject votes."}
+        abstain_weight: {type: integer, minimum: 0, description: "Sum of stored policy weights for abstain votes; abstentions contribute to votes_cast but not approval."}
+        veto_weight: {type: integer, minimum: 0, description: "Sum of stored policy weights for veto votes; any veto blocks approval."}
+        quorum: {type: integer, minimum: 1, description: "Minimum number of vote rows required for approval; currently fixed at 2 and counts abstentions."}
+        threshold: {type: integer, minimum: 1, description: "Minimum aggregate approve weight required for approval; currently fixed at 2."}
+        votes_cast: {type: integer, minimum: 0, description: "Number of stored vote rows across all decisions, including abstain."}
+        policy_version: {type: string, description: "Policy version from the last row observed during aggregation; it is not a single validated version for the entire vote set."}
+        explanation: {type: string, description: "Human-readable summary assembled from the aggregate weights and outcome."}
+        calculated_at: {type: string, format: date-time, description: "UTC timestamp when this response calculation ran; it is not the time of the most recent vote."}
     ConsensusAnalytics:
       type: object
       required: [window, generated_at, proposal_count, consensus_count, success_rate, rejection_rate, abstention_rate, mean_time_to_consensus_seconds, p50_time_to_consensus_seconds, p95_time_to_consensus_seconds, policy_overrides, human_interventions, quorum_failures, agent_participation]

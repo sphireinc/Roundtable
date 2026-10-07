@@ -591,15 +591,15 @@ Additional properties: forbidden.
 
 | Property | Type | Required | Constraints | Description |
 |---|---|---|---|---|
-| `proposal_id` | `string` | no |  |  |
-| `deliberation_id` | `string` | no |  |  |
-| `proposer_session_id` | `string` | no |  |  |
-| `title` | `string` | yes |  |  |
-| `summary` | `string` | yes |  |  |
-| `patch_path` | `string` | yes |  |  |
-| `base_revision` | `string` | no |  |  |
-| `risk` | `string` | no | enum=["normal","high"] |  |
-| `resource_ids` | array of `string` | no |  |  |
+| `proposal_id` | `string` | no |  | Optional caller-supplied proposal identifier; when empty the server generates a timestamp-based ID. Repeating the same request with its idempotency key replays the middleware-cached response; a conflicting identifier can still fail at persistence. |
+| `deliberation_id` | `string` | no |  | Optional deliberation association stored as supplied; creation does not verify that a corresponding deliberation exists. |
+| `proposer_session_id` | `string` | no |  | Optional session identifier recorded as proposal provenance; creation does not validate that the session exists. |
+| `title` | `string` | yes |  | Required nonblank proposal title; surrounding whitespace is trimmed and the returned value is text-redacted. |
+| `summary` | `string` | yes |  | Required nonblank proposal summary; redaction is applied before persistence and again when read. |
+| `patch_path` | `string` | yes |  | Required repository-relative patch artifact path. Creation rejects absolute paths and any path containing '..'; patch reads apply workspace-root containment checks. |
+| `base_revision` | `string` | no |  | Optional repository revision the proposed patch is based on; stored as evidence and compared with current HEAD by patch metadata, not enforced during proposal creation. |
+| `risk` | `string` | no | enum=["normal","high"] | Proposal risk label; omission defaults to normal. The handler stores other supplied strings without validating the documented enum. |
+| `resource_ids` | array of `string` | no |  | Optional resource identifiers associated with the proposal in the same database transaction; referenced resources are not validated here. |
 
 ### Schema: Proposal {#schema-proposal}
 
@@ -609,22 +609,22 @@ Required fields: `proposal_id`, `workspace_id`, `title`, `summary`, `patch_path`
 
 | Property | Type | Required | Constraints | Description |
 |---|---|---|---|---|
-| `proposal_id` | `string` | yes |  |  |
-| `workspace_id` | `string` | yes |  |  |
-| `deliberation_id` | `string` | no |  |  |
-| `proposer_session_id` | `string` | no |  |  |
-| `title` | `string` | yes |  |  |
-| `summary` | `string` | yes |  |  |
-| `patch_path` | `string` | yes |  |  |
-| `base_revision` | `string` | no |  |  |
-| `state` | `string` | yes | enum=["pending","in_review","accepted","rejected","withdrawn"] |  |
-| `vote_state` | `string` | yes |  |  |
-| `policy_state` | `string` | yes |  |  |
-| `approval_state` | `string` | yes |  |  |
-| `transaction_state` | `string` | yes |  |  |
-| `risk` | `string` | yes |  |  |
-| `created_at` | `string` | yes | format="date-time" |  |
-| `updated_at` | `string` | yes | format="date-time" |  |
+| `proposal_id` | `string` | yes |  | Stable proposal identifier assigned on creation or supplied by the caller. |
+| `workspace_id` | `string` | yes |  | Workspace that owns the proposal; reads are scoped to this workspace. |
+| `deliberation_id` | `string` | no |  | Optional recorded deliberation association; empty values are omitted from JSON. |
+| `proposer_session_id` | `string` | no |  | Optional recorded proposer session; empty values are omitted from JSON. |
+| `title` | `string` | yes |  | Proposal title after text redaction on read. |
+| `summary` | `string` | yes |  | Proposal summary after text redaction on read. |
+| `patch_path` | `string` | yes |  | Workspace-relative patch artifact path after text redaction on read. |
+| `base_revision` | `string` | no |  | Optional revision recorded as the patch base; empty values are omitted. |
+| `state` | `string` | yes | enum=["pending","in_review","accepted","rejected","withdrawn"] | Lifecycle state stored on the proposal; supported human actions move pending to in_review, rejected, or withdrawn, and in_review to rejected or withdrawn. |
+| `vote_state` | `string` | yes |  | Stored vote projection state, defaulting to pending when the database value is null; this read field is not recalculated as part of proposal retrieval. |
+| `policy_state` | `string` | yes |  | Stored policy projection state, defaulting to pending when the database value is null. |
+| `approval_state` | `string` | yes |  | Stored approval projection state, defaulting to pending when the database value is null. |
+| `transaction_state` | `string` | yes |  | Stored transaction projection state, defaulting to not_started when the database value is null. |
+| `risk` | `string` | yes |  | Risk label persisted at creation; the current handler defaults omission to normal but does not validate the input against the documented values. |
+| `created_at` | `string` | yes | format="date-time" | Proposal creation timestamp returned from its stored record. |
+| `updated_at` | `string` | yes | format="date-time" | Most recent lifecycle update timestamp, falling back to created_at when the stored update value is null. |
 
 ### Schema: Proposals {#schema-proposals}
 
@@ -634,8 +634,8 @@ Required fields: `items`
 
 | Property | Type | Required | Constraints | Description |
 |---|---|---|---|---|
-| `items` | array of `Proposal` | yes |  |  |
-| `next_cursor` | `string or null` | no |  |  |
+| `items` | array of `Proposal` | yes |  | Proposals owned by the selected workspace, ordered by creation time and ID before pagination. |
+| `next_cursor` | `string or null` | no |  | Opaque cursor for the next response page, or null when no further page is available. |
 
 ### Schema: PatchMetadata {#schema-patchmetadata}
 
@@ -645,15 +645,15 @@ Required fields: `proposal_id`, `patch_path`, `current_head`, `stale_base`, `fil
 
 | Property | Type | Required | Constraints | Description |
 |---|---|---|---|---|
-| `proposal_id` | `string` | yes |  |  |
-| `patch_path` | `string` | yes |  |  |
-| `base_revision` | `string` | no |  |  |
-| `current_head` | `string` | yes |  |  |
-| `stale_base` | `boolean` | yes |  |  |
-| `file_count` | `integer` | yes | minimum=0 |  |
-| `added_lines` | `integer` | yes | minimum=0 |  |
-| `removed_lines` | `integer` | yes | minimum=0 |  |
-| `binary_files` | `integer` | yes | minimum=0 |  |
+| `proposal_id` | `string` | yes |  | Proposal whose patch artifact was loaded. |
+| `patch_path` | `string` | yes |  | Stored workspace-relative path used to read the patch artifact. |
+| `base_revision` | `string` | no |  | Recorded base revision; omitted when empty. |
+| `current_head` | `string` | yes |  | HEAD revision observed from repository inspection; inspection errors are ignored and can therefore produce an empty value. |
+| `stale_base` | `boolean` | yes |  | True only when a nonempty recorded base revision differs from the observed HEAD; this is an informational comparison, not a freshness guarantee. |
+| `file_count` | `integer` | yes | minimum=0 | Number of unique touched file paths parsed from the patch. |
+| `added_lines` | `integer` | yes | minimum=0 | Current parser projection counts parsed change ranges (hunk headers), not individual added lines; treat as approximate metadata. |
+| `removed_lines` | `integer` | yes | minimum=0 | Current projection increments once per deleted file, not once per removed line; it is not a removed-line total. |
+| `binary_files` | `integer` | yes | minimum=0 | Reserved binary-file count; the current metadata handler leaves this at zero. |
 
 ### Schema: PatchFile {#schema-patchfile}
 
@@ -663,13 +663,13 @@ Required fields: `path`, `operation`, `binary`
 
 | Property | Type | Required | Constraints | Description |
 |---|---|---|---|---|
-| `path` | `string` | yes |  |  |
-| `old_path` | `string` | no |  |  |
-| `new_path` | `string` | no |  |  |
-| `operation` | `string` | yes | enum=["create","modify","delete","rename"] |  |
-| `binary` | `boolean` | yes |  |  |
-| `added_lines` | `integer` | no |  |  |
-| `removed_lines` | `integer` | no |  |  |
+| `path` | `string` | yes |  | Primary file path, using the new path when present and otherwise the old path. |
+| `old_path` | `string` | no |  | Old path from the parsed patch header; omitted when absent. |
+| `new_path` | `string` | no |  | New path from the parsed patch header; omitted when absent. |
+| `operation` | `string` | yes | enum=["create","modify","delete","rename"] | Operation inferred from parsed new, deleted, and rename header flags; otherwise reported as modify. |
+| `binary` | `boolean` | yes |  | Whether the raw patch contains a matching conventional 'Binary files a/... b/...' marker; this is a textual heuristic. |
+| `added_lines` | `integer` | no |  | Currently returned as zero; per-file added-line counts are not populated by this handler. |
+| `removed_lines` | `integer` | no |  | Currently returned as zero; per-file removed-line counts are not populated by this handler. |
 
 ### Schema: PatchFiles {#schema-patchfiles}
 
@@ -679,8 +679,8 @@ Required fields: `items`
 
 | Property | Type | Required | Constraints | Description |
 |---|---|---|---|---|
-| `items` | array of `PatchFile` | yes |  |  |
-| `next_cursor` | `string or null` | no |  |  |
+| `items` | array of `PatchFile` | yes |  | File-change headers parsed from the patch artifact; patch application or semantic validity is not established by this listing. |
+| `next_cursor` | `string or null` | no |  | Opaque cursor for the next response page, or null when no further page is available. |
 
 ### Schema: PatchDiff {#schema-patchdiff}
 
@@ -690,8 +690,8 @@ Required fields: `items`
 
 | Property | Type | Required | Constraints | Description |
 |---|---|---|---|---|
-| `items` | array of `string` | yes |  |  |
-| `next_cursor` | `string or null` | no |  |  |
+| `items` | array of `string` | yes |  | Redacted patch text split into newline-delimited strings; pagination is applied to those lines. |
+| `next_cursor` | `string or null` | no |  | Opaque cursor for the next response page, or null when no further page is available. |
 
 ### Schema: PatchSymbol {#schema-patchsymbol}
 
@@ -701,12 +701,12 @@ Required fields: `path`, `resource_id`, `kind`, `name`, `start_line`, `end_line`
 
 | Property | Type | Required | Constraints | Description |
 |---|---|---|---|---|
-| `path` | `string` | yes |  |  |
-| `resource_id` | `string` | yes |  |  |
-| `kind` | `string` | yes |  |  |
-| `name` | `string` | yes |  |  |
-| `start_line` | `integer` | yes |  |  |
-| `end_line` | `integer` | yes |  |  |
+| `path` | `string` | yes |  | Indexed workspace path for the symbol, limited to currently existing files touched by the patch. |
+| `resource_id` | `string` | yes |  | Resource identifier produced by the symbol indexer for this symbol. |
+| `kind` | `string` | yes |  | Language/indexer-specific symbol kind. |
+| `name` | `string` | yes |  | Symbol name reported by the indexer. |
+| `start_line` | `integer` | yes |  | One-based start line from indexing the current workspace file, not a projected post-patch location. |
+| `end_line` | `integer` | yes |  | One-based end line from indexing the current workspace file, not a projected post-patch location. |
 
 ### Schema: PatchSymbols {#schema-patchsymbols}
 
@@ -716,8 +716,8 @@ Required fields: `items`
 
 | Property | Type | Required | Constraints | Description |
 |---|---|---|---|---|
-| `items` | array of `PatchSymbol` | yes |  |  |
-| `next_cursor` | `string or null` | no |  |  |
+| `items` | array of `PatchSymbol` | yes |  | Symbols discovered in current workspace contents of parsed touched files; unsafe paths and indexing failures are skipped, and proposed patch contents are not indexed. |
+| `next_cursor` | `string or null` | no |  | Opaque cursor for the next response page, or null when no further page is available. |
 
 ### Schema: ValidationInput {#schema-validationinput}
 
@@ -855,16 +855,16 @@ Required fields: `id`, `proposal_id`, `agent_id`, `decision`, `policy_weight`, `
 
 | Property | Type | Required | Constraints | Description |
 |---|---|---|---|---|
-| `id` | `string` | yes |  |  |
-| `proposal_id` | `string` | yes |  |  |
-| `agent_id` | `string` | yes |  |  |
-| `session_id` | `string` | no |  |  |
-| `decision` | `string` | yes | enum=["approve","reject","abstain","veto"] |  |
-| `policy_weight` | `integer` | yes | minimum=1 |  |
-| `policy_version` | `string` | yes |  |  |
-| `rationale` | `string` | no |  |  |
-| `confidence` | `number` | no | minimum=0; maximum=1 |  |
-| `created_at` | `string` | yes | format="date-time" |  |
+| `id` | `string` | yes |  | Vote row identifier; a caller-supplied identifier can update an existing row with the same ID. |
+| `proposal_id` | `string` | yes |  | Proposal receiving this vote. |
+| `agent_id` | `string` | yes |  | Agent identity attributed to the vote; the server derives policy weight from the stored agent role, or uses weight 1 when unavailable. |
+| `session_id` | `string` | no |  | Optional session attributed to the vote; omitted when empty. |
+| `decision` | `string` | yes | enum=["approve","reject","abstain","veto"] | Normalized decision used in consensus aggregation. |
+| `policy_weight` | `integer` | yes | minimum=1 | Weight stored when the vote is cast: security role 3, architect or reviewer role 2, and all other or missing roles 1. |
+| `policy_version` | `string` | yes |  | Policy label recorded for the vote; the current implementation uses default-v1. |
+| `rationale` | `string` | no |  | Text-redacted rationale; omitted when empty. |
+| `confidence` | `number` | no | minimum=0; maximum=1 | Optional caller-provided confidence; the server does not currently enforce the documented numeric range. |
+| `created_at` | `string` | yes | format="date-time" | Stored vote creation timestamp used for stable list ordering. |
 
 ### Schema: Votes {#schema-votes}
 
@@ -874,23 +874,24 @@ Required fields: `items`
 
 | Property | Type | Required | Constraints | Description |
 |---|---|---|---|---|
-| `items` | array of `Vote` | yes |  |  |
-| `next_cursor` | `string or null` | no |  |  |
+| `items` | array of `Vote` | yes |  | Votes for the workspace-scoped proposal, ordered by creation timestamp and ID before pagination. |
+| `next_cursor` | `string or null` | no |  | Opaque cursor for the next response page, or null when no further page is available. |
 
 ### Schema: VoteInput {#schema-voteinput}
 
-Type: `object`
+Type: object (no additional properties)
 
 Required fields: `agent_id`, `decision`, `rationale`
+Additional properties: forbidden.
 
 | Property | Type | Required | Constraints | Description |
 |---|---|---|---|---|
-| `id` | `string` | no |  |  |
-| `agent_id` | `string` | yes |  |  |
-| `session_id` | `string` | no |  |  |
-| `decision` | `string` | yes | enum=["approve","reject","abstain","veto"] |  |
-| `rationale` | `string` | yes |  |  |
-| `confidence` | `number` | no | minimum=0; maximum=1 |  |
+| `id` | `string` | no |  | Optional vote row ID; when omitted a timestamp-based ID is generated. Reusing an ID updates that vote row. |
+| `agent_id` | `string` | yes |  | Required nonblank agent identifier used for attribution and role-based weight lookup; existence is not required for a default weight of 1. |
+| `session_id` | `string` | no |  | Optional session attribution stored with the vote; surrounding whitespace is trimmed. |
+| `decision` | `string` | yes | enum=["approve","reject","abstain","veto"] | Required decision; the handler trims and lowercases it before checking the four supported values. |
+| `rationale` | `string` | yes |  | Required nonblank rationale, text-redacted before persistence and in the response. |
+| `confidence` | `number` | no | minimum=0; maximum=1 | Optional confidence value persisted with the vote; the handler currently does not enforce the documented 0-to-1 range. |
 
 ### Schema: VoteResult {#schema-voteresult}
 
@@ -900,8 +901,8 @@ Required fields: `vote`, `consensus`
 
 | Property | Type | Required | Constraints | Description |
 |---|---|---|---|---|
-| `vote` | `Vote` | yes |  |  |
-| `consensus` | `Consensus` | yes |  |  |
+| `vote` | `Vote` | yes |  | The recorded or updated vote with server-derived policy weight and version. |
+| `consensus` | `Consensus` | yes |  | Consensus recalculated from stored votes in the same transaction as this vote. |
 
 ### Schema: Consensus {#schema-consensus}
 
@@ -911,18 +912,18 @@ Required fields: `proposal_id`, `outcome`, `approve_weight`, `reject_weight`, `a
 
 | Property | Type | Required | Constraints | Description |
 |---|---|---|---|---|
-| `proposal_id` | `string` | yes |  |  |
-| `outcome` | `string` | yes | enum=["pending","approved","blocked"] |  |
-| `approve_weight` | `integer` | yes | minimum=0 |  |
-| `reject_weight` | `integer` | yes | minimum=0 |  |
-| `abstain_weight` | `integer` | yes | minimum=0 |  |
-| `veto_weight` | `integer` | yes | minimum=0 |  |
-| `quorum` | `integer` | yes | minimum=1 |  |
-| `threshold` | `integer` | yes | minimum=1 |  |
-| `votes_cast` | `integer` | yes | minimum=0 |  |
-| `policy_version` | `string` | yes |  |  |
-| `explanation` | `string` | yes |  |  |
-| `calculated_at` | `string` | yes | format="date-time" |  |
+| `proposal_id` | `string` | yes |  | Proposal whose stored votes were aggregated. |
+| `outcome` | `string` | yes | enum=["pending","approved","blocked"] | Approved requires approve weight at least the threshold, no rejects or vetoes, and votes cast at least quorum; any reject or veto blocks; otherwise outcome is pending. |
+| `approve_weight` | `integer` | yes | minimum=0 | Sum of stored policy weights for approve votes. |
+| `reject_weight` | `integer` | yes | minimum=0 | Sum of stored policy weights for reject votes. |
+| `abstain_weight` | `integer` | yes | minimum=0 | Sum of stored policy weights for abstain votes; abstentions contribute to votes_cast but not approval. |
+| `veto_weight` | `integer` | yes | minimum=0 | Sum of stored policy weights for veto votes; any veto blocks approval. |
+| `quorum` | `integer` | yes | minimum=1 | Minimum number of vote rows required for approval; currently fixed at 2 and counts abstentions. |
+| `threshold` | `integer` | yes | minimum=1 | Minimum aggregate approve weight required for approval; currently fixed at 2. |
+| `votes_cast` | `integer` | yes | minimum=0 | Number of stored vote rows across all decisions, including abstain. |
+| `policy_version` | `string` | yes |  | Policy version from the last row observed during aggregation; it is not a single validated version for the entire vote set. |
+| `explanation` | `string` | yes |  | Human-readable summary assembled from the aggregate weights and outcome. |
+| `calculated_at` | `string` | yes | format="date-time" | UTC timestamp when this response calculation ran; it is not the time of the most recent vote. |
 
 ### Schema: ConsensusAnalytics {#schema-consensusanalytics}
 
