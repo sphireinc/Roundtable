@@ -92,6 +92,18 @@ roundtable claims reconcile [--root DIR] [--run ID] [--agent ID] [--actor ID]
 
 `claim` defaults `--claim-type` to `write`, TTL to `900` seconds, and resume policy to `hold`. Provide either a resource ID or enough type/path/symbol details for resource resolution. `release` is the owner transition; `revoke` is an administrative transition. `expire` processes due claims; `--at-unix` is an optional UTC Unix-second override useful for deterministic maintenance/testing. `reconcile` suspends claims held by stale sessions and defaults actor to `system`. See [Claims](CLAIMS.md) for overlap and lifecycle semantics.
 
+### Claim maintenance scope and output
+
+The `--run` option on `claims expire` and `claims reconcile` is **not** a selector for claim records. Both operations scan the local database's complete claim list; `--run` labels events emitted for those changes. Leaving it empty can therefore produce claim events with an empty run ID while still changing claims from any run. Do not use `--run` as an isolation boundary or as a preview filter.
+
+| Command | Records eligible for change | Additional selection | Output and failure behavior |
+| --- | --- | --- | --- |
+| `claims list` | None; read-only listing | Optional exact `--agent`, `--resource`, `--status` filters; omitted filters include all values. Listing does not expire due claims. | One line per match: claim ID, agent ID, claim type, status, resource ID. Empty result prints nothing. |
+| `claims expire` | Claims whose stored status is exactly `active` and whose RFC3339 expiry parses and is at or before the selected time. Invalid expiry values are skipped. | No run/agent filter. `--at-unix` parses a signed base-10 Unix-second value and overrides current UTC time. | One line per changed claim: ID and resulting status. Earlier changes remain if a later transition fails. |
+| `claims reconcile` | Active claims with a nonempty base hash, excluding `read` and `review` claim types. Claims with empty hashes and unsupported resource types are not proof of freshness. | Optional exact `--agent`; `--run` only labels emitted events. Session heartbeat age/status, expiry, renewable, and resume policy are not selection criteria. | One line per suspended claim: ID, agent ID, status. Claims inspected but not suspended produce no line. Earlier resource-hash/claim updates can remain if a later item fails. |
+
+Both maintenance commands perform writes and are not dry runs. Expiration uses the service's wall-clock time unless the override is supplied; reconciliation hashes current content under `--root` and may persist refreshed resource hashes even when it leaves a claim active. See [Claims](CLAIMS.md#expiration-renewal-and-transitions) and [reconciliation selection details](CLAIMS.md#reconciliation-selection-details) for partial-failure and hashing semantics. The command output is a change report, not a complete inventory of scanned records or a transactional audit guarantee.
+
 ## Sessions
 
 ```sh
