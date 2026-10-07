@@ -18,15 +18,15 @@ def rendered_path(source):
     return (path.with_suffix("") / "index.html").as_posix()
 
 
-def configured_entries(items):
+def configured_entries(items, depth=1):
     entries = []
     for item in items:
         for label, value in item.items():
             if isinstance(value, list):
-                entries.append((label, None))
-                entries.extend(configured_entries(value))
+                entries.append((depth, label, None))
+                entries.extend(configured_entries(value, depth + 1))
             else:
-                entries.append((label, rendered_path(value)))
+                entries.append((depth, label, rendered_path(value)))
     return entries
 
 
@@ -39,6 +39,7 @@ class Sidebar(HTMLParser):
         self.capture = None
         self.entries = []
         self.primary_count = 0
+        self.item_depth = 0
 
     def handle_starttag(self, tag, attrs):
         attrs = dict(attrs)
@@ -58,15 +59,17 @@ class Sidebar(HTMLParser):
             and "md-nav__link" in classes
             and attrs.get("for") != "__toc"
         ):
-            self.capture = (tag, attrs.get("href"), [])
+            self.capture = (tag, attrs.get("href"), self.item_depth, [])
+        if self.nav_depth and not self.secondary_depth and tag == "li":
+            self.item_depth += 1
 
     def handle_data(self, data):
         if self.capture:
-            self.capture[2].append(data)
+            self.capture[3].append(data)
 
     def handle_endtag(self, tag):
         if self.capture and tag == self.capture[0]:
-            _, href, fragments = self.capture
+            _, href, depth, fragments = self.capture
             target = None
             if href is not None:
                 resolved = urlparse(urljoin("https://docs.invalid/" + self.page, href))
@@ -75,8 +78,10 @@ class Sidebar(HTMLParser):
                 target = unquote(resolved.path).lstrip("/")
                 if target.endswith("/") or not target:
                     target += "index.html"
-            self.entries.append((" ".join("".join(fragments).split()), target))
+            self.entries.append((depth, " ".join("".join(fragments).split()), target))
             self.capture = None
+        if self.nav_depth and not self.secondary_depth and tag == "li":
+            self.item_depth -= 1
         if tag == "nav" and self.nav_depth:
             if self.secondary_depth == self.nav_depth:
                 self.secondary_depth = 0
@@ -89,7 +94,7 @@ def main():
         raise SystemExit("Navigation verifier requires use_directory_urls: true")
     site = ROOT / config["site_dir"]
     expected = configured_entries(config["nav"])
-    for _, target in expected:
+    for _, _, target in expected:
         if target and not (site / target).is_file():
             raise SystemExit(f"Configured page has no rendered output: {target}")
     pages = sorted(site.rglob("*.html"))
