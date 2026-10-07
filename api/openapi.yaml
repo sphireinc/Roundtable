@@ -10,6 +10,7 @@ paths:
     get:
       operationId: getHealth
       summary: Lightweight process health
+      description: Liveness-style response that does not query the database or inspect adapters. It returns HTTP 200 with status=ok even when the authoritative store is unavailable; use /api/v1/status for dependency/component condition. Version defaults to dev when not configured.
       responses:
         '200':
           description: Healthy
@@ -20,6 +21,7 @@ paths:
     get:
       operationId: getStatus
       summary: Control-plane status
+      description: Inspects database connectivity/migration metadata and the global configured-agent status aggregate, then returns HTTP 200 with status ok or degraded. event_stream, transaction_manager, and repository_index are currently reported ready without active subsystem probes; adapter readiness is based on stored ready/idle status, not process liveness. Degraded details are summarized rather than exposing configured filesystem roots.
       responses:
         '200':
           description: Current status
@@ -89,6 +91,7 @@ paths:
     get:
       operationId: getWorkspaceHealth
       summary: Lightweight workspace health summary
+      description: Resolves the workspace, obtains its impact counts, and combines those with the node component report. A detached workspace adds a degraded reason and a workspace component carrying its stored status. A resolved workspace returns HTTP 200 even when degraded; lookup and impact-query failures return problem responses.
       responses:
         '200':
           description: Workspace health
@@ -2293,34 +2296,38 @@ components:
     HealthResponse:
       type: object
       required: [status, version, request_id]
+      description: Lightweight liveness response emitted by /api/v1/health without querying the authoritative store.
       properties:
-        status: {type: string, enum: [ok]}
-        version: {type: string}
-        request_id: {type: string}
+        status: {type: string, enum: [ok], description: "Always ok when this handler responds; this does not indicate database or adapter readiness."}
+        version: {type: string, description: "Configured service build version, defaulting to dev."}
+        request_id: {type: string, description: "Effective request correlation ID also returned in the X-Request-ID response header."}
     StatusResponse:
       type: object
       required: [status, version, api_version, time, request_id]
+      deprecated: true
+      description: Legacy minimal status schema retained as an unreferenced component. The current /api/v1/status operation returns NodeHealthResponse, not this shape.
       properties:
-        status: {type: string}
-        version: {type: string}
-        api_version: {type: string, enum: [v1]}
-        time: {type: string, format: date-time}
-        request_id: {type: string}
+        status: {type: string, description: "Legacy aggregate status field; this component is not used by a current route."}
+        version: {type: string, description: "Legacy build-version field; this component is not used by a current route."}
+        api_version: {type: string, enum: [v1], description: "Legacy route contract-version marker; this component is not used by a current route."}
+        time: {type: string, format: date-time, description: "Legacy status timestamp; this component is not used by a current route."}
+        request_id: {type: string, description: "Legacy request correlation field; this component is not used by a current route."}
     Problem:
       type: object
       required: [type, title, status, request_id]
+      description: Problem document emitted by the shared handler helper with Content-Type application/problem+json. Router, middleware, WebSocket-after-upgrade, and explicitly non-problem endpoint responses are not guaranteed to use this shape.
       properties:
-        type: {type: string, format: uri}
-        title: {type: string}
-        status: {type: integer}
-        detail: {type: string}
-        instance: {type: string}
-        request_id: {type: string}
-        code: {type: string}
-        metadata: {type: object, additionalProperties: true}
+        type: {type: string, format: uri, description: "Problem type URI currently formed as https://roundtable.dev/problems/{code}."}
+        title: {type: string, description: "Short human-readable problem title."}
+        status: {type: integer, description: "HTTP status code repeated in the JSON body."}
+        detail: {type: string, description: "Optional handler-supplied detail; may contain lower-level error text and should not be rendered unescaped or exposed indiscriminately."}
+        instance: {type: string, description: "Optional request path from URL.Path; query parameters are not included."}
+        request_id: {type: string, description: "Effective request correlation ID for this response."}
+        code: {type: string, description: "Optional stable machine-oriented application problem code, such as invalid_limit or workspace_not_found."}
+        metadata: {type: object, additionalProperties: true, description: "Optional endpoint-specific structured context; keys and value types vary by problem code."}
   responses:
     Problem:
-      description: RFC 7807 problem details
+      description: RFC 7807-style problem details from handler helpers. Not every transport/router failure or endpoint-specific error path returns this content type or schema.
       content:
         application/problem+json:
           schema: {$ref: '#/components/schemas/Problem'}

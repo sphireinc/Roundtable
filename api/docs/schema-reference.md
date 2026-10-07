@@ -1921,41 +1921,44 @@ Required fields: `contention_id`, `state`, `resolution`
 
 Type: `object`
 
+Description: Lightweight liveness response emitted by /api/v1/health without querying the authoritative store.
 Required fields: `status`, `version`, `request_id`
 
 | Property | Type | Required | Constraints | Description |
 |---|---|---|---|---|
-| `status` | `string` | yes | enum=["ok"] |  |
-| `version` | `string` | yes |  |  |
-| `request_id` | `string` | yes |  |  |
+| `status` | `string` | yes | enum=["ok"] | Always ok when this handler responds; this does not indicate database or adapter readiness. |
+| `version` | `string` | yes |  | Configured service build version, defaulting to dev. |
+| `request_id` | `string` | yes |  | Effective request correlation ID also returned in the X-Request-ID response header. |
 
 ### Schema: StatusResponse {#schema-statusresponse}
 
 Type: `object`
 
+Description: Legacy minimal status schema retained as an unreferenced component. The current /api/v1/status operation returns NodeHealthResponse, not this shape.
 Required fields: `status`, `version`, `api_version`, `time`, `request_id`
 
 | Property | Type | Required | Constraints | Description |
 |---|---|---|---|---|
-| `status` | `string` | yes |  |  |
-| `version` | `string` | yes |  |  |
-| `api_version` | `string` | yes | enum=["v1"] |  |
-| `time` | `string` | yes | format="date-time" |  |
-| `request_id` | `string` | yes |  |  |
+| `status` | `string` | yes |  | Legacy aggregate status field; this component is not used by a current route. |
+| `version` | `string` | yes |  | Legacy build-version field; this component is not used by a current route. |
+| `api_version` | `string` | yes | enum=["v1"] | Legacy route contract-version marker; this component is not used by a current route. |
+| `time` | `string` | yes | format="date-time" | Legacy status timestamp; this component is not used by a current route. |
+| `request_id` | `string` | yes |  | Legacy request correlation field; this component is not used by a current route. |
 
 ### Schema: Problem {#schema-problem}
 
 Type: `object`
 
+Description: Problem document emitted by the shared handler helper with Content-Type application/problem+json. Router, middleware, WebSocket-after-upgrade, and explicitly non-problem endpoint responses are not guaranteed to use this shape.
 Required fields: `type`, `title`, `status`, `request_id`
 
 | Property | Type | Required | Constraints | Description |
 |---|---|---|---|---|
-| `type` | `string` | yes | format="uri" |  |
-| `title` | `string` | yes |  |  |
-| `status` | `integer` | yes |  |  |
-| `detail` | `string` | no |  |  |
-| `instance` | `string` | no |  |  |
-| `request_id` | `string` | yes |  |  |
-| `code` | `string` | no |  |  |
-| `metadata` | object (any value) | no |  |  |
+| `type` | `string` | yes | format="uri" | Problem type URI currently formed as https://roundtable.dev/problems/{code}. |
+| `title` | `string` | yes |  | Short human-readable problem title. |
+| `status` | `integer` | yes |  | HTTP status code repeated in the JSON body. |
+| `detail` | `string` | no |  | Optional handler-supplied detail; may contain lower-level error text and should not be rendered unescaped or exposed indiscriminately. |
+| `instance` | `string` | no |  | Optional request path from URL.Path; query parameters are not included. |
+| `request_id` | `string` | yes |  | Effective request correlation ID for this response. |
+| `code` | `string` | no |  | Optional stable machine-oriented application problem code, such as invalid_limit or workspace_not_found. |
+| `metadata` | object (any value) | no |  | Optional endpoint-specific structured context; keys and value types vary by problem code. |
