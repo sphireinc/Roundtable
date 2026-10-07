@@ -15,6 +15,21 @@ go run ./cmd/roundtable run --root . --goal "Describe the work to coordinate"
 
 The default runtime creates `.roundtable/config.yaml`, a SQLite database, MCP assets, and starter governance/project files. Interactive mode runs the local MCP socket, TUI, and coordinator loop. Agent CLI process launch is not yet connected; agents can use the MCP surface when separately attached. For a single coordinator cycle without the socket or TUI, add `--headless`.
 
+> [!NOTE]
+>
+> 🤖 Agentically Built
+>
+> Roundtable is a partially agentically coded project.
+>
+> The project was developed using OpenAI models throughout the implementation process:
+>
+> * ChatGPT — GPT-6.1 High was used to make architectural and technical decisions.
+> * Codex — GPT-6.1 Low was used to implement the codebase by working through defined task specifications.
+>
+> Human direction, tasking, review, testing, and project ownership remain an integral part of the development process, but the implementation itself was produced agentically from the task-driven specifications.
+>
+> This disclosure is included for transparency and to make the project's development methodology explicit.
+
 ## Documentation
 
 - [Quickstart](docs/QUICKSTART.md)
