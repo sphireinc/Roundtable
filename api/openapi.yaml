@@ -886,24 +886,32 @@ paths:
     get:
       operationId: listTransactions
       summary: List workspace transactions
+      description: >-
+        Lists transactions joined to proposals owned by this workspace, ordered by transaction ID, then applies in-memory cursor pagination (limit defaults to 50 and must be 1 through 200). The projection decodes stored metadata JSON and includes before/after hashes, actor, status, applied time, and rollback-artifact path. Transactions without a matching proposal are not returned. Invalid pagination returns 400 and database failures return 500.
       responses: {'200': {description: Transactions, content: {application/json: {schema: {$ref: '#/components/schemas/Transactions'}}}}, '404': {$ref: '#/components/responses/Problem'}}
   /api/v1/workspaces/{id}/transactions/{transaction_id}:
     parameters: [{name: id, in: path, required: true, schema: {type: string}}, {name: transaction_id, in: path, required: true, schema: {type: string}}]
     get:
       operationId: getTransaction
       summary: Get one transaction
+      description: >-
+        Returns a transaction only when its associated proposal belongs to the selected workspace. The response includes decoded metadata and any recorded rollback patch path; it does not inspect the repository or verify that recorded hashes/artifacts still exist. Unknown or cross-workspace transaction IDs return 404.
       responses: {'200': {description: Transaction, content: {application/json: {schema: {$ref: '#/components/schemas/Transaction'}}}}, '404': {$ref: '#/components/responses/Problem'}}
   /api/v1/workspaces/{id}/transactions/{transaction_id}/phases:
     parameters: [{name: id, in: path, required: true, schema: {type: string}}, {name: transaction_id, in: path, required: true, schema: {type: string}}, {name: cursor, in: query, schema: {type: string}}, {name: limit, in: query, schema: {type: integer, minimum: 1, maximum: 200, default: 50}}]
     get:
       operationId: listTransactionPhases
       summary: List the ordered transaction phase timeline
+      description: >-
+        Verifies transaction/workspace ownership, then returns phase records in created_at/ID order with status, actor, redacted reason, request ID, decoded inputs/outputs, log reference, failure code, recovery state, and timestamps. Pagination is in memory; limit defaults to 50 and is capped at 200. Inputs, outputs, and log_ref are exposed as stored by the transaction manager and should not be treated as independently verified execution evidence. Invalid pagination returns 400 and query/scan failures return 500.
       responses: {'200': {description: Transaction phases, content: {application/json: {schema: {$ref: '#/components/schemas/TransactionPhases'}}}}, '404': {$ref: '#/components/responses/Problem'}}
   /api/v1/workspaces/{id}/transactions/{transaction_id}/recovery:
     parameters: [{name: id, in: path, required: true, schema: {type: string}}, {name: transaction_id, in: path, required: true, schema: {type: string}}]
     get:
       operationId: getTransactionRecovery
       summary: Return safe recovery actions computed from transaction state
+      description: >-
+        Returns a deterministic action list based only on the stored transaction status: pending offers stage/validate/cancel; staged offers validate/apply/cancel; failed offers retry/cancel/compensate; cancelled offers compensate; applied returns repository_state=verified with no actions. Other states return a blocked reason. This route does not inspect Git, verify hashes or rollback artifacts, or execute a recovery action; in particular, verified for applied is a status projection, not a live repository verification. Unknown/cross-workspace transactions return 404.
       responses: {'200': {description: Recovery actions, content: {application/json: {schema: {$ref: '#/components/schemas/TransactionRecovery'}}}}, '404': {$ref: '#/components/responses/Problem'}}
   /api/v1/workspaces/{id}/runs/status:
     parameters: [{name: id, in: path, required: true, schema: {type: string}}]
@@ -1083,7 +1091,8 @@ paths:
     post:
       operationId: transitionTransaction
       summary: Control a transaction through the transaction manager
-      description: All mutations require a human role. Apply additionally requires the internal orchestrator header and is the only route that invokes repository mutation; agents and browser clients cannot write the repository directly.
+      description: >-
+        Every action requires X-Actor-ID, an accepted human X-Actor-Role, and a nonblank Idempotency-Key. apply additionally requires X-Roundtable-Orchestrator exactly true and a proposal_id in the path or query; it delegates to the proposal transaction service and is the only action that mutates repository contents. validate delegates patch validation for the transaction's proposal. stage, cancel, and retry target staged, cancelled, and pending status respectively and append a phase/audit row. The SQL update excludes applied/cancelled rows, but the handler does not check affected-row count, so a phase/audit entry may still be recorded while a terminal transaction's status remains unchanged. retry resets status without executing an apply. compensate requires a rollback artifact and creates a new pending high-risk compensating proposal rather than applying the rollback. These control paths have action-specific response bodies despite the shared Transaction response schema declaration. Authorization failure returns 403, missing transaction 404, invalid action/parameters 400, and blocked execution or persistence conflicts 409.
       responses: {'200': {description: Transaction operation result, content: {application/json: {schema: {$ref: '#/components/schemas/Transaction'}}}}, '400': {$ref: '#/components/responses/Problem'}, '403': {$ref: '#/components/responses/Problem'}, '404': {$ref: '#/components/responses/Problem'}, '409': {$ref: '#/components/responses/Problem'}}
   /api/v1/workspaces/{id}/claims:
     parameters: [{name: id, in: path, required: true, schema: {type: string}}, {name: cursor, in: query, schema: {type: string}}, {name: limit, in: query, schema: {type: integer, minimum: 1, maximum: 200, default: 50}}]
