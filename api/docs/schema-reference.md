@@ -1109,19 +1109,20 @@ Required fields: `schema_version`, `schema`
 | Property | Type | Required | Constraints | Description |
 |---|---|---|---|---|
 | `schema_version` | `string` | yes | const="1" | Version identifier for this introspection schema. |
-| `schema` | `PolicyInputSchema` | yes |  | JSON Schema-like shape describing the accepted policy creation input. |
+| `schema` | `PolicyInputSchema` | yes |  | Static JSON-Schema-like guidance for policy creation; it is not a complete or fully enforced validation contract. |
 
 ### Schema: PolicyInputSchema {#schema-policyinputschema}
 
 Type: `object`
 
+Description: Static descriptor returned by the schema endpoint. Its required list is not fully enforced by policy creation: only a nonblank name is checked, a null/missing definition becomes an empty object, and the optional id input is accepted but omitted from this descriptor. Typed decoding still rejects unknown top-level keys.
 Required fields: `type`, `required`, `properties`
 
 | Property | Type | Required | Constraints | Description |
 |---|---|---|---|---|
 | `type` | `string` | yes | const="object" | The policy input root must be a JSON object. |
-| `required` | array of `string` | yes | const=["name","definition"] | Required top-level policy input keys. |
-| `properties` | `object` | yes |  |  |
+| `required` | array of `string` | yes | const=["name","definition"] | Static required-key declaration. Runtime creation currently checks only that name is nonblank and accepts a missing or null definition by storing an empty object. |
+| `properties` | `object` | yes |  | Fixed map of field-name to simple JSON type declaration. It omits defaults, enums, nested definition shape, and the optional id field accepted by creation; its presence does not guarantee the create handler enforces a declaration. |
 | `properties.name` | `object` | yes |  | Name field type declaration. |
 | `properties.name.type` | `string` | yes | const="string" | Name is a string. |
 | `properties.scope` | `object` | yes |  | Scope field type declaration. |
@@ -1710,12 +1711,12 @@ Required fields: `workspace_id`, `version`, `sections`
 | `workspace_id` | `string` | yes |  | Workspace whose configuration is returned. |
 | `version` | `integer` | yes | minimum=0 | Latest workspace configuration revision number, or zero when no revision exists. |
 | `sections` | object (values of `EffectiveSettingsSection`) | yes |  | Built-in sections with defaults and the current source/version metadata. |
-| `sections.general` | `EffectiveSettingsSection` | no |  |  |
-| `sections.governance` | `EffectiveSettingsSection` | no |  |  |
-| `sections.adapters` | `EffectiveSettingsSection` | no |  |  |
-| `sections.mcp` | `EffectiveSettingsSection` | no |  |  |
-| `sections.storage` | `EffectiveSettingsSection` | no |  |  |
-| `sections.notifications` | `EffectiveSettingsSection` | no |  |  |
+| `sections.general` | `EffectiveSettingsSection` | no |  | Locale and timezone preferences. |
+| `sections.governance` | `EffectiveSettingsSection` | no |  | Approval, quorum, and security-review settings. |
+| `sections.adapters` | `EffectiveSettingsSection` | no |  | Default adapter and shell-permission settings. |
+| `sections.mcp` | `EffectiveSettingsSection` | no |  | MCP transport and advertised repository access settings. |
+| `sections.storage` | `EffectiveSettingsSection` | no |  | WAL and notification-retention metadata. |
+| `sections.notifications` | `EffectiveSettingsSection` | no |  | Notification enablement and default recipient. |
 
 ### Schema: EffectiveSettingsSection {#schema-effectivesettingssection}
 
@@ -1741,12 +1742,12 @@ Required fields: `sections`
 | Property | Type | Required | Constraints | Description |
 |---|---|---|---|---|
 | `sections` | object (values of `SettingsSectionSchema`) | yes |  | The six supported section names and their field schemas. |
-| `sections.general` | `SettingsSectionSchema` | no |  |  |
-| `sections.governance` | `SettingsSectionSchema` | no |  |  |
-| `sections.adapters` | `SettingsSectionSchema` | no |  |  |
-| `sections.mcp` | `SettingsSectionSchema` | no |  |  |
-| `sections.storage` | `SettingsSectionSchema` | no |  |  |
-| `sections.notifications` | `SettingsSectionSchema` | no |  |  |
+| `sections.general` | `SettingsSectionSchema` | no |  | locale and timezone defaults; does not restart components. |
+| `sections.governance` | `SettingsSectionSchema` | no |  | approval_required, quorum, and require_security_review defaults. |
+| `sections.adapters` | `SettingsSectionSchema` | no |  | default adapter and allow_shell defaults. |
+| `sections.mcp` | `SettingsSectionSchema` | no |  | transport and readonly_repository defaults; restart_required is true. |
+| `sections.storage` | `SettingsSectionSchema` | no |  | wal and retention_days defaults; restart_required is true. |
+| `sections.notifications` | `SettingsSectionSchema` | no |  | enabled and default_recipient defaults. |
 
 ### Schema: SettingsSectionSchema {#schema-settingssectionschema}
 
@@ -1758,19 +1759,19 @@ Required fields: `fields`, `restart_required`
 | Property | Type | Required | Constraints | Description |
 |---|---|---|---|---|
 | `fields` | object (values of `SettingFieldSchema`) | yes |  | Field definitions; default is the built-in default, type is inferred from that default, and secret reflects key-name matching. |
-| `fields.locale` | `SettingFieldSchema` | no |  |  |
-| `fields.timezone` | `SettingFieldSchema` | no |  |  |
-| `fields.approval_required` | `SettingFieldSchema` | no |  |  |
-| `fields.quorum` | `SettingFieldSchema` | no |  |  |
-| `fields.require_security_review` | `SettingFieldSchema` | no |  |  |
-| `fields.default` | `SettingFieldSchema` | no |  |  |
-| `fields.allow_shell` | `SettingFieldSchema` | no |  |  |
-| `fields.transport` | `SettingFieldSchema` | no |  |  |
-| `fields.readonly_repository` | `SettingFieldSchema` | no |  |  |
-| `fields.wal` | `SettingFieldSchema` | no |  |  |
-| `fields.retention_days` | `SettingFieldSchema` | no |  |  |
-| `fields.enabled` | `SettingFieldSchema` | no |  |  |
-| `fields.default_recipient` | `SettingFieldSchema` | no |  |  |
+| `fields.locale` | `SettingFieldSchema` | no |  | General locale label; defaults to en-US. |
+| `fields.timezone` | `SettingFieldSchema` | no |  | General timezone label; defaults to UTC. |
+| `fields.approval_required` | `SettingFieldSchema` | no |  | Governance approval-required flag; defaults to true. |
+| `fields.quorum` | `SettingFieldSchema` | no |  | Governance quorum number; defaults to 1. |
+| `fields.require_security_review` | `SettingFieldSchema` | no |  | Governance security-review flag; defaults to true. |
+| `fields.default` | `SettingFieldSchema` | no |  | Default adapter label; defaults to codex. |
+| `fields.allow_shell` | `SettingFieldSchema` | no |  | Adapter shell-permission flag; defaults to false. |
+| `fields.transport` | `SettingFieldSchema` | no |  | MCP transport label; defaults to unix. |
+| `fields.readonly_repository` | `SettingFieldSchema` | no |  | MCP repository-access setting; defaults to true but does not itself impose an OS sandbox. |
+| `fields.wal` | `SettingFieldSchema` | no |  | Storage WAL setting metadata; defaults to true, while database initialization enables WAL unconditionally. |
+| `fields.retention_days` | `SettingFieldSchema` | no |  | Storage retention-day metadata; defaults to 30 and does not itself run cleanup. |
+| `fields.enabled` | `SettingFieldSchema` | no |  | Notifications enablement metadata; defaults to true. |
+| `fields.default_recipient` | `SettingFieldSchema` | no |  | Default notification recipient label; defaults to human. |
 | `restart_required` | `boolean` | yes |  | True for mcp and storage; false for general, governance, adapters, and notifications. |
 
 ### Schema: SettingFieldSchema {#schema-settingfieldschema}

@@ -701,6 +701,7 @@ paths:
     get:
       operationId: getPolicySchema
       summary: Return the policy input schema description
+      description: Returns a static version-1 JSON-Schema-like descriptor. The current handler does not resolve the workspace or policy_id, and the shape is advisory rather than complete runtime validation. It lists name and definition as required although creation only enforces a nonblank name, omits the optional id accepted by creation, and does not publish defaults, enums, or constraints for the definition document.
       responses: {'200': {description: Static policy input schema, content: {application/json: {schema: {$ref: '#/components/schemas/PolicySchemaResponse'}}}}}
   /api/v1/workspaces/{id}/policies/{policy_id}/validate:
     parameters: [{name: id, in: path, required: true, schema: {type: string}}, {name: policy_id, in: path, required: true, schema: {type: string}}]
@@ -1771,15 +1772,17 @@ components:
       required: [schema_version, schema]
       properties:
         schema_version: {type: string, const: '1', description: "Version identifier for this introspection schema."}
-        schema: {$ref: '#/components/schemas/PolicyInputSchema', description: "JSON Schema-like shape describing the accepted policy creation input."}
+        schema: {$ref: '#/components/schemas/PolicyInputSchema', description: "Static JSON-Schema-like guidance for policy creation; it is not a complete or fully enforced validation contract."}
     PolicyInputSchema:
       type: object
       required: [type, required, properties]
+      description: "Static descriptor returned by the schema endpoint. Its required list is not fully enforced by policy creation: only a nonblank name is checked, a null/missing definition becomes an empty object, and the optional id input is accepted but omitted from this descriptor. Typed decoding still rejects unknown top-level keys."
       properties:
         type: {type: string, const: object, description: "The policy input root must be a JSON object."}
-        required: {type: array, items: {type: string}, const: [name, definition], description: "Required top-level policy input keys."}
+        required: {type: array, items: {type: string}, const: [name, definition], description: "Static required-key declaration. Runtime creation currently checks only that name is nonblank and accepts a missing or null definition by storing an empty object."}
         properties:
           type: object
+          description: Fixed map of field-name to simple JSON type declaration. It omits defaults, enums, nested definition shape, and the optional id field accepted by creation; its presence does not guarantee the create handler enforces a declaration.
           required: [name, scope, selector, severity, enforcement_mode, human_approval_required, definition, metadata]
           properties:
             name: {type: object, description: "Name field type declaration.", required: [type], properties: {type: {type: string, const: string, description: "Name is a string."}}}
@@ -2156,7 +2159,7 @@ components:
       properties:
         workspace_id: {type: string, description: "Workspace whose configuration is returned."}
         version: {type: integer, minimum: 0, description: "Latest workspace configuration revision number, or zero when no revision exists."}
-        sections: {type: object, description: "Built-in sections with defaults and the current source/version metadata.", additionalProperties: {$ref: '#/components/schemas/EffectiveSettingsSection'}, properties: {general: {$ref: '#/components/schemas/EffectiveSettingsSection'}, governance: {$ref: '#/components/schemas/EffectiveSettingsSection'}, adapters: {$ref: '#/components/schemas/EffectiveSettingsSection'}, mcp: {$ref: '#/components/schemas/EffectiveSettingsSection'}, storage: {$ref: '#/components/schemas/EffectiveSettingsSection'}, notifications: {$ref: '#/components/schemas/EffectiveSettingsSection'}}}
+        sections: {type: object, description: "Built-in sections with defaults and the current source/version metadata.", additionalProperties: {$ref: '#/components/schemas/EffectiveSettingsSection'}, properties: {general: {$ref: '#/components/schemas/EffectiveSettingsSection', description: "Locale and timezone preferences."}, governance: {$ref: '#/components/schemas/EffectiveSettingsSection', description: "Approval, quorum, and security-review settings."}, adapters: {$ref: '#/components/schemas/EffectiveSettingsSection', description: "Default adapter and shell-permission settings."}, mcp: {$ref: '#/components/schemas/EffectiveSettingsSection', description: "MCP transport and advertised repository access settings."}, storage: {$ref: '#/components/schemas/EffectiveSettingsSection', description: "WAL and notification-retention metadata."}, notifications: {$ref: '#/components/schemas/EffectiveSettingsSection', description: "Notification enablement and default recipient."}}}
     EffectiveSettingsSection:
       type: object
       required: [values, source, version, restart_required]
@@ -2176,12 +2179,12 @@ components:
           description: "The six supported section names and their field schemas."
           additionalProperties: {$ref: '#/components/schemas/SettingsSectionSchema'}
           properties:
-            general: {$ref: '#/components/schemas/SettingsSectionSchema'}
-            governance: {$ref: '#/components/schemas/SettingsSectionSchema'}
-            adapters: {$ref: '#/components/schemas/SettingsSectionSchema'}
-            mcp: {$ref: '#/components/schemas/SettingsSectionSchema'}
-            storage: {$ref: '#/components/schemas/SettingsSectionSchema'}
-            notifications: {$ref: '#/components/schemas/SettingsSectionSchema'}
+            general: {$ref: '#/components/schemas/SettingsSectionSchema', description: "locale and timezone defaults; does not restart components."}
+            governance: {$ref: '#/components/schemas/SettingsSectionSchema', description: "approval_required, quorum, and require_security_review defaults."}
+            adapters: {$ref: '#/components/schemas/SettingsSectionSchema', description: "default adapter and allow_shell defaults."}
+            mcp: {$ref: '#/components/schemas/SettingsSectionSchema', description: "transport and readonly_repository defaults; restart_required is true."}
+            storage: {$ref: '#/components/schemas/SettingsSectionSchema', description: "wal and retention_days defaults; restart_required is true."}
+            notifications: {$ref: '#/components/schemas/SettingsSectionSchema', description: "enabled and default_recipient defaults."}
     SettingsSectionSchema:
       type: object
       required: [fields, restart_required]
@@ -2192,19 +2195,19 @@ components:
           description: "Field definitions; default is the built-in default, type is inferred from that default, and secret reflects key-name matching."
           additionalProperties: {$ref: '#/components/schemas/SettingFieldSchema'}
           properties:
-            locale: {$ref: '#/components/schemas/SettingFieldSchema'}
-            timezone: {$ref: '#/components/schemas/SettingFieldSchema'}
-            approval_required: {$ref: '#/components/schemas/SettingFieldSchema'}
-            quorum: {$ref: '#/components/schemas/SettingFieldSchema'}
-            require_security_review: {$ref: '#/components/schemas/SettingFieldSchema'}
-            default: {$ref: '#/components/schemas/SettingFieldSchema'}
-            allow_shell: {$ref: '#/components/schemas/SettingFieldSchema'}
-            transport: {$ref: '#/components/schemas/SettingFieldSchema'}
-            readonly_repository: {$ref: '#/components/schemas/SettingFieldSchema'}
-            wal: {$ref: '#/components/schemas/SettingFieldSchema'}
-            retention_days: {$ref: '#/components/schemas/SettingFieldSchema'}
-            enabled: {$ref: '#/components/schemas/SettingFieldSchema'}
-            default_recipient: {$ref: '#/components/schemas/SettingFieldSchema'}
+            locale: {$ref: '#/components/schemas/SettingFieldSchema', description: "General locale label; defaults to en-US."}
+            timezone: {$ref: '#/components/schemas/SettingFieldSchema', description: "General timezone label; defaults to UTC."}
+            approval_required: {$ref: '#/components/schemas/SettingFieldSchema', description: "Governance approval-required flag; defaults to true."}
+            quorum: {$ref: '#/components/schemas/SettingFieldSchema', description: "Governance quorum number; defaults to 1."}
+            require_security_review: {$ref: '#/components/schemas/SettingFieldSchema', description: "Governance security-review flag; defaults to true."}
+            default: {$ref: '#/components/schemas/SettingFieldSchema', description: "Default adapter label; defaults to codex."}
+            allow_shell: {$ref: '#/components/schemas/SettingFieldSchema', description: "Adapter shell-permission flag; defaults to false."}
+            transport: {$ref: '#/components/schemas/SettingFieldSchema', description: "MCP transport label; defaults to unix."}
+            readonly_repository: {$ref: '#/components/schemas/SettingFieldSchema', description: "MCP repository-access setting; defaults to true but does not itself impose an OS sandbox."}
+            wal: {$ref: '#/components/schemas/SettingFieldSchema', description: "Storage WAL setting metadata; defaults to true, while database initialization enables WAL unconditionally."}
+            retention_days: {$ref: '#/components/schemas/SettingFieldSchema', description: "Storage retention-day metadata; defaults to 30 and does not itself run cleanup."}
+            enabled: {$ref: '#/components/schemas/SettingFieldSchema', description: "Notifications enablement metadata; defaults to true."}
+            default_recipient: {$ref: '#/components/schemas/SettingFieldSchema', description: "Default notification recipient label; defaults to human."}
         restart_required: {type: boolean, description: "True for mcp and storage; false for general, governance, adapters, and notifications."}
     SettingFieldSchema:
       type: object
