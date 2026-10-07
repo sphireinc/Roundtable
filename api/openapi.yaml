@@ -478,21 +478,23 @@ paths:
     parameters:
       - {name: id, in: path, required: true, schema: {type: string}}
       - {name: session_id, in: path, required: true, schema: {type: string}}
-      - {name: cursor, in: query, schema: {type: string}}
-      - {name: limit, in: query, schema: {type: integer, minimum: 1, maximum: 200, default: 50}}
+      - {name: cursor, in: query, description: "Base64url-encoded offset into the session's ordered event list; malformed cursors return 400.", schema: {type: string}}
+      - {name: limit, in: query, description: "Page size from 1 to 200; defaults to 50.", schema: {type: integer, minimum: 1, maximum: 200, default: 50}}
     get:
       operationId: listSessionLogs
       summary: List redacted session event logs
+      description: Lists stored agent-session events after resolving the session within this workspace. Payload JSON is redacted and returned as a string; pagination uses the shared offset cursor and is applied after all session events are loaded. This is an event record view, not a live process log.
       responses: {'200': {description: Session logs, content: {application/json: {schema: {$ref: '#/components/schemas/SessionLogs'}}}}, '404': {$ref: '#/components/responses/Problem'}}
   /api/v1/workspaces/{id}/sessions/{session_id}/tool-calls:
     parameters:
       - {name: id, in: path, required: true, schema: {type: string}}
       - {name: session_id, in: path, required: true, schema: {type: string}}
-      - {name: cursor, in: query, schema: {type: string}}
-      - {name: limit, in: query, schema: {type: integer, minimum: 1, maximum: 200, default: 50}}
+      - {name: cursor, in: query, description: "Base64url-encoded offset into the matching tool/action records; malformed cursors return 400.", schema: {type: string}}
+      - {name: limit, in: query, description: "Page size from 1 to 200; defaults to 50.", schema: {type: integer, minimum: 1, maximum: 200, default: 50}}
     get:
       operationId: listSessionToolCalls
       summary: List user-visible MCP tool and action records
+      description: Scans workspace-run events and retains records whose type begins tool. or whose payload text contains a tool key. Tool is taken from payload when present, otherwise from the event type; tool/action/status are text-redacted. Pagination is an in-memory offset page over the filtered records and does not prove that an external tool process ran.
       responses: {'200': {description: Tool calls, content: {application/json: {schema: {$ref: '#/components/schemas/SessionToolCalls'}}}}, '404': {$ref: '#/components/responses/Problem'}}
   /api/v1/workspaces/{id}/sessions/{session_id}/claims:
     parameters: [{name: id, in: path, required: true, schema: {type: string}}, {name: session_id, in: path, required: true, schema: {type: string}}, {name: cursor, in: query, schema: {type: string}}, {name: limit, in: query, schema: {type: integer, minimum: 1, maximum: 200, default: 50}}]
@@ -511,12 +513,14 @@ paths:
     get:
       operationId: getSessionMetrics
       summary: Get adapter-supplied usage metrics
+      description: Reads the session metadata usage object and retains only values accepted by the safe-metric key/value filter. The source label is adapter_metadata; absent, malformed, or filtered metadata yields an empty usage object. These values are adapter-reported, not independently verified billing or runtime measurements.
       responses: {'200': {description: Session metrics, content: {application/json: {schema: {$ref: '#/components/schemas/SessionMetrics'}}}}, '404': {$ref: '#/components/responses/Problem'}}
   /api/v1/workspaces/{id}/sessions/{session_id}/environment:
     parameters: [{name: id, in: path, required: true, schema: {type: string}}, {name: session_id, in: path, required: true, schema: {type: string}}]
     get:
       operationId: getSessionEnvironment
       summary: Get safe environment fingerprint metadata
+      description: Returns runtime Go version, operating system, architecture, and the session's stored adapter label. It does not expose shell variables, secrets, repository contents, or a full environment snapshot.
       responses: {'200': {description: Environment fingerprint, content: {application/json: {schema: {$ref: '#/components/schemas/SessionEnvironment'}}}}, '404': {$ref: '#/components/responses/Problem'}}
   /api/v1/workspaces/{id}/deliberations:
     parameters: [{name: id, in: path, required: true, schema: {type: string}}]
@@ -635,6 +639,7 @@ paths:
     post:
       operationId: rerunProposalValidation
       summary: Rerun safe proposal validation stages without repository mutation
+      description: Requires an identified actor with an accepted human/operator role and a nonblank Idempotency-Key. Runs core safe patch validation, plus the selected stages; selected static_checks and tests execute bounded local commands. The response is produced after completion despite HTTP 202. Invalid JSON bodies are ignored by the current handler and therefore select the default stages.
       requestBody: {required: false, content: {application/json: {schema: {$ref: '#/components/schemas/ValidationInput'}}}}
       responses: {'202': {description: Validation run, content: {application/json: {schema: {$ref: '#/components/schemas/ValidationRun'}}}}, '400': {$ref: '#/components/responses/Problem'}, '403': {$ref: '#/components/responses/Problem'}, '404': {$ref: '#/components/responses/Problem'}}
   /api/v1/workspaces/{id}/proposals/{proposal_id}/votes:
@@ -1290,31 +1295,31 @@ components:
       type: object
       required: [id, event_type, created_at]
       properties:
-        id: {type: integer}
-        event_type: {type: string}
-        payload: {type: string}
-        created_at: {type: string, format: date-time}
+        id: {type: integer, format: int64, description: "Persisted agent-session event row identifier."}
+        event_type: {type: string, description: "Stored session event category."}
+        payload: {type: string, description: "Redacted JSON payload serialized as text; omitted when empty."}
+        created_at: {type: string, format: date-time, description: "Stored event creation timestamp."}
     SessionLogs:
       type: object
       required: [items]
       properties:
-        items: {type: array, items: {$ref: '#/components/schemas/SessionLog'}}
-        next_cursor: {type: [string, 'null']}
+        items: {type: array, items: {$ref: '#/components/schemas/SessionLog'}, description: "Session event rows for the resolved session, in repository-provided order before offset pagination."}
+        next_cursor: {type: [string, 'null'], description: "Base64url-encoded decimal offset for the next page, or null when exhausted."}
     SessionToolCall:
       type: object
       required: [id, tool, created_at]
       properties:
-        id: {type: integer}
-        tool: {type: string}
-        action: {type: string}
-        status: {type: string}
-        created_at: {type: string, format: date-time}
+        id: {type: integer, format: int64, description: "Global workspace event row ID; gaps are possible because the event table is shared."}
+        tool: {type: string, description: "Redacted tool label from payload.tool or the event type suffix."}
+        action: {type: string, description: "Optional redacted action label from the event payload."}
+        status: {type: string, description: "Optional redacted status label from the event payload."}
+        created_at: {type: string, format: date-time, description: "Underlying workspace event creation timestamp."}
     SessionToolCalls:
       type: object
       required: [items]
       properties:
-        items: {type: array, items: {$ref: '#/components/schemas/SessionToolCall'}}
-        next_cursor: {type: [string, 'null']}
+        items: {type: array, items: {$ref: '#/components/schemas/SessionToolCall'}, description: "Filtered tool/action events associated with the session's run; this is a projection and can include matching event payloads not produced by a successful external tool invocation."}
+        next_cursor: {type: [string, 'null'], description: "Base64url-encoded decimal offset for the next page, or null when exhausted."}
     PaginatedClaims:
       type: object
       required: [items]
@@ -1509,20 +1514,22 @@ components:
     ValidationInput:
       type: object
       additionalProperties: false
+      description: Selects safe proposal validation stages. Omission or an empty list runs patch_parse, apply_dry_run, policy, and stale_base; static_checks and tests run only when explicitly selected. Unknown stage names return 400.
       properties:
-        stages: {type: array, items: {type: string, enum: [patch_parse, apply_dry_run, static_checks, tests, policy, stale_base]}}
+        stages: {type: array, items: {type: string, enum: [patch_parse, apply_dry_run, static_checks, tests, policy, stale_base]}, description: "Optional ordered list of validation stages. patch_parse checks patch existence/parsing; apply_dry_run tests temporary application; static_checks runs git diff --check; tests runs go test ./...; policy checks governance; stale_base compares the proposal base to current HEAD. The current handler does not deduplicate repeated stages."}
     ValidationRun:
       type: object
       required: [run_id, proposal_id, status, started_at, completed_at, stages, commands]
+      description: Synchronous validation result returned with HTTP 202 after the checks and persistence have completed. Commands run with a 30-second timeout and captured output is capped at 8 KiB per command; stage failures produce status failed.
       properties:
-        run_id: {type: string}
-        proposal_id: {type: string}
-        status: {type: string, enum: [passed, failed]}
-        started_at: {type: string, format: date-time}
-        completed_at: {type: string, format: date-time}
-        stages: {type: object, additionalProperties: true}
-        commands: {type: object, additionalProperties: {type: string}}
-        output: {type: string}
+        run_id: {type: string, description: "Generated validation run ID based on its start timestamp."}
+        proposal_id: {type: string, description: "Proposal validated within the selected workspace."}
+        status: {type: string, enum: [passed, failed], description: "Overall outcome; failed when core patch validation errors or any selected stage reports passed=false."}
+        started_at: {type: string, format: date-time, description: "UTC start time in RFC3339Nano form."}
+        completed_at: {type: string, format: date-time, description: "UTC completion time in RFC3339Nano form."}
+        stages: {type: object, additionalProperties: true, description: "Map keyed by requested stage name to stage-specific result objects; selected stages are evaluated after core PatchValidate succeeds."}
+        commands: {type: object, additionalProperties: {type: string}, description: "Reserved command summary map; currently returned empty even when static_checks or tests run."}
+        output: {type: string, description: "Optional redacted core validation error text; omitted when core validation succeeds. Stage command output is instead included in the corresponding stage result."}
     ClaimInput:
       type: object
       required: [agent_id, task_id, resource_type, mode]

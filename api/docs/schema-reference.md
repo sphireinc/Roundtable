@@ -392,10 +392,10 @@ Required fields: `id`, `event_type`, `created_at`
 
 | Property | Type | Required | Constraints | Description |
 |---|---|---|---|---|
-| `id` | `integer` | yes |  |  |
-| `event_type` | `string` | yes |  |  |
-| `payload` | `string` | no |  |  |
-| `created_at` | `string` | yes | format="date-time" |  |
+| `id` | `integer` | yes | format="int64" | Persisted agent-session event row identifier. |
+| `event_type` | `string` | yes |  | Stored session event category. |
+| `payload` | `string` | no |  | Redacted JSON payload serialized as text; omitted when empty. |
+| `created_at` | `string` | yes | format="date-time" | Stored event creation timestamp. |
 
 ### Schema: SessionLogs {#schema-sessionlogs}
 
@@ -405,8 +405,8 @@ Required fields: `items`
 
 | Property | Type | Required | Constraints | Description |
 |---|---|---|---|---|
-| `items` | array of `SessionLog` | yes |  |  |
-| `next_cursor` | `string or null` | no |  |  |
+| `items` | array of `SessionLog` | yes |  | Session event rows for the resolved session, in repository-provided order before offset pagination. |
+| `next_cursor` | `string or null` | no |  | Base64url-encoded decimal offset for the next page, or null when exhausted. |
 
 ### Schema: SessionToolCall {#schema-sessiontoolcall}
 
@@ -416,11 +416,11 @@ Required fields: `id`, `tool`, `created_at`
 
 | Property | Type | Required | Constraints | Description |
 |---|---|---|---|---|
-| `id` | `integer` | yes |  |  |
-| `tool` | `string` | yes |  |  |
-| `action` | `string` | no |  |  |
-| `status` | `string` | no |  |  |
-| `created_at` | `string` | yes | format="date-time" |  |
+| `id` | `integer` | yes | format="int64" | Global workspace event row ID; gaps are possible because the event table is shared. |
+| `tool` | `string` | yes |  | Redacted tool label from payload.tool or the event type suffix. |
+| `action` | `string` | no |  | Optional redacted action label from the event payload. |
+| `status` | `string` | no |  | Optional redacted status label from the event payload. |
+| `created_at` | `string` | yes | format="date-time" | Underlying workspace event creation timestamp. |
 
 ### Schema: SessionToolCalls {#schema-sessiontoolcalls}
 
@@ -430,8 +430,8 @@ Required fields: `items`
 
 | Property | Type | Required | Constraints | Description |
 |---|---|---|---|---|
-| `items` | array of `SessionToolCall` | yes |  |  |
-| `next_cursor` | `string or null` | no |  |  |
+| `items` | array of `SessionToolCall` | yes |  | Filtered tool/action events associated with the session's run; this is a projection and can include matching event payloads not produced by a successful external tool invocation. |
+| `next_cursor` | `string or null` | no |  | Base64url-encoded decimal offset for the next page, or null when exhausted. |
 
 ### Schema: PaginatedClaims {#schema-paginatedclaims}
 
@@ -723,28 +723,30 @@ Required fields: `items`
 
 Type: object (no additional properties)
 
+Description: Selects safe proposal validation stages. Omission or an empty list runs patch_parse, apply_dry_run, policy, and stale_base; static_checks and tests run only when explicitly selected. Unknown stage names return 400.
 Additional properties: forbidden.
 
 | Property | Type | Required | Constraints | Description |
 |---|---|---|---|---|
-| `stages` | array of `string` (item constraints: enum=["patch_parse","apply_dry_run","static_checks","tests","policy","stale_base"]) | no |  |  |
+| `stages` | array of `string` (item constraints: enum=["patch_parse","apply_dry_run","static_checks","tests","policy","stale_base"]) | no |  | Optional ordered list of validation stages. patch_parse checks patch existence/parsing; apply_dry_run tests temporary application; static_checks runs git diff --check; tests runs go test ./...; policy checks governance; stale_base compares the proposal base to current HEAD. The current handler does not deduplicate repeated stages. |
 
 ### Schema: ValidationRun {#schema-validationrun}
 
 Type: `object`
 
+Description: Synchronous validation result returned with HTTP 202 after the checks and persistence have completed. Commands run with a 30-second timeout and captured output is capped at 8 KiB per command; stage failures produce status failed.
 Required fields: `run_id`, `proposal_id`, `status`, `started_at`, `completed_at`, `stages`, `commands`
 
 | Property | Type | Required | Constraints | Description |
 |---|---|---|---|---|
-| `run_id` | `string` | yes |  |  |
-| `proposal_id` | `string` | yes |  |  |
-| `status` | `string` | yes | enum=["passed","failed"] |  |
-| `started_at` | `string` | yes | format="date-time" |  |
-| `completed_at` | `string` | yes | format="date-time" |  |
-| `stages` | object (any value) | yes |  |  |
-| `commands` | object (values of `string`) | yes |  |  |
-| `output` | `string` | no |  |  |
+| `run_id` | `string` | yes |  | Generated validation run ID based on its start timestamp. |
+| `proposal_id` | `string` | yes |  | Proposal validated within the selected workspace. |
+| `status` | `string` | yes | enum=["passed","failed"] | Overall outcome; failed when core patch validation errors or any selected stage reports passed=false. |
+| `started_at` | `string` | yes | format="date-time" | UTC start time in RFC3339Nano form. |
+| `completed_at` | `string` | yes | format="date-time" | UTC completion time in RFC3339Nano form. |
+| `stages` | object (any value) | yes |  | Map keyed by requested stage name to stage-specific result objects; selected stages are evaluated after core PatchValidate succeeds. |
+| `commands` | object (values of `string`) | yes |  | Reserved command summary map; currently returned empty even when static_checks or tests run. |
+| `output` | `string` | no |  | Optional redacted core validation error text; omitted when core validation succeeds. Stage command output is instead included in the corresponding stage result. |
 
 ### Schema: ClaimInput {#schema-claiminput}
 
