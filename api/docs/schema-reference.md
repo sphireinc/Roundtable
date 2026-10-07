@@ -748,25 +748,26 @@ Required fields: `run_id`, `proposal_id`, `status`, `started_at`, `completed_at`
 
 ### Schema: ClaimInput {#schema-claiminput}
 
-Type: `object`
+Type: object (no additional properties)
 
 Required fields: `agent_id`, `task_id`, `resource_type`, `mode`
+Additional properties: forbidden.
 
 | Property | Type | Required | Constraints | Description |
 |---|---|---|---|---|
-| `claim_id` | `string` | no |  |  |
-| `agent_id` | `string` | yes |  |  |
-| `session_id` | `string` | no |  |  |
-| `task_id` | `string` | yes |  |  |
-| `resource_id` | `string` | no |  |  |
-| `resource_type` | `string` | yes | enum=["file","directory","symbol","command","schema","endpoint","test_suite","custom"] |  |
-| `path` | `string` | no |  |  |
-| `symbol` | `string` | no |  |  |
-| `mode` | `string` | yes | enum=["exclusive","shared","advisory","execution"] |  |
-| `run_id` | `string` | no |  |  |
-| `base_hash` | `string` | no |  |  |
-| `ttl_seconds` | `integer` | no | minimum=1 |  |
-| `rationale` | `string` | no |  |  |
+| `claim_id` | `string` | no |  | Optional claim identifier; omission generates a timestamp-based claim ID. |
+| `agent_id` | `string` | yes |  | Required nonblank agent identity recorded as the claim owner. |
+| `session_id` | `string` | no |  | Accepted by the request decoder but currently not passed to claim persistence or returned by the handler. |
+| `task_id` | `string` | yes |  | Required nonblank task identifier associated with the claim. |
+| `resource_id` | `string` | no |  | Optional explicit resource key. If omitted, the service derives one from resource_type and path, or from resource_type and symbol for symbol claims; a resource_id or path is required. |
+| `resource_type` | `string` | yes | enum=["file","directory","symbol","command","schema","endpoint","test_suite","custom"] | Required nonblank resource category. The service does not enforce this documented enum, so other nonempty categories may be stored; file, directory, and symbol receive specialized resource handling. |
+| `path` | `string` | no |  | Optional workspace-relative resource path. When nonempty, the HTTP handler rejects paths escaping the selected workspace; resource_id may be supplied instead. |
+| `symbol` | `string` | no |  | Optional symbol name used to derive a symbol resource ID and resolve symbol-specific resource metadata. |
+| `mode` | `string` | yes | enum=["read","write","review","exclusive"] | Required claim mode. The service accepts read, write, review, or exclusive; the former OpenAPI values shared, advisory, and execution are not accepted by this implementation. |
+| `run_id` | `string` | no |  | Optional run identifier forwarded to claim creation and related events. |
+| `base_hash` | `string` | no |  | Optional caller-provided resource revision/hash evidence stored on the claim; creation does not verify it against current contents. |
+| `ttl_seconds` | `integer` | no | minimum=1 | Optional requested lease duration in seconds; omission or a nonpositive value falls back to a 15-minute lease. |
+| `rationale` | `string` | no |  | Optional rationale stored after text redaction. |
 
 ### Schema: ClaimExtendInput {#schema-claimextendinput}
 
@@ -775,7 +776,7 @@ Type: `object`
 
 | Property | Type | Required | Constraints | Description |
 |---|---|---|---|---|
-| `ttl_seconds` | `integer` | no | minimum=1 |  |
+| `ttl_seconds` | `integer` | no | minimum=1 | Requested new lease duration in seconds. Missing, invalid, or nonpositive values currently reach the service as zero and use its 15-minute default. |
 
 ### Schema: Claim {#schema-claim}
 
@@ -785,21 +786,21 @@ Required fields: `id`, `workspace_id`, `agent_id`, `task_id`, `resource_id`, `re
 
 | Property | Type | Required | Constraints | Description |
 |---|---|---|---|---|
-| `id` | `string` | yes |  |  |
-| `workspace_id` | `string` | yes |  |  |
-| `agent_id` | `string` | yes |  |  |
-| `session_id` | `string` | no |  |  |
-| `task_id` | `string` | yes |  |  |
-| `resource_id` | `string` | yes |  |  |
-| `resource_type` | `string` | yes |  |  |
-| `path` | `string` | no |  |  |
-| `symbol` | `string` | no |  |  |
-| `mode` | `string` | yes |  |  |
-| `base_hash` | `string` | no |  |  |
-| `state` | `string` | yes | enum=["active","released","revoked","suspended","expired"] |  |
-| `rationale` | `string` | no |  |  |
-| `acquired_at` | `string` | yes | format="date-time" |  |
-| `lease_expires_at` | `string` | yes | format="date-time" |  |
+| `id` | `string` | yes |  | Stable claim identifier. |
+| `workspace_id` | `string` | yes |  | Workspace to which the API binds this claim after creation; list and detail reads are scoped by this value. |
+| `agent_id` | `string` | yes |  | Agent identity that owns the claim. |
+| `session_id` | `string` | no |  | The response model has an optional session field, but the current HTTP mapper never populates it, so this field is omitted from current claim responses. |
+| `task_id` | `string` | yes |  | Task associated with the claim and used by claim transition operations. |
+| `resource_id` | `string` | yes |  | Canonical resource identifier protected by this claim. |
+| `resource_type` | `string` | yes |  | Resource category loaded from the resource record, not copied directly from the claim row. |
+| `path` | `string` | no |  | Resource path loaded from the resource record; omitted when empty. |
+| `symbol` | `string` | no |  | Resource symbol name loaded from the resource record; omitted when empty. |
+| `mode` | `string` | yes |  | Stored claim type/mode (read, write, review, or exclusive). |
+| `base_hash` | `string` | no |  | Optional hash evidence supplied at claim creation; omitted when empty. |
+| `state` | `string` | yes | enum=["active","released","revoked","suspended","expired"] | Persisted claim status. Creation returns active; leases can later be released or expire during maintenance/reconciliation. |
+| `rationale` | `string` | no |  | Text-redacted rationale; omitted when empty. |
+| `acquired_at` | `string` | yes | format="date-time" | Claim creation time returned as the acquisition timestamp. |
+| `lease_expires_at` | `string` | yes | format="date-time" | Lease expiration timestamp; creation defaults to 15 minutes when no positive TTL is provided. |
 
 ### Schema: Claims {#schema-claims}
 
@@ -809,8 +810,8 @@ Required fields: `items`
 
 | Property | Type | Required | Constraints | Description |
 |---|---|---|---|---|
-| `items` | array of `Claim` | yes |  |  |
-| `next_cursor` | `string or null` | no |  |  |
+| `items` | array of `Claim` | yes |  | Claims associated with the selected workspace, ordered by the underlying store before page slicing. |
+| `next_cursor` | `string or null` | no |  | Opaque cursor for the next page, or null when there are no further items. |
 
 ### Schema: Contention {#schema-contention}
 
@@ -820,21 +821,21 @@ Required fields: `id`, `workspace_id`, `resource_id`, `requested_resource_id`, `
 
 | Property | Type | Required | Constraints | Description |
 |---|---|---|---|---|
-| `id` | `string` | yes |  |  |
-| `workspace_id` | `string` | yes |  |  |
-| `resource_id` | `string` | yes |  |  |
-| `requested_resource_id` | `string` | yes |  |  |
-| `requested_agent_id` | `string` | yes |  |  |
-| `requested_task_id` | `string` | yes |  |  |
-| `requested_mode` | `string` | yes |  |  |
-| `requested_path` | `string` | no |  |  |
-| `current_owner_claim_id` | `string` | yes |  |  |
-| `current_owner_agent_id` | `string` | yes |  |  |
-| `state` | `string` | yes |  |  |
-| `reason` | `string` | yes |  |  |
-| `acquired_at` | `string` | yes | format="date-time" |  |
-| `lease_expires_at` | `string` | yes | format="date-time" |  |
-| `allowed_resolutions` | array of `string` | yes |  |  |
+| `id` | `string` | yes |  | Contention record identifier created when an attempted claim conflicts with an existing claim. |
+| `workspace_id` | `string` | yes |  | Workspace inferred from the challenged owner claim and used to scope the contention. |
+| `resource_id` | `string` | yes |  | Resource identifier from the attempted claim that encountered a conflict; it can differ from the incumbent claim's resource for overlapping resources. |
+| `requested_resource_id` | `string` | yes |  | Resource identifier requested by the contender; it may equal resource_id for a direct conflict. |
+| `requested_agent_id` | `string` | yes |  | Agent identity that attempted to acquire the conflicting claim. |
+| `requested_task_id` | `string` | yes |  | Task identifier supplied for the attempted claim. |
+| `requested_mode` | `string` | yes |  | Claim mode requested by the contender. |
+| `requested_path` | `string` | no |  | Optional resource path supplied by the contender; omitted when empty. |
+| `current_owner_claim_id` | `string` | yes |  | Existing claim challenged by the request. |
+| `current_owner_agent_id` | `string` | yes |  | Agent currently associated with the challenged claim. |
+| `state` | `string` | yes |  | Contention status, normally open until a supported human resolution records it as resolved. |
+| `reason` | `string` | yes |  | Conflict explanation recorded by claim conflict detection. |
+| `acquired_at` | `string` | yes | format="date-time" | Contention creation timestamp. |
+| `lease_expires_at` | `string` | yes | format="date-time" | Expiration timestamp of the challenged owner claim; this is not the contender's requested lease. |
+| `allowed_resolutions` | array of `string` | yes |  | Currently advertised values are keep_owner, transfer, extend_lease, and reject_contender. keep_owner and reject_contender close the contention without changing the incumbent claim; transfer assigns its owner/task/mode to the requester; extend_lease adds 15 minutes. The resolver also recognizes split and narrow but rejects them because resource-specific semantics are not implemented. |
 
 ### Schema: Contentions {#schema-contentions}
 
@@ -844,8 +845,8 @@ Required fields: `items`
 
 | Property | Type | Required | Constraints | Description |
 |---|---|---|---|---|
-| `items` | array of `Contention` | yes |  |  |
-| `next_cursor` | `string or null` | no |  |  |
+| `items` | array of `Contention` | yes |  | Contentions associated with owner claims in the selected workspace, optionally filtered by resource_id and ordered by creation time and ID. |
+| `next_cursor` | `string or null` | no |  | Opaque cursor for the next page, or null when there are no further items. |
 
 ### Schema: Vote {#schema-vote}
 
@@ -1769,14 +1770,15 @@ Required fields: `workspace_id`, `sequence`, `generated_at`, `retention`, `versi
 
 ### Schema: ContentionResolutionInput {#schema-contentionresolutioninput}
 
-Type: `object`
+Type: object (no additional properties)
 
 Required fields: `resolution`
+Additional properties: forbidden.
 
 | Property | Type | Required | Constraints | Description |
 |---|---|---|---|---|
-| `resolution` | `string` | yes | enum=["keep_owner","transfer","split","narrow","extend_lease","reject_contender"] |  |
-| `reason` | `string` | no |  |  |
+| `resolution` | `string` | yes | enum=["keep_owner","transfer","split","narrow","extend_lease","reject_contender"] | Required resolution choice. keep_owner, transfer, extend_lease, and reject_contender are implemented; split and narrow are recognized but return HTTP 409 as unsupported. |
+| `reason` | `string` | no |  | Optional explanation, text-redacted and recorded in the audit event; it does not affect which resolution is applied. |
 
 ### Schema: ContentionResolution {#schema-contentionresolution}
 
@@ -1786,9 +1788,9 @@ Required fields: `contention_id`, `state`, `resolution`
 
 | Property | Type | Required | Constraints | Description |
 |---|---|---|---|---|
-| `contention_id` | `string` | yes |  |  |
-| `state` | `string` | yes | enum=["resolved"] |  |
-| `resolution` | `string` | yes |  |  |
+| `contention_id` | `string` | yes |  | Identifier of the contention marked resolved. |
+| `state` | `string` | yes | enum=["resolved"] | Successful resolution always returns resolved; attempting to resolve a non-open contention returns a conflict instead. |
+| `resolution` | `string` | yes |  | Resolution applied to the incumbent claim and contention record. |
 
 ### Schema: HealthResponse {#schema-healthresponse}
 
