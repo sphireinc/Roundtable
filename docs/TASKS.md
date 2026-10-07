@@ -1,6 +1,8 @@
 # Tasks and Assignments
 
-The local runtime stores tasks in the configured SQLite database. `task.create`, `task.get`, `task.list`, and `task.update_status` return persisted task records through MCP. Local task rows are shared across runs: these handlers do not filter by run or workspace. The HTTP API provides separate workspace-oriented contracts; do not infer those filters for local MCP calls.
+The local runtime stores tasks in the configured SQLite database. `task.create`, `task.get`, `task.list`, and `task.update_status` return persisted task records through MCP. Local task rows are shared across runs: these handlers do not filter by run or workspace. The HTTP API does not expose first-class task create/list/get/update routes; other API records can carry a `task_id` association, but that does not make the associated task workspace-scoped or provide task CRUD. Do not infer workspace isolation for local MCP calls.
+
+The HTTP repository-entity inventory is also not a task catalog: it walks filesystem paths and derives file, directory, and symbol entities. For the actual HTTP route surface, see the [API Endpoint Guide](../api/docs/admin-api-guide.md).
 
 ## Creation and ordering
 
