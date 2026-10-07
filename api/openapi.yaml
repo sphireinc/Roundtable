@@ -594,11 +594,15 @@ paths:
     get:
       operationId: listDeliberations
       summary: List workspace deliberations
+      description: >-
+        Returns deliberations stored for this workspace in created_at/id order, enriched with participant IDs, latest round number, redacted open-conflict summaries, and selected metadata fields. cursor and limit are applied in memory after loading; limit defaults to 50 and must be 1 through 200. Items that fail the secondary readDeliberation projection are currently skipped by the handler. Invalid pagination returns 400 and query failures return 500.
       parameters: [{name: cursor, in: query, schema: {type: string}}, {name: limit, in: query, schema: {type: integer, minimum: 1, maximum: 200, default: 50}}]
       responses: {'200': {description: Deliberations, content: {application/json: {schema: {$ref: '#/components/schemas/Deliberations'}}}}, '404': {$ref: '#/components/responses/Problem'}}
     post:
       operationId: createDeliberation
       summary: Create a governed deliberation
+      description: >-
+        Requires X-Actor-ID, an accepted human X-Actor-Role, a nonblank Idempotency-Key, and JSON with a nonblank goal and a nonempty agent_pool. Every participant ID must be nonblank and resolve to an existing global agent; enabled status is not checked here. governance_profile, initial_resource_scope, budget_limit, time_limit_seconds, human_constraints, and moderator_id are recorded as configuration/metadata without runtime enforcement by this handler. Creation atomically inserts a draft deliberation, participant rows, round zero, and an audit event, then appends a global event. It does not start agents or execute a deliberation. Invalid input returns 400, missing agents 404, authorization failure 403, and persistence conflict 409.
       parameters: [{$ref: '#/components/parameters/ActorID'}, {$ref: '#/components/parameters/ActorRole'}, {$ref: '#/components/parameters/IdempotencyKey'}]
       requestBody: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/DeliberationInput'}}}}
       responses: {'201': {description: Created, content: {application/json: {schema: {$ref: '#/components/schemas/Deliberation'}}}}, '400': {$ref: '#/components/responses/Problem'}, '403': {$ref: '#/components/responses/Problem'}, '409': {$ref: '#/components/responses/Problem'}}
@@ -607,36 +611,48 @@ paths:
     get:
       operationId: getDeliberation
       summary: Get a deliberation
+      description: >-
+        Returns the deliberation only when its ID belongs to the path workspace. The projection includes configured participants, latest round number, selected metadata, and redacted summaries of open conflicts; it does not include transcript contents. Missing or cross-workspace IDs return 404.
       responses: {'200': {description: Deliberation, content: {application/json: {schema: {$ref: '#/components/schemas/Deliberation'}}}}, '404': {$ref: '#/components/responses/Problem'}}
   /api/v1/workspaces/{id}/deliberations/{deliberation_id}/start:
     parameters: [{name: id, in: path, required: true, schema: {type: string}}, {name: deliberation_id, in: path, required: true, schema: {type: string}}, {$ref: '#/components/parameters/ActorID'}, {$ref: '#/components/parameters/ActorRole'}, {$ref: '#/components/parameters/IdempotencyKey'}]
     post:
       operationId: startDeliberation
       summary: Start a draft or resume a paused deliberation
+      description: >-
+        Requires X-Actor-ID, an accepted human X-Actor-Role, and a nonblank Idempotency-Key. Transitions only draft or paused deliberations to running; all other source states return 409. A first start sets started_at, while resuming a paused deliberation preserves its original started_at. The handler updates deliberation/audit/event state but does not schedule participants, launch agent processes, or enforce the recorded time/budget constraints.
       responses: {'200': {description: Updated deliberation, content: {application/json: {schema: {$ref: '#/components/schemas/Deliberation'}}}}, '403': {$ref: '#/components/responses/Problem'}, '404': {$ref: '#/components/responses/Problem'}, '409': {$ref: '#/components/responses/Problem'}}
   /api/v1/workspaces/{id}/deliberations/{deliberation_id}/pause:
     parameters: [{name: id, in: path, required: true, schema: {type: string}}, {name: deliberation_id, in: path, required: true, schema: {type: string}}, {$ref: '#/components/parameters/ActorID'}, {$ref: '#/components/parameters/ActorRole'}, {$ref: '#/components/parameters/IdempotencyKey'}]
     post:
       operationId: pauseDeliberation
       summary: Pause a running deliberation
+      description: >-
+        Requires X-Actor-ID, an accepted human X-Actor-Role, and a nonblank Idempotency-Key. Only running deliberations transition to paused; other states return 409. The transition is persisted with an audit event and then a global event. It does not send pause commands to participant processes or close their sessions.
       responses: {'200': {description: Updated deliberation, content: {application/json: {schema: {$ref: '#/components/schemas/Deliberation'}}}}, '403': {$ref: '#/components/responses/Problem'}, '404': {$ref: '#/components/responses/Problem'}, '409': {$ref: '#/components/responses/Problem'}}
   /api/v1/workspaces/{id}/deliberations/{deliberation_id}/resume:
     parameters: [{name: id, in: path, required: true, schema: {type: string}}, {name: deliberation_id, in: path, required: true, schema: {type: string}}, {$ref: '#/components/parameters/ActorID'}, {$ref: '#/components/parameters/ActorRole'}, {$ref: '#/components/parameters/IdempotencyKey'}]
     post:
       operationId: resumeDeliberation
       summary: Resume a paused deliberation
+      description: >-
+        Requires X-Actor-ID, an accepted human X-Actor-Role, and a nonblank Idempotency-Key. Only paused deliberations transition to running; other states return 409. It preserves the original started_at and does not relaunch or resume participant sessions.
       responses: {'200': {description: Updated deliberation, content: {application/json: {schema: {$ref: '#/components/schemas/Deliberation'}}}}, '403': {$ref: '#/components/responses/Problem'}, '404': {$ref: '#/components/responses/Problem'}, '409': {$ref: '#/components/responses/Problem'}}
   /api/v1/workspaces/{id}/deliberations/{deliberation_id}/terminate:
     parameters: [{name: id, in: path, required: true, schema: {type: string}}, {name: deliberation_id, in: path, required: true, schema: {type: string}}, {$ref: '#/components/parameters/ActorID'}, {$ref: '#/components/parameters/ActorRole'}, {$ref: '#/components/parameters/IdempotencyKey'}]
     post:
       operationId: terminateDeliberation
       summary: Terminate a draft, running, or paused deliberation
+      description: >-
+        Requires X-Actor-ID, an accepted human X-Actor-Role, and a nonblank Idempotency-Key. Draft, running, or paused deliberations may transition to terminated, setting ended_at; an already terminated deliberation returns 409. The state change is audited and emits a global event, but does not terminate participant sessions, resolve conflicts, or remove linked proposals.
       responses: {'200': {description: Updated deliberation, content: {application/json: {schema: {$ref: '#/components/schemas/Deliberation'}}}}, '403': {$ref: '#/components/responses/Problem'}, '404': {$ref: '#/components/responses/Problem'}, '409': {$ref: '#/components/responses/Problem'}}
   /api/v1/workspaces/{id}/deliberations/{deliberation_id}/messages:
     parameters: [{name: id, in: path, required: true, schema: {type: string}}, {name: deliberation_id, in: path, required: true, schema: {type: string}}, {$ref: '#/components/parameters/ActorID'}, {$ref: '#/components/parameters/ActorRole'}]
     post:
       operationId: addDeliberationMessage
       summary: Append governed human input
+      description: >-
+        Requires X-Actor-ID and an accepted human X-Actor-Role. Accepts nonblank body text only while the deliberation is running or paused; message_type defaults to human_instruction when empty and is otherwise stored without an allowlist. The handler redacts the body before storing and returning it, assigns the next sequence, and writes an audit and global event in the persistence flow. This operation has no Idempotency-Key requirement. Invalid/empty input returns 400, a nonaccepting deliberation 409, and persistence failure 409.
       requestBody: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/DeliberationMessageInput'}}}}
       responses: {'201': {description: Message appended}, '403': {$ref: '#/components/responses/Problem'}, '409': {$ref: '#/components/responses/Problem'}}
   /api/v1/workspaces/{id}/deliberations/{deliberation_id}/transcript:
@@ -644,12 +660,16 @@ paths:
     get:
       operationId: listDeliberationTranscript
       summary: List the immutable user-visible deliberation transcript and events
+      description: >-
+        Merges deliberation messages and operational events, sorts by created_at then entry ID, and applies offset pagination to the merged list. Message entries with message_type containing chain_of_thought or hidden_reasoning (case-insensitive) are omitted; other message text, actor labels, message types, event summaries, and recognized tool/claim/proposal/vote references are redacted. Operational event payloads are not returned. Rendering metadata specifies Markdown with HTML disabled and links treated as untrusted. The round field is the deliberation's current projected round for every entry, not a historical per-entry round. Missing deliberations return 404; query failures return 500.
       responses: {'200': {description: Transcript, content: {application/json: {schema: {$ref: '#/components/schemas/TranscriptEntries'}}}}, '404': {$ref: '#/components/responses/Problem'}}
   /api/v1/workspaces/{id}/deliberations/{deliberation_id}/transcript/{entry_id}:
     parameters: [{name: id, in: path, required: true, schema: {type: string}}, {name: deliberation_id, in: path, required: true, schema: {type: string}}, {name: entry_id, in: path, required: true, schema: {type: string}}]
     get:
       operationId: getDeliberationTranscriptEntry
       summary: Deep-link to one transcript entry
+      description: >-
+        Rebuilds the same filtered, redacted, merged transcript as the collection route and returns one entry by full ID (message:<id> or event:<numeric-id>) or by the corresponding unprefixed message/event ID. Hidden-reasoning messages cannot be retrieved through this route. Missing deliberations or entries outside the selected deliberation return 404; transcript query failures return 500.
       responses: {'200': {description: Transcript entry, content: {application/json: {schema: {$ref: '#/components/schemas/TranscriptEntry'}}}}, '404': {$ref: '#/components/responses/Problem'}}
   /api/v1/workspaces/{id}/proposals:
     parameters: [{name: id, in: path, required: true, schema: {type: string}}, {name: cursor, in: query, schema: {type: string}}, {name: limit, in: query, schema: {type: integer, minimum: 1, maximum: 200, default: 50}}]
