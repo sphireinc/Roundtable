@@ -58,7 +58,16 @@ Connection construction/open/close/error handlers update toolbar state. A close 
 
 ## Data fetching and state ownership
 
-The root provider creates one TanStack Query client with a 5-second query stale time and one automatic retry. The API client normalizes non-2xx results into `APIError` problem details, sends an `AbortSignal` through query fetches, handles 204/JSON/text responses, and generates a request ID when available. Workspace/domain query keys should include workspace ID; helpers are available for workspace keys and invalidation. The current workspace list query is global, while repository/health keys are workspace-specific.
+The root provider creates one TanStack Query client per mounted provider and shares it with descendants. Its explicit query defaults are:
+
+| Option | Configured value | Effect |
+| --- | --- | --- |
+| `queries.staleTime` | `5_000` ms | A successful query result is considered fresh for five seconds; freshness controls refetch eligibility, not a hard expiration or a five-second polling interval. |
+| `queries.retry` | `1` | A failed query may be attempted once more by the query retryer; this is separate from API-client behavior and does not retry mutations. |
+
+The provider does not override query garbage-collection time, mount/focus/reconnect refetch policy, retry delay, network mode, or mutation defaults. Those behaviors remain the defaults of the TanStack Query version resolved by the UI dependency lockfile and may change when dependencies are updated. The branch-switch actions call the API client directly rather than using `useMutation`; they therefore do not receive mutation-cache state, mutation retries, or mutation lifecycle callbacks from TanStack Query. Query cancellation is passed to GET fetches, while the branch-switch operations do not supply an abort signal.
+
+The API client normalizes non-2xx results into `APIError` problem details, sends an `AbortSignal` through query fetches, handles 204/JSON/text responses, and generates a request ID when available. Workspace/domain query keys should include workspace ID; helpers are available for workspace keys and invalidation. The current workspace list query is global, while repository/health keys are workspace-specific.
 
 Zustand stores only the sidebar-collapsed preference. The selected dashboard workspace ID is local React state initialized from build-time config; it is not persisted across reloads. The server and SQLite remain authoritative for workspaces, branch state, proposals, approvals, and transactions.
 
