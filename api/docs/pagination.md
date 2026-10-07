@@ -24,7 +24,8 @@ IDs only where declared by the endpoint contract.
 
 | Surface | Cursor and ordering behavior |
 | --- | --- |
-| Agent/session and shared offset-based lists | Raw base64url encoding of a nonnegative decimal offset into the current result. An offset beyond the current list clamps to its end and returns an empty page. |
+| Shared in-memory offset lists | Raw, unpadded base64url encoding of a nonnegative decimal offset into the current result. This is used by session listing and most shared `writePage` collections (including activity, proposals, claims, approvals, policies, transactions, deliberations, transcripts, votes, contention, patch, phase, and session subresource lists), plus repository-entity and agent cursor parsing. An offset beyond the current result clamps to its end and returns an empty page. |
+| Agent list response (`GET /workspaces/{id}/agents`) | **Cursor output mismatch:** input is decoded as raw base64url offset, but `next_cursor` is emitted as plain decimal text. Passing a non-null returned cursor back verbatim generally fails with `invalid_cursor`; encode the decimal offset as unpadded base64url to continue manually, or treat the list as non-continuable until the implementation is corrected. See [Agent diagnostics and administration](../../docs/ADAPTERS.md#http-agent-administration). |
 | Memory list | Raw base64url encoding of creation timestamp plus ID; ascending `created_at`, then ID. Continuation selects tuples strictly greater than the previous final item. |
 | Notification list | Timestamp/ID cursor, descending `created_at`, then ID. Continuation selects tuples strictly less than the previous final item. |
 | Operational logs/audit lists | Positive decimal event/audit ID string, not base64url; descending ID with continuation strictly below that ID. |
