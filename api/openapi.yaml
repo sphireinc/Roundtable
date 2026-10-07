@@ -839,10 +839,14 @@ paths:
     get:
       operationId: listHumanApprovals
       summary: List the workspace human approval queue
+      description: >-
+        Lists approval rows joined to proposals whose workspace_id matches the selected workspace, ordered by creation time and ID, then paginates in memory. Although approval records can store task_id, rows without an associated proposal are excluded by the current join. The projection redacts the request reason, derives risk from the proposal (or normal), sets required_role to human, and returns an empty decision_metadata object rather than hydrating stored decision metadata. Invalid cursor/limit returns 400; database errors return 500.
       responses: {'200': {description: Approval queue, content: {application/json: {schema: {$ref: '#/components/schemas/Approvals'}}}}, '404': {$ref: '#/components/responses/Problem'}}
     post:
       operationId: requestHumanApproval
       summary: Request a human approval through the orchestrator boundary
+      description: >-
+        Requires either the exact X-Roundtable-Orchestrator value true or an identified actor with an accepted human role, plus a nonblank Idempotency-Key. subject and reason must be nonblank. If proposal_id is supplied, it must identify a proposal in this workspace; task_id alone is accepted but does not make the approval visible through the current list/get joins. The reason is redacted before persistence. override_policy controls whether a later decision may request an override. Input risk and required_role are accepted by decoding but are not persisted; returned risk is derived from the associated proposal or defaults to normal, and required_role is always human. decision_metadata is written to the request audit payload, not returned by the approval projection. Creation starts in requested status and writes approval and audit rows transactionally. Invalid input returns 400, authorization failure 403, proposal lookup failure 404, and persistence conflict 409.
       parameters: [{$ref: '#/components/parameters/ActorID'}, {$ref: '#/components/parameters/IdempotencyKey'}, {name: X-Roundtable-Orchestrator, in: header, required: false, schema: {type: string, enum: ['true']}}]
       requestBody: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/ApprovalInput'}}}}
       responses: {'201': {description: Approval, content: {application/json: {schema: {$ref: '#/components/schemas/Approval'}}}}, '400': {$ref: '#/components/responses/Problem'}, '403': {$ref: '#/components/responses/Problem'}, '404': {$ref: '#/components/responses/Problem'}, '409': {$ref: '#/components/responses/Problem'}}
@@ -851,13 +855,16 @@ paths:
     get:
       operationId: getHumanApproval
       summary: Get one approval request
+      description: >-
+        Returns an approval only when it joins to a proposal belonging to the selected workspace. Task-only or otherwise proposal-less approval rows cannot currently be retrieved through this route, even if their ID exists. The response redacts the reason and does not hydrate decision_metadata; unknown and cross-workspace requests return 404.
       responses: {'200': {description: Approval, content: {application/json: {schema: {$ref: '#/components/schemas/Approval'}}}}, '404': {$ref: '#/components/responses/Problem'}}
   /api/v1/workspaces/{id}/approvals/{approval_id}/{action}:
     parameters: [{name: id, in: path, required: true, schema: {type: string}}, {name: approval_id, in: path, required: true, schema: {type: string}}, {name: action, in: path, required: true, schema: {type: string, enum: [approve, reject, request-changes, defer]}}, {$ref: '#/components/parameters/ActorID'}, {$ref: '#/components/parameters/ActorRole'}, {$ref: '#/components/parameters/IdempotencyKey'}]
     post:
       operationId: decideHumanApproval
       summary: Decide an approval request as an authorized human
-      description: Reject and request-changes require a non-empty reason. An override requires both an approval that permits overrides and the explicit X-Override-Permission header.
+      description: >-
+        Requires X-Actor-ID, an accepted human X-Actor-Role, and a nonblank Idempotency-Key. Only approvals in requested status can be decided. Actions are approve, reject, request-changes, or defer; reject and request-changes require a nonblank reason. An override=true decision is allowed only when the request has override_policy=true and X-Override-Permission is exactly true. The reason is redacted and decision_metadata is added to the audit payload, but the response does not hydrate that metadata. Decision and audit writes are transactional. For proposal-linked approvals, the handler also updates approval_state and may move proposal status to in_review for request-changes; it does not apply the proposal patch. Repeated decisions return 409, invalid action/body 400, authorization/override denial 403, and persistence conflict 409.
       requestBody: {required: false, content: {application/json: {schema: {$ref: '#/components/schemas/ApprovalDecisionInput'}}}}
       responses: {'200': {description: Decided approval, content: {application/json: {schema: {$ref: '#/components/schemas/Approval'}}}}, '400': {$ref: '#/components/responses/Problem'}, '403': {$ref: '#/components/responses/Problem'}, '404': {$ref: '#/components/responses/Problem'}, '409': {$ref: '#/components/responses/Problem'}}
   /api/v1/workspaces/{id}/transactions:
