@@ -441,11 +441,18 @@ paths:
     get:
       operationId: listSessions
       summary: List sessions for a workspace
+      description: >-
+        Resolves the workspace, loads the session registry, keeps sessions whose stored metadata workspace_id matches this workspace, then paginates the resulting in-memory list. cursor is an encoded offset and limit defaults to 50 with a range of 1 through 200. The response contains the public session projection, not event history or process output. Invalid cursor/limit returns 400; store query failure returns 500.
+      parameters:
+        - {name: cursor, in: query, description: Encoded offset returned as next_cursor by the previous page., schema: {type: string}}
+        - {name: limit, in: query, description: Page size from 1 through 200; defaults to 50., schema: {type: integer, minimum: 1, maximum: 200, default: 50}}
       responses:
         '200': {description: Sessions, content: {application/json: {schema: {$ref: '#/components/schemas/Sessions'}}}}
     post:
       operationId: createSession
       summary: Create and start a governed agent session
+      description: >-
+        Requires X-Actor-ID, an accepted human X-Actor-Role, a nonblank Idempotency-Key, and JSON fields agent_id, run_id, and adapter. The referenced agent must exist; this handler does not require it to be enabled. It creates a session registry record in starting status, captures the workspace root as its working directory, stores the workspace default branch for later compatibility checks, and appends session-started event records. It does not launch an adapter/provider subprocess or return process output. Optional provider, model, and external_session_id are recorded as metadata. The response's resume_command_template is a display template, not an executable command. Invalid input returns 400, unknown agent 404, authorization failure 403, and store conflict 409.
       parameters:
         - {$ref: '#/components/parameters/ActorID'}
         - {$ref: '#/components/parameters/ActorRole'}
@@ -460,6 +467,8 @@ paths:
     get:
       operationId: getSession
       summary: Get a session
+      description: >-
+        Resolves the workspace and returns the requested session only when its stored metadata workspace_id matches that workspace. The response is the public session record and does not include event history, working-directory path, or adapter metadata JSON. Missing sessions and sessions belonging to another workspace both return 404.
       parameters:
         - {name: id, in: path, required: true, schema: {type: string}}
         - {name: session_id, in: path, required: true, schema: {type: string}}
@@ -472,7 +481,12 @@ paths:
       - {name: session_id, in: path, required: true, schema: {type: string}}
       - {$ref: '#/components/parameters/ActorID'}
       - {$ref: '#/components/parameters/ActorRole'}
-    post: {operationId: pauseSession, summary: Pause a session, responses: {'200': {description: Paused, content: {application/json: {schema: {$ref: '#/components/schemas/Session'}}}}, '403': {$ref: '#/components/responses/Problem'}, '409': {$ref: '#/components/responses/Problem'}}}
+    post:
+      operationId: pauseSession
+      summary: Pause a session
+      description: >-
+        Requires X-Actor-ID and an accepted human X-Actor-Role. Resolves the session within the selected workspace and changes its stored status to paused, updates last_seen_at, and appends session-event and run-event records. This is a registry transition; it does not send a pause signal to a provider process. Only active-state sessions can transition, and an already-paused or terminal session returns 409.
+      responses: {'200': {description: Paused, content: {application/json: {schema: {$ref: '#/components/schemas/Session'}}}}, '403': {$ref: '#/components/responses/Problem'}, '409': {$ref: '#/components/responses/Problem'}}
   /api/v1/workspaces/{id}/sessions/{session_id}/resume:
     parameters:
       - {name: id, in: path, required: true, schema: {type: string}}
@@ -480,14 +494,24 @@ paths:
       - {$ref: '#/components/parameters/ActorID'}
       - {$ref: '#/components/parameters/ActorRole'}
       - {$ref: '#/components/parameters/IdempotencyKey'}
-    post: {operationId: resumeSession, summary: Resume a compatible session, responses: {'200': {description: Resuming, content: {application/json: {schema: {$ref: '#/components/schemas/Session'}}}}, '403': {$ref: '#/components/responses/Problem'}, '409': {$ref: '#/components/responses/Problem'}}}
+    post:
+      operationId: resumeSession
+      summary: Resume a compatible session
+      description: >-
+        Requires X-Actor-ID, an accepted human X-Actor-Role, and a nonblank Idempotency-Key. Only paused or stopped sessions can resume. If a branch was stored at creation and current repository inspection succeeds, a different current branch blocks the resume; an inspection failure does not itself block it. The associated agent must still exist and be enabled. Success changes the registry status to resuming, refreshes last_seen_at, and appends events; it does not launch or signal an adapter process. Invalid state, branch mismatch, unavailable agent, or store conflict returns 409.
+      responses: {'200': {description: Resuming, content: {application/json: {schema: {$ref: '#/components/schemas/Session'}}}}, '403': {$ref: '#/components/responses/Problem'}, '409': {$ref: '#/components/responses/Problem'}}
   /api/v1/workspaces/{id}/sessions/{session_id}/stop:
     parameters:
       - {name: id, in: path, required: true, schema: {type: string}}
       - {name: session_id, in: path, required: true, schema: {type: string}}
       - {$ref: '#/components/parameters/ActorID'}
       - {$ref: '#/components/parameters/ActorRole'}
-    post: {operationId: stopSession, summary: Gracefully stop a session, responses: {'200': {description: Stopped, content: {application/json: {schema: {$ref: '#/components/schemas/Session'}}}}, '403': {$ref: '#/components/responses/Problem'}, '409': {$ref: '#/components/responses/Problem'}}}
+    post:
+      operationId: stopSession
+      summary: Gracefully stop a session
+      description: >-
+        Requires X-Actor-ID and an accepted human X-Actor-Role. Changes an active-state session's stored status to stopped, sets ended_at and last_seen_at, and appends session-event and run-event records. Despite the route's graceful-stop terminology, this handler does not send a shutdown signal to an adapter process or wait for process exit. Terminal sessions cannot be stopped again and return 409.
+      responses: {'200': {description: Stopped, content: {application/json: {schema: {$ref: '#/components/schemas/Session'}}}}, '403': {$ref: '#/components/responses/Problem'}, '409': {$ref: '#/components/responses/Problem'}}
   /api/v1/workspaces/{id}/sessions/{session_id}/terminate:
     parameters:
       - {name: id, in: path, required: true, schema: {type: string}}
@@ -498,6 +522,8 @@ paths:
     post:
       operationId: terminateSession
       summary: Terminate a session with impact confirmation
+      description: >-
+        Requires X-Actor-ID, an accepted human X-Actor-Role, and a nonblank Idempotency-Key. Counts active claims belonging to the session's agent; when any exist, a valid JSON body with nonblank impact_details is required. Only active-state sessions can be terminated. Success sets status terminated, ended_at, and last_seen_at, then appends session-event and run-event records. This changes authoritative session state but does not kill a provider process or release claims. Invalid/absent confirmation while claims exist, an already-terminal session, or store conflict returns 409; a claim-count query failure returns 500.
       requestBody:
         required: false
         content: {application/json: {schema: {$ref: '#/components/schemas/SessionTerminationInput'}}}
@@ -507,7 +533,12 @@ paths:
       - {name: id, in: path, required: true, schema: {type: string}}
       - {name: session_id, in: path, required: true, schema: {type: string}}
       - {name: status, in: query, schema: {type: string, enum: [starting, active, running, paused, resuming]}}
-    post: {operationId: heartbeatSession, summary: Report session heartbeat, responses: {'200': {description: Heartbeat accepted, content: {application/json: {schema: {$ref: '#/components/schemas/Session'}}}}, '409': {$ref: '#/components/responses/Problem'}}}
+    post:
+      operationId: heartbeatSession
+      summary: Report session heartbeat
+      description: >-
+        Resolves the session within the selected workspace without human actor/role authorization. Active-state sessions (starting, active, running, paused, or resuming) can refresh last_seen_at. An optional status query value may set one of those same states; it cannot heartbeat a terminal session. Success also appends heartbeat event records. This records an agent-reported heartbeat and does not independently verify process liveness. Invalid status returns 400, terminal state or store transition conflict returns 409.
+      responses: {'200': {description: Heartbeat accepted, content: {application/json: {schema: {$ref: '#/components/schemas/Session'}}}}, '409': {$ref: '#/components/responses/Problem'}}
   /api/v1/workspaces/{id}/sessions/{session_id}/logs:
     parameters:
       - {name: id, in: path, required: true, schema: {type: string}}
