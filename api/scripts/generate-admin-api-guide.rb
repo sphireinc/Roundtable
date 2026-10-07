@@ -132,6 +132,28 @@ def schema_constraints(shape)
   end.compact.join("; ").gsub("|", "\\|")
 end
 
+def schema_property_rows(shape, prefix = "")
+  rows = []
+  properties = shape["properties"]
+  if properties.is_a?(Hash)
+    required = Array(shape["required"])
+    properties.each do |name, property_shape|
+      path = prefix.empty? ? name : "#{prefix}.#{name}"
+      rows << [path, property_shape, required.include?(name)]
+      rows.concat(schema_property_rows(property_shape, path))
+    end
+  end
+
+  items = shape["items"]
+  rows.concat(schema_property_rows(items, "#{prefix}[]")) if items.is_a?(Hash)
+
+  additional = shape["additionalProperties"]
+  if additional.is_a?(Hash)
+    rows.concat(schema_property_rows(additional, "#{prefix}{value}"))
+  end
+  rows
+end
+
 schemas = spec.dig("components", "schemas") || {}
 schema_doc = []
 schema_doc << "# API Schema Reference"
@@ -139,6 +161,7 @@ schema_doc << ""
 schema_doc << "Generated from [`api/openapi.yaml`](../openapi.yaml) by `ruby api/scripts/generate-admin-api-guide.rb`. This page lists every component schema and its declared fields; runtime validation may impose additional rules documented by endpoint handlers and [Error Semantics](error-semantics.md)."
 schema_doc << ""
 schema_doc << "The endpoint guide links operations to request and response schemas. `required` reflects the OpenAPI contract, not whether a response field may be omitted by every runtime branch. `additionalProperties` is shown when declared."
+schema_doc << "Nested inline fields use dotted paths; `[]` marks array items and `{value}` marks additional-property values. Referenced component schemas remain separate entries."
 schema_doc << ""
 
 schemas.each do |name, shape|
@@ -155,19 +178,18 @@ schemas.each do |name, shape|
     schema_doc << "Additional properties: #{value == false ? "forbidden" : (value == true ? "allowed with any value" : "values of #{schema_type(value)}")}."
   end
   schema_doc << ""
-  properties = shape["properties"] || {}
-  if properties.empty?
+  property_rows = schema_property_rows(shape)
+  if property_rows.empty?
     item = shape["items"]
     schema_doc << "Array item schema: #{schema_type(item)}." if item
     schema_doc << "No named properties are declared." unless item
   else
-    required = Array(shape["required"])
     schema_doc << "| Property | Type | Required | Constraints | Description |"
     schema_doc << "|---|---|---|---|---|"
-    properties.each do |property, property_shape|
+    property_rows.each do |property, property_shape, is_required|
       description = property_shape["description"].to_s.gsub("|", "\\|").gsub("\n", "<br>")
       constraints = schema_constraints(property_shape)
-      schema_doc << "| `#{property}` | #{schema_type(property_shape)} | #{required.include?(property) ? "yes" : "no"} | #{constraints} | #{description} |"
+      schema_doc << "| `#{property}` | #{schema_type(property_shape)} | #{is_required ? "yes" : "no"} | #{constraints} | #{description} |"
     end
   end
   schema_doc << ""

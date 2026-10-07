@@ -467,6 +467,7 @@ The endpoint guide is generated from `openapi.yaml`:
 
 ```sh
 ruby api/scripts/generate-admin-api-guide.rb
+ruby api/scripts/generate-admin-api-guide_test.rb
 ruby api/scripts/verify-openapi.rb
 ```
 

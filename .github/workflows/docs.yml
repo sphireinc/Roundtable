@@ -24,8 +24,8 @@ jobs:
           python-version: "3.12"
       - name: Install documentation dependencies
         run: python -m pip install -r requirements-docs.txt
-      - name: Generate API endpoint and schema references
-        run: ruby api/scripts/generate-admin-api-guide.rb
+      - name: Generate and verify API endpoint and schema references
+        run: ruby api/scripts/generate-admin-api-guide_test.rb
       - name: Verify OpenAPI contract
         run: ruby api/scripts/verify-openapi.rb
       - name: Assemble documentation sources

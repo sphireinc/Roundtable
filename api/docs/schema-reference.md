@@ -3,6 +3,7 @@
 Generated from [`api/openapi.yaml`](../openapi.yaml) by `ruby api/scripts/generate-admin-api-guide.rb`. This page lists every component schema and its declared fields; runtime validation may impose additional rules documented by endpoint handlers and [Error Semantics](error-semantics.md).
 
 The endpoint guide links operations to request and response schemas. `required` reflects the OpenAPI contract, not whether a response field may be omitted by every runtime branch. `additionalProperties` is shown when declared.
+Nested inline fields use dotted paths; `[]` marks array items and `{value}` marks additional-property values. Referenced component schemas remain separate entries.
 
 ### Schema: SecurityCapabilities {#schema-securitycapabilities}
 
@@ -931,6 +932,8 @@ Required fields: `window`, `generated_at`, `proposal_count`, `consensus_count`, 
 | Property | Type | Required | Constraints | Description |
 |---|---|---|---|---|
 | `window` | `object` | yes |  |  |
+| `window.from` | `string` | yes | format="date-time" |  |
+| `window.to` | `string` | yes | format="date-time" |  |
 | `generated_at` | `string` | yes | format="date-time" |  |
 | `proposal_count` | `integer` | yes | minimum=0 |  |
 | `consensus_count` | `integer` | yes | minimum=0 |  |
@@ -1084,6 +1087,22 @@ Required fields: `type`, `required`, `properties`
 | `type` | `string` | yes | const="object" |  |
 | `required` | array of `string` | yes | const=["name","definition"] |  |
 | `properties` | `object` | yes |  |  |
+| `properties.name` | `object` | yes |  |  |
+| `properties.name.type` | `string` | yes | const="string" |  |
+| `properties.scope` | `object` | yes |  |  |
+| `properties.scope.type` | `string` | yes | const="string" |  |
+| `properties.selector` | `object` | yes |  |  |
+| `properties.selector.type` | `string` | yes | const="object" |  |
+| `properties.severity` | `object` | yes |  |  |
+| `properties.severity.type` | `string` | yes | const="string" |  |
+| `properties.enforcement_mode` | `object` | yes |  |  |
+| `properties.enforcement_mode.type` | `string` | yes | const="string" |  |
+| `properties.human_approval_required` | `object` | yes |  |  |
+| `properties.human_approval_required.type` | `string` | yes | const="boolean" |  |
+| `properties.definition` | `object` | yes |  |  |
+| `properties.definition.type` | `string` | yes | const="object" |  |
+| `properties.metadata` | `object` | yes |  |  |
+| `properties.metadata.type` | `string` | yes | const="object" |  |
 
 ### Schema: PolicyValidation {#schema-policyvalidation}
 
@@ -1331,8 +1350,14 @@ Required fields: `workspace_id`, `generated_at`, `measurement_window`, `agents_o
 | `workspace_id` | `string` | yes |  |  |
 | `generated_at` | `string` | yes | format="date-time" |  |
 | `measurement_window` | `object` | yes |  |  |
+| `measurement_window.from` | `string` | yes | format="date-time" |  |
+| `measurement_window.to` | `string` | yes | format="date-time" |  |
 | `agents_online` | `integer` | yes | minimum=0 |  |
 | `proposal_queue` | `object` | yes |  |  |
+| `proposal_queue.pending` | `integer` | yes |  |  |
+| `proposal_queue.in_review` | `integer` | yes |  |  |
+| `proposal_queue.approved` | `integer` | yes |  |  |
+| `proposal_queue.rejected` | `integer` | yes |  |  |
 | `consensus_success_rate` | `number` | yes | minimum=0; maximum=1 |  |
 | `policy_pass_rate` | `number` | yes | minimum=0; maximum=1 |  |
 | `transaction_manager` | `string` | yes |  |  |
@@ -1727,8 +1752,15 @@ Required fields: `workspace_id`, `sequence`, `generated_at`, `retention`, `versi
 | `sequence` | `integer` | yes | format="int64"; minimum=0 |  |
 | `generated_at` | `string` | yes | format="date-time" |  |
 | `retention` | `object` | yes |  |  |
+| `retention.mode` | `string` | yes |  |  |
+| `retention.resume_by` | `string` | yes |  |  |
+| `retention.max_replay_events` | `integer` | yes | minimum=1 |  |
+| `retention.resync_endpoint` | `string` | yes |  |  |
 | `version_markers` | object (values of `EventVersionMarker`) | yes |  |  |
 | `snapshot` | `object` | yes |  |  |
+| `snapshot.workspace` | `Workspace` | yes |  |  |
+| `snapshot.counts` | object (values of `integer`) | yes |  |  |
+| `snapshot.run_state` | `string` | yes |  |  |
 
 ### Schema: ContentionResolutionInput {#schema-contentionresolutioninput}
 
