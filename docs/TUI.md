@@ -14,6 +14,12 @@ The run command supplies a callback that reloads a database snapshot and recent 
 
 Press `q` or `Ctrl+C` to quit the UI. The process context also controls shutdown. No other keys, mouse navigation, command submission, approval, proposal editing, or transaction rollback are implemented in this TUI.
 
+### Interactive run shutdown
+
+The TUI is not a detachable client layered over an independently managed coordinator. Interactive `roundtable run` starts the MCP listener, orchestration loop, and TUI as one application lifecycle. When the TUI returns (including after `q` or `Ctrl+C`), the application returns from `roundtable run`; deferred cleanup cancels the loop context and closes the MCP server. This does not stop an external agent process because this runtime does not supervise such processes.
+
+Quitting the TUI is not a convergence signal. Cancellation exits the orchestration loop without marking the persisted run completed, blocked, or failed, so its last stored status can remain `active`. Conversely, if the loop itself reaches a terminal outcome first, the app cancels the TUI context and tears down the listener. To inspect or continue after either exit, query the persisted run state and explicitly use the documented CLI resume flow; do not infer terminal state or continued background polling from the last screen. See [Orchestration](ORCHESTRATION.md#timing-limits-and-failure-persistence) for loop cancellation and exit semantics.
+
 ## Related monitoring surfaces
 
 ### Dashboard selection and counts
