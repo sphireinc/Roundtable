@@ -12,14 +12,18 @@ Agent sessions are durable records that associate a Roundtable agent and run wit
 ## CLI
 
 ```sh
-roundtable sessions list --root .
+roundtable sessions --root .
 roundtable sessions register --root . --id SESSION --agent AGENT --run RUN --adapter codex --cwd .
 roundtable sessions heartbeat --root . --session SESSION
 roundtable sessions end --root . --session SESSION
 roundtable resume --root . --session SESSION
 ```
 
-The register command supports `--provider`, `--model`, `--external-session-id`, `--resume-command`, `--cwd`, `--mcp-socket`, and `--status`. Heartbeat supports `--status` and `--external-session-id`; end supports `--status`. The session ID and agent/run identifiers must match persisted records and are not inferred from an installed CLI.
+There is no `sessions list` subcommand: listing is `roundtable sessions [--root DIR]`. In particular, `roundtable sessions list --root .` does not select a list subcommand; the parser falls through to listing with `list` as a positional token and stops parsing options there, so `--root` may be ignored. Session subcommands must appear before their flags.
+
+The `register` command supports `--provider`, `--model`, `--external-session-id`, `--resume-command`, `--cwd`, `--mcp-socket`, and `--status` (default `active`); the required values are `--id`, `--agent`, `--run`, `--adapter`, and `--cwd`. If `--resume-command` is empty and the configured adapter has both a resume pattern and an external session ID, the CLI expands every `{{external_session_id}}` occurrence and stores the result. It does not validate the resulting command by executing it. Heartbeat requires `--session`, optionally accepts `--status` and `--external-session-id`, and prints ID, status, and last-seen time. End requires `--session`, defaults final status to `ended`, and prints ID, status, and end time. Listing prints ID, agent ID, status, adapter, and resume command per row; it does not filter by run or status.
+
+These commands persist metadata for session tracking and resume briefings; they do not launch, heartbeat, or terminate a provider process. Session IDs are caller-supplied upsert keys. The CLI checks that required flag strings are nonempty but does not verify that the supplied agent or run identifies an existing/authorized participant. See [CLI Reference](CLI.md#flag-and-subcommand-parsing) for global parsing behavior and [Sessions and Resume](SESSIONS.md#persistence-and-update-semantics) for upsert and lifecycle details.
 
 ## Resume briefing contents
 
