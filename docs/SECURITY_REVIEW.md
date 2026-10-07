@@ -18,6 +18,12 @@ All fields are strings. The registry marks them optional, but the runtime requir
 
 The response contains `review` (the saved database record) and `findings` (automatic findings for this call). Each finding has `code`, `severity`, `message`, and an optional `path`; the current heuristics do not populate paths or line numbers. Calls without a scan have no generated findings; the response/serialized findings can be `null` rather than an empty array. The tool has no argument for attaching caller-authored structured findings.
 
+### MCP argument conversion edge cases
+
+The local handler reads every field above only when the JSON value is a string. A number, boolean, array, object, or `null` is treated like an empty/missing string; the dispatcher does not first enforce the registry's advertised JSON Schema. Required selection checks compare against the exact empty string and do not trim whitespace. Thus `proposal_id: " "` is treated as a proposal ID and normally fails lookup, while `resource_id: " "` satisfies the at-least-one check and is stored as supplied.
+
+This distinction is especially important for `status`: a nonempty string, including whitespace-only text, is a manual status and skips automatic patch reading/parsing/scanning for a proposal. Such a status is stored verbatim and will not satisfy the apply gate unless it exactly matches `approved` or, for the override path, `veto`. Wrongly typed or empty `status` instead selects the automatic scan when a proposal ID is present; for a resource-only call it becomes the default `approved`. Empty/wrongly typed `review_id` generates a new ID, and empty/wrongly typed `reviewer_id` defaults to `security`; whitespace values are retained. Empty/wrongly typed `task_id` inherits from a proposal, while a nonempty supplied string overrides it.
+
 ## Automatic proposal scan
 
 Omit `status` to inspect the stored proposal patch:
