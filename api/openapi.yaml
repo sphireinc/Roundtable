@@ -106,6 +106,8 @@ paths:
     get:
       operationId: listWorkspaces
       summary: List registered workspaces
+      description: >-
+        Reads every workspace record from the authoritative store and returns it in the items array. The current handler does not accept cursor or limit parameters and always returns next_cursor as null; this is a full in-memory collection response, not a paginated listing. A missing store returns 503 and a store query failure returns 500.
       responses:
         '200':
           description: Workspace collection
@@ -121,6 +123,8 @@ paths:
     post:
       operationId: createWorkspace
       summary: Register a workspace without mutating its repository
+      description: >-
+        Requires a nonblank X-Actor-ID and a JSON WorkspaceInput. root_path must identify an existing directory beneath one of the server-configured allowed workspace roots; the server resolves it to an absolute canonical path and stores a repository identity derived from that path. Symlinks are resolved before the boundary check. A blank display_name defaults to the canonical directory's basename; alias and branch are trimmed metadata. Creation stores active status, revision 1, and a last-opened timestamp, and writes registry/audit state only; it does not inspect or modify Git contents. If-Match is currently declared but ignored on this operation. Invalid input returns 400, missing actor returns 403, unavailable store returns 503, and store-level creation conflicts return 409.
       parameters:
         - {$ref: '#/components/parameters/ActorID'}
         - {$ref: '#/components/parameters/IfMatch'}
@@ -146,6 +150,8 @@ paths:
     get:
       operationId: getWorkspace
       summary: Get a registered workspace
+      description: >-
+        Looks up one workspace by its path id in the authoritative store and returns the public workspace projection. Reads do not refresh last_opened_at. A blank or unknown id is reported as workspace_not_found; an unavailable store is reported as 503.
       responses:
         '200':
           description: Workspace
@@ -156,6 +162,8 @@ paths:
     patch:
       operationId: updateWorkspace
       summary: Update workspace metadata
+      description: >-
+        Requires a nonblank X-Actor-ID and a JSON WorkspacePatch. Only nonblank display_name, root_alias, and default_branch values replace stored metadata; blank values leave existing values unchanged, and root_path is not an updateable field. Updating default_branch records metadata but does not switch or validate the repository branch. The handler refreshes last_opened_at even when submitted fields are blank. If-Match is an optional bare integer revision; when omitted, the handler uses the revision it just read, while a malformed value causes a revision conflict. A concurrent revision mismatch returns 409 workspace_revision_conflict; other store update conflicts also return 409. The workspace root and repository files are not changed.
       parameters:
         - {$ref: '#/components/parameters/ActorID'}
         - {$ref: '#/components/parameters/IfMatch'}
@@ -175,6 +183,8 @@ paths:
     delete:
       operationId: detachWorkspace
       summary: Detach metadata without deleting the repository
+      description: >-
+        Requires a nonblank X-Actor-ID. Before changing registry state, the handler counts selected workspace records: sessions with active or running status, claims with active status, proposals with pending or in_review status, and transactions with pending or running status. These counts are an impact projection, not a complete safety assessment or process-liveness check. Detachment is revision-checked using an optional bare integer If-Match value; when omitted, the handler uses the revision it just read. A stale or malformed revision returns 409 workspace_revision_conflict. Success marks the registry workspace detached and returns it with the pre-detach impact counts; it does not delete the workspace directory, alter repository contents, or claim that active work has stopped. Impact-query errors return 500 and store-level detach conflicts return 409.
       parameters:
         - {$ref: '#/components/parameters/ActorID'}
       responses:
