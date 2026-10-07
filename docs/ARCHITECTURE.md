@@ -14,6 +14,8 @@ Roundtable's target model is many agents deliberating over one shared project st
 
 - `internal/app`: command parsing and composition of runtime services.
 - `internal/config`: defaults and supported `.roundtable/config.yaml` scalar parser.
+- `internal/templates`: starter protocol, project, policy, task, configuration, memory, and generated MCP asset contents.
+- `internal/scaffold`: ordered directory/file creation for initialization and generated MCP asset refresh; writes are not transactional.
 - `internal/db`: SQLite connection, WAL/foreign-key/busy-timeout pragmas, schema migration, persistence repositories.
 - `internal/state`: read-model snapshot assembled from persisted tables.
 - `internal/mcp`: central tool registry, local runtime handlers, generated tool schema/manifest, Unix socket server.
@@ -25,6 +27,7 @@ Roundtable's target model is many agents deliberating over one shared project st
 - `internal/sessions`, `internal/adapters`: session persistence/briefings and adapter metadata/command plans.
 - `internal/events`: in-process event publication/subscription primitives.
 - `internal/tui`: terminal projection of coordinator snapshots/watch feed.
+- `internal/integration`: cross-package acceptance tests; it is test coverage, not a runtime service or separate executable.
 
 These package roles are not equivalent to full automatic agent execution: in particular adapter command plans are not a process supervisor, and the TUI is not the browser UI. Details and limitations are documented per feature in the navigation.
 
