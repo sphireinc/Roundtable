@@ -1670,60 +1670,129 @@ Required fields: `items`
 
 Type: `object`
 
+Description: Effective configuration projection across the six built-in settings sections. Defaults are included even when no workspace override exists; secret-like keys are replaced with an object containing only configured.
 Required fields: `workspace_id`, `version`, `sections`
 
 | Property | Type | Required | Constraints | Description |
 |---|---|---|---|---|
-| `workspace_id` | `string` | yes |  |  |
-| `version` | `integer` | yes | minimum=0 |  |
-| `sections` | object (values of `EffectiveSettingsSection`) | yes |  |  |
+| `workspace_id` | `string` | yes |  | Workspace whose configuration is returned. |
+| `version` | `integer` | yes | minimum=0 | Latest workspace configuration revision number, or zero when no revision exists. |
+| `sections` | object (values of `EffectiveSettingsSection`) | yes |  | Built-in sections with defaults and the current source/version metadata. |
+| `sections.general` | `EffectiveSettingsSection` | no |  |  |
+| `sections.governance` | `EffectiveSettingsSection` | no |  |  |
+| `sections.adapters` | `EffectiveSettingsSection` | no |  |  |
+| `sections.mcp` | `EffectiveSettingsSection` | no |  |  |
+| `sections.storage` | `EffectiveSettingsSection` | no |  |  |
+| `sections.notifications` | `EffectiveSettingsSection` | no |  |  |
 
 ### Schema: EffectiveSettingsSection {#schema-effectivesettingssection}
 
 Type: `object`
 
+Description: One section's sanitized effective values. The current loader overlays only the section from the latest configuration revision; revisions for previous sections are not accumulated when a different section is updated later.
 Required fields: `values`, `source`, `version`, `restart_required`
 
 | Property | Type | Required | Constraints | Description |
 |---|---|---|---|---|
-| `values` | object (any value) | yes |  |  |
-| `source` | `string` | yes | enum=["default","workspace"] |  |
-| `version` | `integer` | yes | minimum=0 |  |
-| `restart_required` | `boolean` | yes |  |  |
+| `values` | object (any value) | yes |  | Setting values for this section. Secret-like keys (key contains secret, token, password, or api_key, case-insensitively) become {configured: boolean}; other values pass through. |
+| `source` | `string` | yes | enum=["default","workspace"] | default when this section has no current overlay; workspace when the latest stored revision targets this section. |
+| `version` | `integer` | yes | minimum=0 | Revision version associated with the workspace overlay; zero for a default-only section. |
+| `restart_required` | `boolean` | yes |  | True for mcp and storage, false for the other built-in sections; this is advisory metadata and does not trigger a restart. |
 
 ### Schema: SettingsSchema {#schema-settingsschema}
 
 Type: `object`
 
+Description: Runtime-generated description of the built-in configuration fields; type is inferred from the default value, secret indicates key-name-based sanitization, and the schema does not itself enforce those types during updates.
 Required fields: `sections`
 
 | Property | Type | Required | Constraints | Description |
 |---|---|---|---|---|
-| `sections` | object (any value) | yes |  |  |
+| `sections` | object (values of `SettingsSectionSchema`) | yes |  | The six supported section names and their field schemas. |
+| `sections.general` | `SettingsSectionSchema` | no |  |  |
+| `sections.governance` | `SettingsSectionSchema` | no |  |  |
+| `sections.adapters` | `SettingsSectionSchema` | no |  |  |
+| `sections.mcp` | `SettingsSectionSchema` | no |  |  |
+| `sections.storage` | `SettingsSectionSchema` | no |  |  |
+| `sections.notifications` | `SettingsSectionSchema` | no |  |  |
 
-### Schema: SettingsUpdate {#schema-settingsupdate}
+### Schema: SettingsSectionSchema {#schema-settingssectionschema}
 
 Type: `object`
 
+Description: Schema for one supported settings section.
+Required fields: `fields`, `restart_required`
 
 | Property | Type | Required | Constraints | Description |
 |---|---|---|---|---|
-| `expected_version` | `integer` | no | minimum=1 |  |
-| `values` | object (any value) | no |  |  |
-| `section` | `string` | no |  |  |
+| `fields` | object (values of `SettingFieldSchema`) | yes |  | Field definitions; default is the built-in default, type is inferred from that default, and secret reflects key-name matching. |
+| `fields.locale` | `SettingFieldSchema` | no |  |  |
+| `fields.timezone` | `SettingFieldSchema` | no |  |  |
+| `fields.approval_required` | `SettingFieldSchema` | no |  |  |
+| `fields.quorum` | `SettingFieldSchema` | no |  |  |
+| `fields.require_security_review` | `SettingFieldSchema` | no |  |  |
+| `fields.default` | `SettingFieldSchema` | no |  |  |
+| `fields.allow_shell` | `SettingFieldSchema` | no |  |  |
+| `fields.transport` | `SettingFieldSchema` | no |  |  |
+| `fields.readonly_repository` | `SettingFieldSchema` | no |  |  |
+| `fields.wal` | `SettingFieldSchema` | no |  |  |
+| `fields.retention_days` | `SettingFieldSchema` | no |  |  |
+| `fields.enabled` | `SettingFieldSchema` | no |  |  |
+| `fields.default_recipient` | `SettingFieldSchema` | no |  |  |
+| `restart_required` | `boolean` | yes |  | True for mcp and storage; false for general, governance, adapters, and notifications. |
+
+### Schema: SettingFieldSchema {#schema-settingfieldschema}
+
+Type: `object`
+
+Description: One setting field's reported default, inferred type, and secret-key indicator.
+Required fields: `default`, `secret`, `type`
+
+| Property | Type | Required | Constraints | Description |
+|---|---|---|---|---|
+| `default` | `object` | yes |  | Built-in default value. Defaults are en-US/UTC for general; approval_required=true, quorum=1, require_security_review=true for governance; default=codex and allow_shell=false for adapters; transport=unix and readonly_repository=true for mcp; wal=true and retention_days=30 for storage; enabled=true and default_recipient=human for notifications. |
+| `secret` | `boolean` | yes |  | True when the field name contains secret, token, password, or api_key, case-insensitively. None of the current built-in default fields are secret. |
+| `type` | `string` | yes | enum=["boolean","number","string"] | Type inferred from the built-in default value; current values map to boolean, number, or string. |
+
+### Schema: SettingsUpdate {#schema-settingsupdate}
+
+Type: object (any value)
+
+Description: PATCH body can contain a values object or flat setting keys; expected_version may provide optimistic concurrency instead of If-Match. When values is present, other setting keys in the body are ignored. The section property is not used to select the target; the path section controls that. SettingsPreflightInput is a separate, stricter shape.
+Additional properties: allowed with any value.
+
+| Property | Type | Required | Constraints | Description |
+|---|---|---|---|---|
+| `expected_version` | `integer` | no | minimum=0 | Expected current workspace configuration version; equivalent to If-Match when supplied in the body, and the body value takes precedence if both are present. |
+| `values` | object (any value) | no |  | Optional nested settings object. If omitted, the handler treats the full request object (except expected_version) as the values to store. |
+| `section` | `string` | no |  | Not used by PATCH to choose the target section; the path parameter selects it. In a flat body without values, this key is stored as a setting value. |
+
+### Schema: SettingsPreflightInput {#schema-settingspreflightinput}
+
+Type: object (no additional properties)
+
+Description: Strict request used only by preflight to identify a supported section and proposed values; unlike PATCH, it does not accept flat keys. The handler currently accepts omitted or null values and treats them like an empty settings map.
+Required fields: `section`
+Additional properties: forbidden.
+
+| Property | Type | Required | Constraints | Description |
+|---|---|---|---|---|
+| `section` | `string` | yes | enum=["general","governance","adapters","mcp","storage","notifications"] | Built-in settings section to validate. |
+| `values` | `object or null` | no |  | Optional proposed field values. Only numeric governance.quorum is currently range-checked, as an integer from 1 through 100; omitted/null values pass as an empty map. |
 
 ### Schema: SettingsPreflight {#schema-settingspreflight}
 
 Type: `object`
 
+Description: Point-in-time preflight result. The token is a deterministic SHA-256 digest over workspace ID, section, and current version; it is not an expiring reservation or signed authorization credential.
 Required fields: `allowed`, `version`, `confirmation_token`, `impact`
 
 | Property | Type | Required | Constraints | Description |
 |---|---|---|---|---|
-| `allowed` | `boolean` | yes |  |  |
-| `version` | `integer` | yes |  |  |
-| `confirmation_token` | `string` | yes |  |  |
-| `impact` | object (any value) | yes |  |  |
+| `allowed` | `boolean` | yes |  | True when section/value validation succeeds; this does not indicate that a later update will avoid a version conflict. |
+| `version` | `integer` | yes |  | Current workspace settings version observed during preflight. |
+| `confirmation_token` | `string` | yes |  | Hex SHA-256 token bound to workspace, section, and version; governance PATCH requires it, other sections currently do not. |
+| `impact` | object (any value) | yes |  | Summary containing section, affected_components (currently just that section), and restart_required for mcp/storage. |
 
 ### Schema: LiveEventEnvelope {#schema-liveeventenvelope}
 

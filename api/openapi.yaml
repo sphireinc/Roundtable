@@ -921,25 +921,29 @@ paths:
     get:
       operationId: getEffectiveSettings
       summary: Return effective workspace configuration and source metadata
+      description: Returns all six known sections. Each section starts from built-in defaults; only the most recently written revision's section is overlaid on those defaults, so earlier overrides in a different section are not merged by the current loader. Secret-like keys are represented only as configured booleans in this response.
       responses: {'200': {description: Effective settings, content: {application/json: {schema: {$ref: '#/components/schemas/EffectiveSettings'}}}}, '404': {$ref: '#/components/responses/Problem'}}
   /api/v1/workspaces/{id}/settings/schema:
     parameters: [{name: id, in: path, required: true, schema: {type: string}}]
     get:
       operationId: getSettingsSchema
       summary: Return section and field configuration schema
+      description: Returns the built-in field defaults, inferred JSON types, secret-key flags, and restart_required marker. The current schema has six sections and does not validate most supplied values against these inferred types.
       responses: {'200': {description: Settings schema, content: {application/json: {schema: {$ref: '#/components/schemas/SettingsSchema'}}}}, '404': {$ref: '#/components/responses/Problem'}}
   /api/v1/workspaces/{id}/settings/preflight:
     parameters: [{name: id, in: path, required: true, schema: {type: string}}, {$ref: '#/components/parameters/ActorID'}]
     post:
       operationId: preflightSettingsUpdate
       summary: Validate settings and calculate impact before update
-      requestBody: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/SettingsUpdate'}}}}
+      description: Requires X-Actor-ID. Validates a section and values object, then returns allowed=true and a deterministic confirmation token tied to workspace, section, and current version. Only governance quorum currently receives a field-level range check; preflight does not reserve the version or persist a change.
+      requestBody: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/SettingsPreflightInput'}}}}
       responses: {'200': {description: Settings impact and confirmation token, content: {application/json: {schema: {$ref: '#/components/schemas/SettingsPreflight'}}}}, '400': {$ref: '#/components/responses/Problem'}, '403': {$ref: '#/components/responses/Problem'}}
   /api/v1/workspaces/{id}/settings/{section}:
     parameters: [{name: id, in: path, required: true, schema: {type: string}}, {name: section, in: path, required: true, schema: {type: string, enum: [general, governance, adapters, mcp, storage, notifications]}}, {$ref: '#/components/parameters/ActorID'}, {$ref: '#/components/parameters/IfMatch'}, {name: X-Confirmation-Token, in: header, schema: {type: string}}, {$ref: '#/components/parameters/IdempotencyKey'}]
     patch:
       operationId: updateSettingsSection
       summary: Update one configuration section with optimistic concurrency
+      description: Requires X-Actor-ID and an expected version supplied by If-Match or expected_version. A mismatch returns 409. Governance updates additionally require the current X-Confirmation-Token returned by preflight; other sections do not enforce the token even though preflight returns one. Values are not checked against the schema's inferred field types, unknown keys are accepted, and the response sanitizes secret-like keys. Each successful request writes a new configuration revision, audit event, and workspace event.
       requestBody: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/SettingsUpdate'}}}}
       responses: {'200': {description: Updated effective settings, content: {application/json: {schema: {$ref: '#/components/schemas/EffectiveSettings'}}}}, '400': {$ref: '#/components/responses/Problem'}, '403': {$ref: '#/components/responses/Problem'}, '409': {$ref: '#/components/responses/Problem'}}
   /api/v1/workspaces/{id}/transactions/{transaction_id}/{action}:
@@ -2134,22 +2138,93 @@ components:
     EffectiveSettings:
       type: object
       required: [workspace_id, version, sections]
-      properties: {workspace_id: {type: string}, version: {type: integer, minimum: 0}, sections: {type: object, additionalProperties: {$ref: '#/components/schemas/EffectiveSettingsSection'}}}
+      description: Effective configuration projection across the six built-in settings sections. Defaults are included even when no workspace override exists; secret-like keys are replaced with an object containing only configured.
+      properties:
+        workspace_id: {type: string, description: "Workspace whose configuration is returned."}
+        version: {type: integer, minimum: 0, description: "Latest workspace configuration revision number, or zero when no revision exists."}
+        sections: {type: object, description: "Built-in sections with defaults and the current source/version metadata.", additionalProperties: {$ref: '#/components/schemas/EffectiveSettingsSection'}, properties: {general: {$ref: '#/components/schemas/EffectiveSettingsSection'}, governance: {$ref: '#/components/schemas/EffectiveSettingsSection'}, adapters: {$ref: '#/components/schemas/EffectiveSettingsSection'}, mcp: {$ref: '#/components/schemas/EffectiveSettingsSection'}, storage: {$ref: '#/components/schemas/EffectiveSettingsSection'}, notifications: {$ref: '#/components/schemas/EffectiveSettingsSection'}}}
     EffectiveSettingsSection:
       type: object
       required: [values, source, version, restart_required]
-      properties: {values: {type: object, additionalProperties: true}, source: {type: string, enum: [default, workspace]}, version: {type: integer, minimum: 0}, restart_required: {type: boolean}}
+      description: One section's sanitized effective values. The current loader overlays only the section from the latest configuration revision; revisions for previous sections are not accumulated when a different section is updated later.
+      properties:
+        values: {type: object, additionalProperties: true, description: "Setting values for this section. Secret-like keys (key contains secret, token, password, or api_key, case-insensitively) become {configured: boolean}; other values pass through."}
+        source: {type: string, enum: [default, workspace], description: "default when this section has no current overlay; workspace when the latest stored revision targets this section."}
+        version: {type: integer, minimum: 0, description: "Revision version associated with the workspace overlay; zero for a default-only section."}
+        restart_required: {type: boolean, description: "True for mcp and storage, false for the other built-in sections; this is advisory metadata and does not trigger a restart."}
     SettingsSchema:
       type: object
       required: [sections]
-      properties: {sections: {type: object, additionalProperties: true}}
+      description: Runtime-generated description of the built-in configuration fields; type is inferred from the default value, secret indicates key-name-based sanitization, and the schema does not itself enforce those types during updates.
+      properties:
+        sections:
+          type: object
+          description: "The six supported section names and their field schemas."
+          additionalProperties: {$ref: '#/components/schemas/SettingsSectionSchema'}
+          properties:
+            general: {$ref: '#/components/schemas/SettingsSectionSchema'}
+            governance: {$ref: '#/components/schemas/SettingsSectionSchema'}
+            adapters: {$ref: '#/components/schemas/SettingsSectionSchema'}
+            mcp: {$ref: '#/components/schemas/SettingsSectionSchema'}
+            storage: {$ref: '#/components/schemas/SettingsSectionSchema'}
+            notifications: {$ref: '#/components/schemas/SettingsSectionSchema'}
+    SettingsSectionSchema:
+      type: object
+      required: [fields, restart_required]
+      description: Schema for one supported settings section.
+      properties:
+        fields:
+          type: object
+          description: "Field definitions; default is the built-in default, type is inferred from that default, and secret reflects key-name matching."
+          additionalProperties: {$ref: '#/components/schemas/SettingFieldSchema'}
+          properties:
+            locale: {$ref: '#/components/schemas/SettingFieldSchema'}
+            timezone: {$ref: '#/components/schemas/SettingFieldSchema'}
+            approval_required: {$ref: '#/components/schemas/SettingFieldSchema'}
+            quorum: {$ref: '#/components/schemas/SettingFieldSchema'}
+            require_security_review: {$ref: '#/components/schemas/SettingFieldSchema'}
+            default: {$ref: '#/components/schemas/SettingFieldSchema'}
+            allow_shell: {$ref: '#/components/schemas/SettingFieldSchema'}
+            transport: {$ref: '#/components/schemas/SettingFieldSchema'}
+            readonly_repository: {$ref: '#/components/schemas/SettingFieldSchema'}
+            wal: {$ref: '#/components/schemas/SettingFieldSchema'}
+            retention_days: {$ref: '#/components/schemas/SettingFieldSchema'}
+            enabled: {$ref: '#/components/schemas/SettingFieldSchema'}
+            default_recipient: {$ref: '#/components/schemas/SettingFieldSchema'}
+        restart_required: {type: boolean, description: "True for mcp and storage; false for general, governance, adapters, and notifications."}
+    SettingFieldSchema:
+      type: object
+      required: [default, secret, type]
+      description: One setting field's reported default, inferred type, and secret-key indicator.
+      properties:
+        default: {description: "Built-in default value. Defaults are en-US/UTC for general; approval_required=true, quorum=1, require_security_review=true for governance; default=codex and allow_shell=false for adapters; transport=unix and readonly_repository=true for mcp; wal=true and retention_days=30 for storage; enabled=true and default_recipient=human for notifications."}
+        secret: {type: boolean, description: "True when the field name contains secret, token, password, or api_key, case-insensitively. None of the current built-in default fields are secret."}
+        type: {type: string, enum: [boolean, number, string], description: "Type inferred from the built-in default value; current values map to boolean, number, or string."}
     SettingsUpdate:
       type: object
-      properties: {expected_version: {type: integer, minimum: 1}, values: {type: object, additionalProperties: true}, section: {type: string}}
+      description: PATCH body can contain a values object or flat setting keys; expected_version may provide optimistic concurrency instead of If-Match. When values is present, other setting keys in the body are ignored. The section property is not used to select the target; the path section controls that. SettingsPreflightInput is a separate, stricter shape.
+      properties:
+        expected_version: {type: integer, minimum: 0, description: "Expected current workspace configuration version; equivalent to If-Match when supplied in the body, and the body value takes precedence if both are present."}
+        values: {type: object, additionalProperties: true, description: "Optional nested settings object. If omitted, the handler treats the full request object (except expected_version) as the values to store."}
+        section: {type: string, description: "Not used by PATCH to choose the target section; the path parameter selects it. In a flat body without values, this key is stored as a setting value."}
+      additionalProperties: true
+    SettingsPreflightInput:
+      type: object
+      required: [section]
+      additionalProperties: false
+      description: Strict request used only by preflight to identify a supported section and proposed values; unlike PATCH, it does not accept flat keys. The handler currently accepts omitted or null values and treats them like an empty settings map.
+      properties:
+        section: {type: string, enum: [general, governance, adapters, mcp, storage, notifications], description: "Built-in settings section to validate."}
+        values: {type: [object, 'null'], additionalProperties: true, description: "Optional proposed field values. Only numeric governance.quorum is currently range-checked, as an integer from 1 through 100; omitted/null values pass as an empty map."}
     SettingsPreflight:
       type: object
       required: [allowed, version, confirmation_token, impact]
-      properties: {allowed: {type: boolean}, version: {type: integer}, confirmation_token: {type: string}, impact: {type: object, additionalProperties: true}}
+      description: Point-in-time preflight result. The token is a deterministic SHA-256 digest over workspace ID, section, and current version; it is not an expiring reservation or signed authorization credential.
+      properties:
+        allowed: {type: boolean, description: "True when section/value validation succeeds; this does not indicate that a later update will avoid a version conflict."}
+        version: {type: integer, description: "Current workspace settings version observed during preflight."}
+        confirmation_token: {type: string, description: "Hex SHA-256 token bound to workspace, section, and version; governance PATCH requires it, other sections currently do not."}
+        impact: {type: object, additionalProperties: true, description: "Summary containing section, affected_components (currently just that section), and restart_required for mcp/storage."}
     LiveEventEnvelope:
       type: object
       required: [event_id, workspace_id, sequence, type, occurred_at, payload]
