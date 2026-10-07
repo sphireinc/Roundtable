@@ -1207,77 +1207,77 @@ components:
       type: object
       required: [agent_id, display_name, adapter_type, enabled, health, capabilities, supports_resume, supports_mcp, concurrency_limit, policy_weight, active_session_count]
       properties:
-        agent_id: {type: string}
-        display_name: {type: string}
-        adapter_type: {type: string}
-        enabled: {type: boolean}
-        health: {type: string}
-        executable_version: {type: string}
-        capabilities: {type: object, additionalProperties: {type: boolean}}
-        supports_resume: {type: boolean}
-        supports_mcp: {type: boolean}
-        concurrency_limit: {type: integer, minimum: 1}
-        policy_weight: {type: integer, minimum: 0}
-        active_session_count: {type: integer, minimum: 0}
-        last_heartbeat: {type: string, format: date-time}
+        agent_id: {type: string, description: "Identifier of the global agent registry row returned through the workspace-scoped API route."}
+        display_name: {type: string, description: "Configured display name stored on the agent record."}
+        adapter_type: {type: string, description: "Adapter name stored on the agent record; capability fields below are currently projected by exact built-in name checks."}
+        enabled: {type: boolean, description: "Persisted agent enablement flag; does not prove that an external process is running."}
+        health: {type: string, description: "Stored agent status, with an empty value projected as unknown; not an executable or heartbeat probe."}
+        executable_version: {type: string, description: "Optional executable version field; the current agent response projection does not populate it."}
+        capabilities: {type: object, additionalProperties: {type: boolean}, description: "Capability labels currently derived from exact adapter-name cases, not dynamically inspected from configured adapter metadata or enforced as OS restrictions."}
+        supports_resume: {type: boolean, description: "Hardcoded response capability: true for codex, claude, and gemini; false for other adapter names, regardless of custom configuration."}
+        supports_mcp: {type: boolean, description: "Hardcoded response capability: true for codex, claude, gemini, and opencode; false for other adapter names."}
+        concurrency_limit: {type: integer, minimum: 1, description: "Advertised as 1 by the current handler; this response value does not enforce session scheduling or process concurrency."}
+        policy_weight: {type: integer, minimum: 0, description: "Advertised as 1 by the current handler; this is not a dynamically loaded policy weight or enforced scheduling limit."}
+        active_session_count: {type: integer, minimum: 0, description: "Global count of this agent's sessions whose stored status is exactly active or running; it is not workspace-filtered or checked against process liveness."}
+        last_heartbeat: {type: string, format: date-time, description: "Optional heartbeat timestamp; not populated by the current agent response projection."}
     DiagnosticCheck:
       type: object
       required: [name, status]
       properties:
-        name: {type: string}
-        status: {type: string, enum: [passed, failed]}
-        detail: {type: string}
+        name: {type: string, description: "Diagnostic check identifier, such as executable_version, mcp_surface, or read_only_boundary."}
+        status: {type: string, enum: [passed, failed], description: "Outcome of this individual probe; a passed informational check is not proof of provider process execution."}
+        detail: {type: string, description: "Optional probe result or sanitized failure summary; omitted when the check has no detail."}
     DiagnosticRun:
       type: object
       required: [run_id, agent_id, started_at, finished_at, status, checks]
       properties:
-        run_id: {type: string}
-        agent_id: {type: string}
-        started_at: {type: string, format: date-time}
-        finished_at: {type: string, format: date-time}
-        status: {type: string, enum: [passed, failed]}
-        checks: {type: array, items: {$ref: '#/components/schemas/DiagnosticCheck'}}
-        stdout: {type: string}
-        stderr: {type: string}
-        remediation_hints: {type: array, items: {type: string}}
+        run_id: {type: string, description: "Timestamp-derived diagnostic record ID; it is stored as a test-run ID and is not the coordinator run ID."}
+        agent_id: {type: string, description: "Global agent registry identifier probed by this diagnostic request."}
+        started_at: {type: string, format: date-time, description: "UTC timestamp captured immediately before running the diagnostic checks."}
+        finished_at: {type: string, format: date-time, description: "UTC timestamp captured after the checks complete."}
+        status: {type: string, enum: [passed, failed], description: "Aggregate diagnostic outcome; failed if any individual check reports failed."}
+        checks: {type: array, items: {$ref: '#/components/schemas/DiagnosticCheck'}, description: "Results for the adapter version executable probe, MCP registry visibility check, and declared read-only boundary."}
+        stdout: {type: string, description: "Optional bounded excerpt of combined adapter version-probe output after limited line-based secret filtering."}
+        stderr: {type: string, description: "Optional standard-error field; the current diagnostic implementation does not populate it."}
+        remediation_hints: {type: array, items: {type: string}, description: "Fixed suggested follow-up text; hints are not a complete diagnosis or proof that the suggested remediation is appropriate."}
     SessionInput:
       type: object
       required: [agent_id, run_id, adapter]
       additionalProperties: false
       properties:
-        agent_id: {type: string}
-        run_id: {type: string}
-        adapter: {type: string}
-        provider: {type: string}
-        model: {type: string}
-        external_session_id: {type: string}
+        agent_id: {type: string, description: "Existing global agent identifier to associate with the created session."}
+        run_id: {type: string, description: "Caller-supplied run identifier stored on the session; the handler does not verify that the run belongs to this workspace."}
+        adapter: {type: string, description: "Caller-supplied adapter label; it is not checked against the agent's configured adapter or launched as a process."}
+        provider: {type: string, description: "Optional provider label retained as session metadata; does not select or invoke a provider executable."}
+        model: {type: string, description: "Optional model label retained as session metadata; does not verify model availability."}
+        external_session_id: {type: string, description: "Optional external CLI session identifier supplied by the caller; not discovered by this endpoint."}
     Session:
       type: object
       required: [id, agent_id, run_id, adapter, status, started_at]
       properties:
-        id: {type: string}
-        agent_id: {type: string}
-        run_id: {type: string}
-        adapter: {type: string}
-        provider: {type: string}
-        model: {type: string}
-        external_session_id: {type: string}
-        resume_command_template: {type: string}
-        status: {type: string, enum: [starting, active, running, paused, resuming, stopped, terminated]}
-        started_at: {type: string, format: date-time}
-        last_seen_at: {type: string, format: date-time}
-        ended_at: {type: string, format: date-time}
+        id: {type: string, description: "Timestamp-derived session identifier assigned by the API; it is not the external provider session ID."}
+        agent_id: {type: string, description: "Global agent registry identifier associated with this session."}
+        run_id: {type: string, description: "Run identifier copied from the creation request; not independently resolved or verified against workspace membership."}
+        adapter: {type: string, description: "Adapter label copied from the creation request; no CLI process is launched."}
+        provider: {type: string, description: "Optional provider metadata copied from the request; omitted when empty."}
+        model: {type: string, description: "Optional model metadata copied from the request; omitted when empty."}
+        external_session_id: {type: string, description: "Optional externally managed session identifier; omitted when none was supplied."}
+        resume_command_template: {type: string, description: "Generic `<adapter> resume <external_session_id>` display template; not taken from adapter configuration and not executed by the API."}
+        status: {type: string, enum: [starting, active, running, paused, resuming, stopped, terminated], description: "Persisted session lifecycle label; state transitions are control-plane records and do not themselves start, pause, resume, or kill a process."}
+        started_at: {type: string, format: date-time, description: "Session creation timestamp in UTC RFC3339Nano form."}
+        last_seen_at: {type: string, format: date-time, description: "Most recent stored session activity/heartbeat timestamp; does not establish process liveness."}
+        ended_at: {type: string, format: date-time, description: "Stored end timestamp when a transition sets one; omitted when absent."}
     Sessions:
       type: object
       required: [items]
       properties:
-        items: {type: array, items: {$ref: '#/components/schemas/Session'}}
-        next_cursor: {type: [string, 'null']}
+        items: {type: array, items: {$ref: '#/components/schemas/Session'}, description: "Workspace-associated session rows returned for this page."}
+        next_cursor: {type: [string, 'null'], description: "Opaque base64url-encoded offset cursor for the next page, or null when no further page is available."}
     SessionTerminationInput:
       type: object
       additionalProperties: false
       properties:
-        impact_details: {type: string}
+        impact_details: {type: string, description: "Optional human-supplied impact acknowledgment; termination requires nonblank text when the agent has active claims, but the handler does not persist or analyze this text."}
     SessionLog:
       type: object
       required: [id, event_type, created_at]

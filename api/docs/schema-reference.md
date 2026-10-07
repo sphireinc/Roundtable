@@ -282,19 +282,19 @@ Required fields: `agent_id`, `display_name`, `adapter_type`, `enabled`, `health`
 
 | Property | Type | Required | Constraints | Description |
 |---|---|---|---|---|
-| `agent_id` | `string` | yes |  |  |
-| `display_name` | `string` | yes |  |  |
-| `adapter_type` | `string` | yes |  |  |
-| `enabled` | `boolean` | yes |  |  |
-| `health` | `string` | yes |  |  |
-| `executable_version` | `string` | no |  |  |
-| `capabilities` | object (values of `boolean`) | yes |  |  |
-| `supports_resume` | `boolean` | yes |  |  |
-| `supports_mcp` | `boolean` | yes |  |  |
-| `concurrency_limit` | `integer` | yes | minimum=1 |  |
-| `policy_weight` | `integer` | yes | minimum=0 |  |
-| `active_session_count` | `integer` | yes | minimum=0 |  |
-| `last_heartbeat` | `string` | no | format="date-time" |  |
+| `agent_id` | `string` | yes |  | Identifier of the global agent registry row returned through the workspace-scoped API route. |
+| `display_name` | `string` | yes |  | Configured display name stored on the agent record. |
+| `adapter_type` | `string` | yes |  | Adapter name stored on the agent record; capability fields below are currently projected by exact built-in name checks. |
+| `enabled` | `boolean` | yes |  | Persisted agent enablement flag; does not prove that an external process is running. |
+| `health` | `string` | yes |  | Stored agent status, with an empty value projected as unknown; not an executable or heartbeat probe. |
+| `executable_version` | `string` | no |  | Optional executable version field; the current agent response projection does not populate it. |
+| `capabilities` | object (values of `boolean`) | yes |  | Capability labels currently derived from exact adapter-name cases, not dynamically inspected from configured adapter metadata or enforced as OS restrictions. |
+| `supports_resume` | `boolean` | yes |  | Hardcoded response capability: true for codex, claude, and gemini; false for other adapter names, regardless of custom configuration. |
+| `supports_mcp` | `boolean` | yes |  | Hardcoded response capability: true for codex, claude, gemini, and opencode; false for other adapter names. |
+| `concurrency_limit` | `integer` | yes | minimum=1 | Advertised as 1 by the current handler; this response value does not enforce session scheduling or process concurrency. |
+| `policy_weight` | `integer` | yes | minimum=0 | Advertised as 1 by the current handler; this is not a dynamically loaded policy weight or enforced scheduling limit. |
+| `active_session_count` | `integer` | yes | minimum=0 | Global count of this agent's sessions whose stored status is exactly active or running; it is not workspace-filtered or checked against process liveness. |
+| `last_heartbeat` | `string` | no | format="date-time" | Optional heartbeat timestamp; not populated by the current agent response projection. |
 
 ### Schema: DiagnosticCheck {#schema-diagnosticcheck}
 
@@ -304,9 +304,9 @@ Required fields: `name`, `status`
 
 | Property | Type | Required | Constraints | Description |
 |---|---|---|---|---|
-| `name` | `string` | yes |  |  |
-| `status` | `string` | yes | enum=["passed","failed"] |  |
-| `detail` | `string` | no |  |  |
+| `name` | `string` | yes |  | Diagnostic check identifier, such as executable_version, mcp_surface, or read_only_boundary. |
+| `status` | `string` | yes | enum=["passed","failed"] | Outcome of this individual probe; a passed informational check is not proof of provider process execution. |
+| `detail` | `string` | no |  | Optional probe result or sanitized failure summary; omitted when the check has no detail. |
 
 ### Schema: DiagnosticRun {#schema-diagnosticrun}
 
@@ -316,15 +316,15 @@ Required fields: `run_id`, `agent_id`, `started_at`, `finished_at`, `status`, `c
 
 | Property | Type | Required | Constraints | Description |
 |---|---|---|---|---|
-| `run_id` | `string` | yes |  |  |
-| `agent_id` | `string` | yes |  |  |
-| `started_at` | `string` | yes | format="date-time" |  |
-| `finished_at` | `string` | yes | format="date-time" |  |
-| `status` | `string` | yes | enum=["passed","failed"] |  |
-| `checks` | array of `DiagnosticCheck` | yes |  |  |
-| `stdout` | `string` | no |  |  |
-| `stderr` | `string` | no |  |  |
-| `remediation_hints` | array of `string` | no |  |  |
+| `run_id` | `string` | yes |  | Timestamp-derived diagnostic record ID; it is stored as a test-run ID and is not the coordinator run ID. |
+| `agent_id` | `string` | yes |  | Global agent registry identifier probed by this diagnostic request. |
+| `started_at` | `string` | yes | format="date-time" | UTC timestamp captured immediately before running the diagnostic checks. |
+| `finished_at` | `string` | yes | format="date-time" | UTC timestamp captured after the checks complete. |
+| `status` | `string` | yes | enum=["passed","failed"] | Aggregate diagnostic outcome; failed if any individual check reports failed. |
+| `checks` | array of `DiagnosticCheck` | yes |  | Results for the adapter version executable probe, MCP registry visibility check, and declared read-only boundary. |
+| `stdout` | `string` | no |  | Optional bounded excerpt of combined adapter version-probe output after limited line-based secret filtering. |
+| `stderr` | `string` | no |  | Optional standard-error field; the current diagnostic implementation does not populate it. |
+| `remediation_hints` | array of `string` | no |  | Fixed suggested follow-up text; hints are not a complete diagnosis or proof that the suggested remediation is appropriate. |
 
 ### Schema: SessionInput {#schema-sessioninput}
 
@@ -335,12 +335,12 @@ Additional properties: forbidden.
 
 | Property | Type | Required | Constraints | Description |
 |---|---|---|---|---|
-| `agent_id` | `string` | yes |  |  |
-| `run_id` | `string` | yes |  |  |
-| `adapter` | `string` | yes |  |  |
-| `provider` | `string` | no |  |  |
-| `model` | `string` | no |  |  |
-| `external_session_id` | `string` | no |  |  |
+| `agent_id` | `string` | yes |  | Existing global agent identifier to associate with the created session. |
+| `run_id` | `string` | yes |  | Caller-supplied run identifier stored on the session; the handler does not verify that the run belongs to this workspace. |
+| `adapter` | `string` | yes |  | Caller-supplied adapter label; it is not checked against the agent's configured adapter or launched as a process. |
+| `provider` | `string` | no |  | Optional provider label retained as session metadata; does not select or invoke a provider executable. |
+| `model` | `string` | no |  | Optional model label retained as session metadata; does not verify model availability. |
+| `external_session_id` | `string` | no |  | Optional external CLI session identifier supplied by the caller; not discovered by this endpoint. |
 
 ### Schema: Session {#schema-session}
 
@@ -350,18 +350,18 @@ Required fields: `id`, `agent_id`, `run_id`, `adapter`, `status`, `started_at`
 
 | Property | Type | Required | Constraints | Description |
 |---|---|---|---|---|
-| `id` | `string` | yes |  |  |
-| `agent_id` | `string` | yes |  |  |
-| `run_id` | `string` | yes |  |  |
-| `adapter` | `string` | yes |  |  |
-| `provider` | `string` | no |  |  |
-| `model` | `string` | no |  |  |
-| `external_session_id` | `string` | no |  |  |
-| `resume_command_template` | `string` | no |  |  |
-| `status` | `string` | yes | enum=["starting","active","running","paused","resuming","stopped","terminated"] |  |
-| `started_at` | `string` | yes | format="date-time" |  |
-| `last_seen_at` | `string` | no | format="date-time" |  |
-| `ended_at` | `string` | no | format="date-time" |  |
+| `id` | `string` | yes |  | Timestamp-derived session identifier assigned by the API; it is not the external provider session ID. |
+| `agent_id` | `string` | yes |  | Global agent registry identifier associated with this session. |
+| `run_id` | `string` | yes |  | Run identifier copied from the creation request; not independently resolved or verified against workspace membership. |
+| `adapter` | `string` | yes |  | Adapter label copied from the creation request; no CLI process is launched. |
+| `provider` | `string` | no |  | Optional provider metadata copied from the request; omitted when empty. |
+| `model` | `string` | no |  | Optional model metadata copied from the request; omitted when empty. |
+| `external_session_id` | `string` | no |  | Optional externally managed session identifier; omitted when none was supplied. |
+| `resume_command_template` | `string` | no |  | Generic `<adapter> resume <external_session_id>` display template; not taken from adapter configuration and not executed by the API. |
+| `status` | `string` | yes | enum=["starting","active","running","paused","resuming","stopped","terminated"] | Persisted session lifecycle label; state transitions are control-plane records and do not themselves start, pause, resume, or kill a process. |
+| `started_at` | `string` | yes | format="date-time" | Session creation timestamp in UTC RFC3339Nano form. |
+| `last_seen_at` | `string` | no | format="date-time" | Most recent stored session activity/heartbeat timestamp; does not establish process liveness. |
+| `ended_at` | `string` | no | format="date-time" | Stored end timestamp when a transition sets one; omitted when absent. |
 
 ### Schema: Sessions {#schema-sessions}
 
@@ -371,8 +371,8 @@ Required fields: `items`
 
 | Property | Type | Required | Constraints | Description |
 |---|---|---|---|---|
-| `items` | array of `Session` | yes |  |  |
-| `next_cursor` | `string or null` | no |  |  |
+| `items` | array of `Session` | yes |  | Workspace-associated session rows returned for this page. |
+| `next_cursor` | `string or null` | no |  | Opaque base64url-encoded offset cursor for the next page, or null when no further page is available. |
 
 ### Schema: SessionTerminationInput {#schema-sessionterminationinput}
 
@@ -382,7 +382,7 @@ Additional properties: forbidden.
 
 | Property | Type | Required | Constraints | Description |
 |---|---|---|---|---|
-| `impact_details` | `string` | no |  |  |
+| `impact_details` | `string` | no |  | Optional human-supplied impact acknowledgment; termination requires nonblank text when the agent has active claims, but the handler does not persist or analyze this text. |
 
 ### Schema: SessionLog {#schema-sessionlog}
 
