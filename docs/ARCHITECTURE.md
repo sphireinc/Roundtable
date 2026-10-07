@@ -30,6 +30,8 @@ These package roles are not equivalent to full automatic agent execution: in par
 
 ## State and data flow
 
+`internal/state.LoadSnapshot` is a convenience read model, not a database snapshot transaction. It issues independent list queries in this order: runs, agents, tasks, claims, proposals, transactions, human approvals, security reviews, memories. It returns an empty `Snapshot` at the first error; no partial snapshot is returned. Concurrent writes between those calls can yield collections from different moments. The CLI table/TUI and MCP state/watch projections inherit this consistency boundary; use entity-specific reads and recheck mutable preconditions immediately before a governed write.
+
 SQLite is the durable store for runs, agents/sessions, tasks, resources/claims, proposals/patches, votes/decisions, approvals/security reviews, test-run records, memory, and events. `db.Open` enables WAL, foreign keys, and a 5-second busy timeout before migrations. The optional config field `storage.wal` is currently parsed but does not turn WAL on/off.
 
 The implemented high-level agent workflow is:
