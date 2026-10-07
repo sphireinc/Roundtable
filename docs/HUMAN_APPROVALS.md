@@ -29,6 +29,8 @@ The response contains `approval`, including its generated ID. A trusted human/op
 
 Updates are replacements rather than partial patches. Omitting status resets it to `requested`; omitted associations and decision fields are cleared/defaulted; omitted override becomes `false`. Creation time is retained and update time advances. Preserve the values you intend to retain. `human.approval_status` requires `approval_id`, returns the saved `approval`, and errors for an unknown record.
 
+The local handler accepts only actual JSON strings for string fields and an actual JSON boolean for `override_policy`; other JSON types silently become empty/default values. Required `subject` and `reason_md` checks test only exact emptiness, so whitespace-only strings pass and are stored. `proposal_id` is looked up exactly when nonempty; `task_id` is inherited only when its string value is empty. The handler does not look up or validate a supplied task ID, including one inherited from a proposal, and does not verify actor IDs or association consistency beyond proposal existence. These local MCP details differ from the stricter JSON decoding and normalization rules on the HTTP route below.
+
 ## How application selects approval
 
 For a proposal, approvals are ordered by ascending `created_at`, then `id`. The service scans backward for a satisfying record:
