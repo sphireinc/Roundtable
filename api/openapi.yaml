@@ -676,12 +676,16 @@ paths:
     get:
       operationId: listProposals
       summary: List workspace-scoped proposals
+      description: >-
+        Lists proposal records belonging to this workspace in created_at/id order and returns the redacted public projection with governance substate fields. Pagination is applied in memory after loading; cursor is an encoded offset and limit defaults to 50 with a maximum of 200. Projection failures for individual rows are currently skipped. Invalid pagination returns 400 and query failures return 500.
       responses: {'200': {description: Proposals, content: {application/json: {schema: {$ref: '#/components/schemas/Proposals'}}}}, '404': {$ref: '#/components/responses/Problem'}}
   /api/v1/workspaces/{id}/proposals/internal:
     parameters: [{name: id, in: path, required: true, schema: {type: string}}, {$ref: '#/components/parameters/IdempotencyKey'}]
     post:
       operationId: createInternalProposal
       summary: Create a proposal through the orchestrator boundary
+      description: >-
+        Requires the exact X-Roundtable-Orchestrator value true and a nonblank Idempotency-Key; browser-originated proposal creation is rejected. A JSON body must include nonblank title, summary, and repository-relative patch_path. Absolute paths and any path containing .. are rejected, but this handler does not itself verify patch-file existence or parse validity. Summary is redacted before persistence; optional resource_ids are linked, and deliberation/session/base revision/risk metadata are recorded. An empty risk defaults to normal. New rows begin in pending proposal/vote/policy/approval states with transaction_state not_started, and creation writes an audit event plus a global event. This operation records a proposal; it does not apply the patch. Invalid input returns 400, authorization failure 403, and persistence conflicts 409.
       parameters: [{name: X-Roundtable-Orchestrator, in: header, required: true, schema: {type: string, enum: ['true']}}]
       requestBody: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/ProposalInput'}}}}
       responses: {'201': {description: Created, content: {application/json: {schema: {$ref: '#/components/schemas/Proposal'}}}}, '400': {$ref: '#/components/responses/Problem'}, '403': {$ref: '#/components/responses/Problem'}, '409': {$ref: '#/components/responses/Problem'}}
@@ -690,36 +694,48 @@ paths:
     get:
       operationId: getProposal
       summary: Get a workspace-scoped proposal
+      description: >-
+        Returns one proposal only when its proposal_id belongs to the selected workspace. The response contains redacted title, summary, and patch_path plus base revision, lifecycle and governance substates, risk, and timestamps; it does not include patch bytes. Unknown or cross-workspace IDs return 404.
       responses: {'200': {description: Proposal, content: {application/json: {schema: {$ref: '#/components/schemas/Proposal'}}}}, '404': {$ref: '#/components/responses/Problem'}}
   /api/v1/workspaces/{id}/proposals/{proposal_id}/{action}:
     parameters: [{name: id, in: path, required: true, schema: {type: string}}, {name: proposal_id, in: path, required: true, schema: {type: string}}, {name: action, in: path, required: true, schema: {type: string, enum: [request-review, reject, withdraw]}}, {$ref: '#/components/parameters/ActorID'}, {$ref: '#/components/parameters/ActorRole'}, {$ref: '#/components/parameters/IdempotencyKey'}]
     post:
       operationId: transitionProposal
       summary: Transition a proposal through a governed state change
+      description: >-
+        Requires X-Actor-ID, an accepted human X-Actor-Role, and a nonblank Idempotency-Key. request-review is allowed only from pending and moves to in_review; reject and withdraw are allowed from pending or in_review. Other actions return 400 and illegal source-state transitions return 409. A successful conditional update and audit record are committed together, followed by a global event. This changes proposal workflow status only; it does not cast a vote, apply/revert a patch, or run validation.
       responses: {'200': {description: Updated proposal, content: {application/json: {schema: {$ref: '#/components/schemas/Proposal'}}}}, '403': {$ref: '#/components/responses/Problem'}, '409': {$ref: '#/components/responses/Problem'}}
   /api/v1/workspaces/{id}/proposals/{proposal_id}/patch:
     parameters: [{name: id, in: path, required: true, schema: {type: string}}, {name: proposal_id, in: path, required: true, schema: {type: string}}]
     get:
       operationId: getPatchMetadata
       summary: Get immutable patch metadata and stale-base status
+      description: >-
+        Resolves the proposal's repository-relative patch file beneath the selected workspace root, reads and parses it, and compares the proposal base_revision with the current Git HEAD. Reports touched-file count, added hunk-line count, and a stale-base flag. The current implementation does not populate binary_files and counts removed_lines by deleted-file count rather than removed hunk lines, so those fields are not full diff line statistics. A failed HEAD inspection is ignored and can produce an empty current_head. Patch parse/path/read failures return 400; unknown proposal returns 404.
       responses: {'200': {description: Patch metadata, content: {application/json: {schema: {$ref: '#/components/schemas/PatchMetadata'}}}}, '400': {$ref: '#/components/responses/Problem'}, '404': {$ref: '#/components/responses/Problem'}}
   /api/v1/workspaces/{id}/proposals/{proposal_id}/patch/files:
     parameters: [{name: id, in: path, required: true, schema: {type: string}}, {name: proposal_id, in: path, required: true, schema: {type: string}}, {name: cursor, in: query, schema: {type: string}}, {name: limit, in: query, schema: {type: integer, minimum: 1, maximum: 200, default: 50}}]
     get:
       operationId: listPatchFiles
       summary: List files touched by an immutable patch
+      description: >-
+        Parses the proposal patch and returns one metadata item per touched file, including create/modify/delete/rename operation and binary marker. Pagination is applied in memory. File contents are not returned. The path is resolved beneath the workspace root; malformed/unsafe/unreadable patches return 400, and invalid cursor/limit also returns 400.
       responses: {'200': {description: Patch files, content: {application/json: {schema: {$ref: '#/components/schemas/PatchFiles'}}}}, '400': {$ref: '#/components/responses/Problem'}}
   /api/v1/workspaces/{id}/proposals/{proposal_id}/patch/diff:
     parameters: [{name: id, in: path, required: true, schema: {type: string}}, {name: proposal_id, in: path, required: true, schema: {type: string}}, {name: cursor, in: query, schema: {type: string}}, {name: limit, in: query, schema: {type: integer, minimum: 1, maximum: 200, default: 50}}]
     get:
       operationId: listPatchDiffChunks
       summary: List redacted unified diff lines
+      description: >-
+        Reads the proposal patch, redacts its text, splits it into newline-delimited strings, and returns an offset-paginated page. This exposes diff text (unlike the file-list route), but not as a complete patch download; consumers must follow next_cursor to retrieve all lines. Unsafe path, missing file, or parse failure returns 400, as does invalid pagination.
       responses: {'200': {description: Diff lines, content: {application/json: {schema: {$ref: '#/components/schemas/PatchDiff'}}}}, '400': {$ref: '#/components/responses/Problem'}}
   /api/v1/workspaces/{id}/proposals/{proposal_id}/patch/symbol-impact:
     parameters: [{name: id, in: path, required: true, schema: {type: string}}, {name: proposal_id, in: path, required: true, schema: {type: string}}, {name: cursor, in: query, schema: {type: string}}, {name: limit, in: query, schema: {type: integer, minimum: 1, maximum: 200, default: 50}}]
     get:
       operationId: listPatchSymbolImpact
       summary: List symbols impacted by an immutable patch
+      description: >-
+        Parses the proposal patch to identify touched paths, safely resolves each path beneath the current workspace root, then indexes symbols from the current contents of those files. The results are therefore a current-worktree symbol view, not a symbol snapshot reconstructed from the patch. Unsafe, missing, or unsupported files are skipped; results are offset-paginated. Patch loading and pagination errors return 400.
       responses: {'200': {description: Symbol impact, content: {application/json: {schema: {$ref: '#/components/schemas/PatchSymbols'}}}}, '400': {$ref: '#/components/responses/Problem'}}
   /api/v1/workspaces/{id}/proposals/{proposal_id}/validation:
     parameters: [{name: id, in: path, required: true, schema: {type: string}}, {name: proposal_id, in: path, required: true, schema: {type: string}}, {$ref: '#/components/parameters/ActorID'}, {$ref: '#/components/parameters/ActorRole'}, {$ref: '#/components/parameters/IdempotencyKey'}]
@@ -734,10 +750,14 @@ paths:
     get:
       operationId: listProposalVotes
       summary: List authoritative votes for a proposal
+      description: >-
+        Verifies that the proposal belongs to the selected workspace, then lists its votes in creation-time/id order with rationale redacted and policy weight/version included. Pagination is performed in memory after loading. This is the persisted vote ledger; it does not recalculate consensus. Unknown or cross-workspace proposals return 404, database failures 500, and invalid pagination 400.
       responses: {'200': {description: Votes, content: {application/json: {schema: {$ref: '#/components/schemas/Votes'}}}}, '404': {$ref: '#/components/responses/Problem'}}
     post:
       operationId: castProposalVote
       summary: Record a vote through an authorized boundary
+      description: >-
+        Accepts either the exact X-Roundtable-Orchestrator value true or an identified actor with an accepted human role, and requires a nonblank Idempotency-Key. The body requires agent_id, decision, and rationale; decision must be approve, reject, abstain, or veto. Policy weight is derived from the agent's stored role (security 3, architect/reviewer 2, otherwise 1; missing role falls back to 1), while the recorded policy version is currently default-v1. Vote ID may be supplied; a repeated ID upserts that vote rather than adding a second row. In one transaction, the handler stores the vote, calculates consensus, saves a consensus snapshot, and audits the vote, then appends a global event. It does not verify that the voting agent has an active session or belongs to a deliberation. Success returns both vote and calculated consensus. Invalid input returns 400, authorization failure 403, unknown proposal 404, and persistence/calculation conflict 409.
       parameters: [{$ref: '#/components/parameters/ActorID'}, {$ref: '#/components/parameters/IdempotencyKey'}, {name: X-Roundtable-Orchestrator, in: header, required: false, schema: {type: string, enum: ['true']}}]
       requestBody: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/VoteInput'}}}}
       responses: {'201': {description: Vote and recalculated consensus, content: {application/json: {schema: {$ref: '#/components/schemas/VoteResult'}}}}, '400': {$ref: '#/components/responses/Problem'}, '403': {$ref: '#/components/responses/Problem'}, '404': {$ref: '#/components/responses/Problem'}, '409': {$ref: '#/components/responses/Problem'}}
@@ -746,6 +766,8 @@ paths:
     get:
       operationId: getProposalConsensus
       summary: Calculate authoritative policy-weighted consensus
+      description: >-
+        Verifies proposal/workspace ownership and calculates consensus from the proposal's current persisted votes without creating a new snapshot. Current quorum and approval threshold are both fixed at two; approval requires approve weight at least the threshold, no rejection or veto weight, and at least quorum votes. Any rejection or veto produces blocked; otherwise the result is pending. Abstentions count toward votes_cast but not approve/reject weight. Returns the current calculation time and the policy_version from the last vote iterated, not a resolved aggregate policy revision.
       responses: {'200': {description: Consensus calculation, content: {application/json: {schema: {$ref: '#/components/schemas/Consensus'}}}}, '404': {$ref: '#/components/responses/Problem'}}
   /api/v1/workspaces/{id}/analytics/consensus:
     parameters: [{name: id, in: path, required: true, schema: {type: string}}, {name: from, in: query, description: Inclusive UTC RFC3339Nano start; defaults to 24 hours before now., schema: {type: string, format: date-time}}, {name: to, in: query, description: Exclusive UTC RFC3339Nano end; defaults to now. The range must be positive and no longer than 31 days., schema: {type: string, format: date-time}}]
