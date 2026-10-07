@@ -13,6 +13,6 @@ class GenerateAdminAPIGuideTest < Minitest::Test
 
     reference = File.read(SCHEMA_REFERENCE)
     assert_includes reference, "| `window.from` | `string` | yes | format=\"date-time\" |  |"
-    assert_includes reference, "| `properties.name.type` | `string` | yes | const=\"string\" |  |"
+    assert_includes reference, "| `properties.name.type` | `string` | yes | const=\"string\" | Name is a string. |"
   end
 end
