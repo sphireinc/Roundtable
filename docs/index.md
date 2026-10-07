@@ -30,7 +30,7 @@ This documentation describes the implementation in this repository. It distingui
 
 ## Reference Directory
 
-The left navigation is generated from one `mkdocs.yml` tree on every page. Its groups are Product, Getting Started, Runtime, Agent Interface, HTTP API, Web UI, and Operations. Runtime contains Governance and Database subgroups. The current page's heading table of contents is separate and intentionally varies by page; on mobile, open the navigation drawer to reach the shared groups.
+The left navigation is generated from one `mkdocs.yml` tree on every page. Its groups are Product, Getting Started, Runtime, Agent Interface, HTTP API, Web UI, and Operations. Runtime contains Governance and Database subgroups; HTTP API contains API Reference and Operations and Administration subgroups. The current page's heading table of contents is separate and intentionally varies by page; on mobile, open the navigation drawer to reach the shared groups.
 
 ### Product and Startup
 

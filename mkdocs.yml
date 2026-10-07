@@ -56,14 +56,16 @@ nav:
   - Agent Interface:
       - MCP Tools: docs/MCP_TOOLS.md
   - HTTP API:
-      - API Overview: api/README.md
-      - Endpoint Guide: api/docs/admin-api-guide.md
-      - Schema Reference: api/docs/schema-reference.md
-      - Error Semantics: api/docs/error-semantics.md
-      - Pagination and Search: api/docs/pagination.md
-      - Workspace Settings: api/docs/settings.md
-      - Notifications: api/docs/notifications.md
-      - Maintenance: api/docs/maintenance.md
+      - API Reference:
+          - API Overview: api/README.md
+          - Endpoint Guide: api/docs/admin-api-guide.md
+          - Schema Reference: api/docs/schema-reference.md
+          - Error Semantics: api/docs/error-semantics.md
+          - Pagination and Search: api/docs/pagination.md
+      - Operations and Administration:
+          - Workspace Settings: api/docs/settings.md
+          - Notifications: api/docs/notifications.md
+          - Maintenance: api/docs/maintenance.md
   - Web UI:
       - UI Architecture and Scope: docs/UI.md
   - Operations:
