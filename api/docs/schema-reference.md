@@ -13,12 +13,12 @@ Required fields: `authentication`, `agent_boundary`, `csrf`, `default_bind`, `ro
 
 | Property | Type | Required | Constraints | Description |
 |---|---|---|---|---|
-| `authentication` | `string` | yes | enum=["local-header-development","bearer-token"] |  |
-| `agent_boundary` | `string` | yes |  |  |
-| `csrf` | `string` | yes |  |  |
-| `default_bind` | `string` | yes | example="127.0.0.1" |  |
-| `roles` | array of `string` (item constraints: enum=["view","operate","approve","govern","administer","force-override"]) | yes |  |  |
-| `allowed_origins` | array of `string` (item constraints: format="uri") | no |  |  |
+| `authentication` | `string` | yes | enum=["local-header-development","bearer-token"] | Configured authentication mode; reports whether either shared bearer token is present, not whether a credential is valid or strong. |
+| `agent_boundary` | `string` | yes |  | Human-readable summary of the advertised separation between agent and browser credentials; descriptive only and not an authorization decision. |
+| `csrf` | `string` | yes |  | Human-readable summary of the state-changing Origin check; does not indicate that a separate CSRF token is enforced. |
+| `default_bind` | `string` | yes | example="127.0.0.1" | Documented default listener address; this is not the actual bound address or proxy exposure. |
+| `roles` | array of `string` (item constraints: enum=["view","operate","approve","govern","administer","force-override"]) | yes |  | Role labels advertised by capability discovery; handlers do not uniformly enforce a centralized role hierarchy. |
+| `allowed_origins` | array of `string` (item constraints: format="uri") | no |  | Configured browser origins accepted by the HTTP server; presence does not establish WebSocket origin enforcement. |
 
 ### Schema: MaintenanceStatus {#schema-maintenancestatus}
 
@@ -28,9 +28,9 @@ Required fields: `foreign_keys`, `wal`, `protected_immutable_tables`
 
 | Property | Type | Required | Constraints | Description |
 |---|---|---|---|---|
-| `foreign_keys` | `boolean` | yes |  |  |
-| `wal` | `boolean` | yes |  |  |
-| `protected_immutable_tables` | array of `string` | yes |  |  |
+| `foreign_keys` | `boolean` | yes |  | Whether SQLite foreign-key enforcement is enabled on the inspected database connection. |
+| `wal` | `boolean` | yes |  | Whether the database reports WAL journal mode. |
+| `protected_immutable_tables` | array of `string` | yes |  | Table names excluded from the retention cleanup operation; this is not a complete immutability guarantee for every API or database writer. |
 
 ### Schema: RetentionInput {#schema-retentioninput}
 
@@ -40,7 +40,7 @@ Required fields: `retention_days`
 
 | Property | Type | Required | Constraints | Description |
 |---|---|---|---|---|
-| `retention_days` | `integer` | yes | minimum=1; maximum=3650 |  |
+| `retention_days` | `integer` | yes | minimum=1; maximum=3650 | Age threshold in calendar days; the retention endpoint deletes notifications older than the computed UTC cutoff. |
 
 ### Schema: ComponentHealth {#schema-componenthealth}
 
@@ -50,8 +50,8 @@ Required fields: `status`
 
 | Property | Type | Required | Constraints | Description |
 |---|---|---|---|---|
-| `status` | `string` | yes | enum=["ready","ok","degraded","unavailable","unknown","active","detached"] |  |
-| `details` | object (any value) | no |  |  |
+| `status` | `string` | yes | enum=["ready","ok","degraded","unavailable","unknown","active","detached"] | Component health or workspace state reported by the current projection; interpretation depends on the component and may not represent process liveness. |
+| `details` | object (any value) | no |  | Optional component-specific diagnostic values; keys and value shapes vary by component. |
 
 ### Schema: NodeHealthResponse {#schema-nodehealthresponse}
 
@@ -61,13 +61,13 @@ Required fields: `status`, `version`, `api_version`, `time`, `request_id`, `comp
 
 | Property | Type | Required | Constraints | Description |
 |---|---|---|---|---|
-| `status` | `string` | yes | enum=["ok","degraded"] |  |
-| `version` | `string` | yes |  |  |
-| `api_version` | `string` | yes | enum=["v1"] |  |
-| `time` | `string` | yes | format="date-time" |  |
-| `request_id` | `string` | yes |  |  |
-| `components` | object (values of `ComponentHealth`) | yes |  |  |
-| `degraded_reasons` | array of `string` | no |  |  |
+| `status` | `string` | yes | enum=["ok","degraded"] | Aggregate node status; degraded means at least one inspected database or adapter condition is reported degraded or unavailable. |
+| `version` | `string` | yes |  | Configured API build/version metadata; defaults to dev when not set. |
+| `api_version` | `string` | yes | enum=["v1"] | API route contract version, independent of the build version. |
+| `time` | `string` | yes | format="date-time" | UTC timestamp when this health projection was assembled. |
+| `request_id` | `string` | yes |  | Request correlation identifier assigned to this HTTP response. |
+| `components` | object (values of `ComponentHealth`) | yes |  | Named node subsystem health projections; ready labels do not prove provider subprocess liveness. |
+| `degraded_reasons` | array of `string` | no |  | Human-readable reasons contributing to aggregate degraded status; omitted when no reasons were recorded. |
 
 ### Schema: WorkspaceHealthResponse {#schema-workspacehealthresponse}
 
@@ -77,12 +77,12 @@ Required fields: `workspace`, `status`, `components`, `impact`, `request_id`
 
 | Property | Type | Required | Constraints | Description |
 |---|---|---|---|---|
-| `workspace` | `Workspace` | yes |  |  |
-| `status` | `string` | yes | enum=["ok","degraded"] |  |
-| `components` | object (values of `ComponentHealth`) | yes |  |  |
-| `impact` | `WorkspaceImpact` | yes |  |  |
-| `degraded_reasons` | array of `string` | no |  |  |
-| `request_id` | `string` | yes |  |  |
+| `workspace` | `Workspace` | yes |  | Workspace record used to scope this health view. |
+| `status` | `string` | yes | enum=["ok","degraded"] | Aggregate status combining node health with whether the selected workspace is detached. |
+| `components` | object (values of `ComponentHealth`) | yes |  | Node component reports plus the selected workspace component state. |
+| `impact` | `WorkspaceImpact` | yes |  | Counts of selected workspace records considered by the impact projection; not a complete activity or safety assessment. |
+| `degraded_reasons` | array of `string` | no |  | Human-readable reasons contributing to degraded status; omitted when no reasons were recorded. |
+| `request_id` | `string` | yes |  | Request correlation identifier assigned to this HTTP response. |
 
 ### Schema: WorkspaceInput {#schema-workspaceinput}
 

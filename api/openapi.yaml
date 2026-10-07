@@ -1038,51 +1038,51 @@ components:
       type: object
       required: [authentication, agent_boundary, csrf, default_bind, roles]
       properties:
-        authentication: {type: string, enum: [local-header-development, bearer-token]}
-        agent_boundary: {type: string}
-        csrf: {type: string}
-        default_bind: {type: string, example: 127.0.0.1}
-        roles: {type: array, items: {type: string, enum: [view, operate, approve, govern, administer, force-override]}}
-        allowed_origins: {type: array, items: {type: string, format: uri}}
+        authentication: {type: string, enum: [local-header-development, bearer-token], description: "Configured authentication mode; reports whether either shared bearer token is present, not whether a credential is valid or strong."}
+        agent_boundary: {type: string, description: "Human-readable summary of the advertised separation between agent and browser credentials; descriptive only and not an authorization decision."}
+        csrf: {type: string, description: "Human-readable summary of the state-changing Origin check; does not indicate that a separate CSRF token is enforced."}
+        default_bind: {type: string, example: 127.0.0.1, description: "Documented default listener address; this is not the actual bound address or proxy exposure."}
+        roles: {type: array, items: {type: string, enum: [view, operate, approve, govern, administer, force-override]}, description: "Role labels advertised by capability discovery; handlers do not uniformly enforce a centralized role hierarchy."}
+        allowed_origins: {type: array, items: {type: string, format: uri}, description: "Configured browser origins accepted by the HTTP server; presence does not establish WebSocket origin enforcement."}
     MaintenanceStatus:
       type: object
       required: [foreign_keys, wal, protected_immutable_tables]
       properties:
-        foreign_keys: {type: boolean}
-        wal: {type: boolean}
-        protected_immutable_tables: {type: array, items: {type: string}}
+        foreign_keys: {type: boolean, description: "Whether SQLite foreign-key enforcement is enabled on the inspected database connection."}
+        wal: {type: boolean, description: "Whether the database reports WAL journal mode."}
+        protected_immutable_tables: {type: array, items: {type: string}, description: "Table names excluded from the retention cleanup operation; this is not a complete immutability guarantee for every API or database writer."}
     RetentionInput:
       type: object
       required: [retention_days]
       properties:
-        retention_days: {type: integer, minimum: 1, maximum: 3650}
+        retention_days: {type: integer, minimum: 1, maximum: 3650, description: "Age threshold in calendar days; the retention endpoint deletes notifications older than the computed UTC cutoff."}
     ComponentHealth:
       type: object
       required: [status]
       properties:
-        status: {type: string, enum: [ready, ok, degraded, unavailable, unknown, active, detached]}
-        details: {type: object, additionalProperties: true}
+        status: {type: string, enum: [ready, ok, degraded, unavailable, unknown, active, detached], description: "Component health or workspace state reported by the current projection; interpretation depends on the component and may not represent process liveness."}
+        details: {type: object, additionalProperties: true, description: "Optional component-specific diagnostic values; keys and value shapes vary by component."}
     NodeHealthResponse:
       type: object
       required: [status, version, api_version, time, request_id, components]
       properties:
-        status: {type: string, enum: [ok, degraded]}
-        version: {type: string}
-        api_version: {type: string, enum: [v1]}
-        time: {type: string, format: date-time}
-        request_id: {type: string}
-        components: {type: object, additionalProperties: {$ref: '#/components/schemas/ComponentHealth'}}
-        degraded_reasons: {type: array, items: {type: string}}
+        status: {type: string, enum: [ok, degraded], description: "Aggregate node status; degraded means at least one inspected database or adapter condition is reported degraded or unavailable."}
+        version: {type: string, description: "Configured API build/version metadata; defaults to dev when not set."}
+        api_version: {type: string, enum: [v1], description: "API route contract version, independent of the build version."}
+        time: {type: string, format: date-time, description: "UTC timestamp when this health projection was assembled."}
+        request_id: {type: string, description: "Request correlation identifier assigned to this HTTP response."}
+        components: {type: object, additionalProperties: {$ref: '#/components/schemas/ComponentHealth'}, description: "Named node subsystem health projections; ready labels do not prove provider subprocess liveness."}
+        degraded_reasons: {type: array, items: {type: string}, description: "Human-readable reasons contributing to aggregate degraded status; omitted when no reasons were recorded."}
     WorkspaceHealthResponse:
       type: object
       required: [workspace, status, components, impact, request_id]
       properties:
-        workspace: {$ref: '#/components/schemas/Workspace'}
-        status: {type: string, enum: [ok, degraded]}
-        components: {type: object, additionalProperties: {$ref: '#/components/schemas/ComponentHealth'}}
-        impact: {$ref: '#/components/schemas/WorkspaceImpact'}
-        degraded_reasons: {type: array, items: {type: string}}
-        request_id: {type: string}
+        workspace: {$ref: '#/components/schemas/Workspace', description: "Workspace record used to scope this health view."}
+        status: {type: string, enum: [ok, degraded], description: "Aggregate status combining node health with whether the selected workspace is detached."}
+        components: {type: object, additionalProperties: {$ref: '#/components/schemas/ComponentHealth'}, description: "Node component reports plus the selected workspace component state."}
+        impact: {$ref: '#/components/schemas/WorkspaceImpact', description: "Counts of selected workspace records considered by the impact projection; not a complete activity or safety assessment."}
+        degraded_reasons: {type: array, items: {type: string}, description: "Human-readable reasons contributing to degraded status; omitted when no reasons were recorded."}
+        request_id: {type: string, description: "Request correlation identifier assigned to this HTTP response."}
     WorkspaceInput:
       type: object
       required: [root_path]
