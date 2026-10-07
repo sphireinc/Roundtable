@@ -1107,12 +1107,16 @@ paths:
     get:
       operationId: listClaims
       summary: List workspace resource claims
+      description: >-
+        Loads claims, retains those whose stored workspace_id equals the selected workspace, maps resource metadata and redacts rationale, then applies in-memory offset pagination. A claim whose workspace binding cannot be read is omitted. Claims are leases and an active status alone does not prove the owner process is live or that the lease has not elapsed; expiry is a separate persisted transition. Invalid cursor/limit returns 400 and store failures return 500.
       responses: {'200': {description: Claims, content: {application/json: {schema: {$ref: '#/components/schemas/Claims'}}}}, '404': {$ref: '#/components/responses/Problem'}}
   /api/v1/workspaces/{id}/claims/internal:
     parameters: [{name: id, in: path, required: true, schema: {type: string}}, {$ref: '#/components/parameters/IdempotencyKey'}]
     post:
       operationId: createInternalClaim
       summary: Acquire a claim through the orchestrator boundary
+      description: >-
+        Requires X-Roundtable-Orchestrator exactly true and a nonblank Idempotency-Key. agent_id, task_id, resource_type, and mode are required; resource_id or path must identify the resource. Modes accepted by the service are read, write, review, and exclusive. The handler validates a supplied path remains beneath the workspace root, then the service upserts resource metadata and checks overlap against active claims: exclusive conflicts with every overlapping mode; read is compatible; review is compatible with read/review/write; write conflicts with write/exclusive. A conflict records a contention row and returns 409 rather than creating a claim. Success creates an active lease, defaulting nonpositive TTL to 15 minutes, and then binds it to the workspace in a separate database update. A binding failure can therefore occur after the underlying claim was created. base_hash is stored but not verified at creation; session_id is currently ignored. Invalid required fields return 400, unauthorized requests 403, and contention/store conflicts 409.
       parameters: [{name: X-Roundtable-Orchestrator, in: header, required: true, schema: {type: string, enum: ['true']}}]
       requestBody: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/ClaimInput'}}}}
       responses: {'201': {description: Created, content: {application/json: {schema: {$ref: '#/components/schemas/Claim'}}}}, '400': {$ref: '#/components/responses/Problem'}, '403': {$ref: '#/components/responses/Problem'}, '409': {$ref: '#/components/responses/Problem'}}
@@ -1121,25 +1125,33 @@ paths:
     get:
       operationId: getClaim
       summary: Get one workspace resource claim
+      description: >-
+        Returns a claim only when its persisted workspace_id matches the selected workspace. Resource type/path/symbol are loaded from the associated resource record, rationale is redacted, and session_id is omitted by the current mapper. Missing and cross-workspace IDs return 404.
       responses: {'200': {description: Claim, content: {application/json: {schema: {$ref: '#/components/schemas/Claim'}}}}, '404': {$ref: '#/components/responses/Problem'}}
   /api/v1/workspaces/{id}/claims/{claim_id}/{action}:
     parameters: [{name: id, in: path, required: true, schema: {type: string}}, {name: claim_id, in: path, required: true, schema: {type: string}}, {name: action, in: path, required: true, schema: {type: string, enum: [extend, release, force-release]}}, {$ref: '#/components/parameters/ActorID'}, {$ref: '#/components/parameters/ActorRole'}, {$ref: '#/components/parameters/IdempotencyKey'}]
     post:
       operationId: transitionClaim
       summary: Extend or release a claim
+      description: >-
+        Requires a nonblank Idempotency-Key and either X-Actor-ID equal to the claim's agent_id or an accepted human X-Actor-Role. extend accepts ttl_seconds; missing, malformed, or nonpositive values use a 15-minute default, and only active claims can be extended. release marks the claim released; force-release does the same but requires a nonblank reason query parameter and writes an additional audit row when performed by a non-owner human. The reason is text-redacted for the claim event; ownership and status transitions are persisted by the claim service. Unknown actions return 400, authorization failure 403, missing/out-of-workspace claim 404, and invalid-state/store conflicts 409.
       requestBody: {required: false, content: {application/json: {schema: {$ref: '#/components/schemas/ClaimExtendInput'}}}}
       responses: {'200': {description: Updated claim, content: {application/json: {schema: {$ref: '#/components/schemas/Claim'}}}}, '400': {$ref: '#/components/responses/Problem'}, '403': {$ref: '#/components/responses/Problem'}, '409': {$ref: '#/components/responses/Problem'}}
   /api/v1/workspaces/{id}/claims/contentions:
-    parameters: [{name: id, in: path, required: true, schema: {type: string}}, {name: resource_id, in: query, schema: {type: string}}, {name: cursor, in: query, schema: {type: string}}, {name: limit, in: query, schema: {type: integer, minimum: 1, maximum: 200, default: 50}}]
+    parameters: [{name: id, in: path, required: true, schema: {type: string}}, {name: resource_id, in: query, description: Exact requested resource_id filter; a conflict caused by overlapping but distinct resources may have different owner/requested IDs., schema: {type: string}}, {name: cursor, in: query, description: Encoded in-memory offset cursor returned as next_cursor., schema: {type: string}}, {name: limit, in: query, description: Page size from 1 through 200; defaults to 50., schema: {type: integer, minimum: 1, maximum: 200, default: 50}}]
     get:
       operationId: listClaimContentions
       summary: List persisted claim contention records
+      description: >-
+        Lists persisted contention records whose challenged owner claim belongs to this workspace, optionally filtered by exact requested resource_id. Results are ordered by creation time/ID and paginated in memory. The reason is returned as stored and is not text-redacted by this handler; avoid placing secrets in conflict text. allowed_resolutions advertises keep_owner, transfer, extend_lease, and reject_contender. Invalid pagination returns 400 and query failures 500.
       responses: {'200': {description: Claim contentions, content: {application/json: {schema: {$ref: '#/components/schemas/Contentions'}}}}, '404': {$ref: '#/components/responses/Problem'}}
   /api/v1/workspaces/{id}/claims/contentions/{contention_id}/resolve:
     parameters: [{name: id, in: path, required: true, schema: {type: string}}, {name: contention_id, in: path, required: true, schema: {type: string}}, {$ref: '#/components/parameters/ActorID'}, {$ref: '#/components/parameters/ActorRole'}, {$ref: '#/components/parameters/IdempotencyKey'}]
     post:
       operationId: resolveClaimContention
       summary: Resolve a claim contention with human authorization
+      description: >-
+        Requires X-Actor-ID, an accepted human X-Actor-Role, a nonblank Idempotency-Key, and JSON resolution. The contention must be open and associated with an owner claim in this workspace. Supported values are keep_owner, transfer, extend_lease, and reject_contender; split and narrow are recognized but return 409 as unimplemented. transfer changes the active incumbent claim's agent, task, and mode to the requester; extend_lease adds a fixed 15 minutes; keep_owner and reject_contender only mark the contention resolved and do not change the incumbent claim. The optional reason is redacted in audit data. Resolution and audit row are transactional, followed by a best-effort workspace event. Invalid value/body returns 400, authorization failure 403, unknown/out-of-workspace contention 404, and already-resolved/unsupported or persistence conflicts 409.
       requestBody: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/ContentionResolutionInput'}}}}
       responses: {'200': {description: Resolved contention, content: {application/json: {schema: {$ref: '#/components/schemas/ContentionResolution'}}}}, '400': {$ref: '#/components/responses/Problem'}, '403': {$ref: '#/components/responses/Problem'}, '404': {$ref: '#/components/responses/Problem'}, '409': {$ref: '#/components/responses/Problem'}}
 components:
