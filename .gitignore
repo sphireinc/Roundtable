@@ -1,3 +1,37 @@
 # Generated documentation build inputs and output.
 .docs-build/
 site/
+
+# Local secrets and environment-specific configuration.
+.env
+.env.*
+!.env.example
+**/.env
+**/.env.*
+!**/.env.example
+
+# Roundtable runtime state. Keep project config, MCP manifests, and memory docs.
+.roundtable/*.db
+.roundtable/*.db-*
+.roundtable/patches/
+.roundtable/logs/
+.roundtable/runs/
+.roundtable/sessions/
+*.sock
+
+# Dependency installs and generated frontend output.
+**/node_modules/
+**/.next/
+.pnpm-store/
+**/.pnpm-store/
+ui/pnpm-lock.yaml
+ui/pnpm-workspace.yaml
+ui/test-results/
+ui/playwright-report/
+**/tsconfig.tsbuildinfo
+
+# Local test and interpreter caches.
+**/__pycache__/
+*.py[cod]
+coverage/
+.serena/
