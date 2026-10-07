@@ -118,7 +118,7 @@ This guide is generated from [`api/openapi.yaml`](../openapi.yaml). Regenerate i
 | `GET` | `/api/v1/workspaces/{id}/audit/export` | `exportAuditEvents` | view | not required | none | none declared |
 | `GET` | `/api/v1/workspaces/{id}/settings` | `getEffectiveSettings` | view | not required | none | 200: [`EffectiveSettings`](schema-reference.md#schema-effectivesettings) |
 | `GET` | `/api/v1/workspaces/{id}/settings/schema` | `getSettingsSchema` | view | not required | none | 200: [`SettingsSchema`](schema-reference.md#schema-settingsschema) |
-| `POST` | `/api/v1/workspaces/{id}/settings/preflight` | `preflightSettingsUpdate` | orchestrator or human | not required | [`SettingsUpdate`](schema-reference.md#schema-settingsupdate) | 200: [`SettingsPreflight`](schema-reference.md#schema-settingspreflight) |
+| `POST` | `/api/v1/workspaces/{id}/settings/preflight` | `preflightSettingsUpdate` | orchestrator or human | not required | [`SettingsPreflightInput`](schema-reference.md#schema-settingspreflightinput) | 200: [`SettingsPreflight`](schema-reference.md#schema-settingspreflight) |
 | `PATCH` | `/api/v1/workspaces/{id}/settings/{section}` | `updateSettingsSection` | orchestrator or human | required | [`SettingsUpdate`](schema-reference.md#schema-settingsupdate) | 200: [`EffectiveSettings`](schema-reference.md#schema-effectivesettings) |
 | `POST` | `/api/v1/workspaces/{id}/transactions/{transaction_id}/{action}` | `transitionTransaction` | role-gated human | required | none | 200: [`Transaction`](schema-reference.md#schema-transaction) |
 | `GET` | `/api/v1/workspaces/{id}/claims` | `listClaims` | view | not required | none | 200: [`Claims`](schema-reference.md#schema-claims) |
