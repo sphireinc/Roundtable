@@ -4,6 +4,12 @@ The executable is `cmd/roundtable`; invoke it as `roundtable` after installation
 
 Unless stated otherwise, `--root` defaults to `.` and selects the project root containing `.roundtable/config.yaml` and the configured SQLite file.
 
+## Flag and subcommand parsing
+
+Top-level command dispatch happens before each command's flags are parsed. For commands with subcommands, the subcommand word is consumed first and the remaining arguments are parsed by Go's standard `flag` package. Put options after their command/subcommand and before any positional token. No CLI operation documents positional operands; current handlers generally do not reject leftover positional arguments. The parser stops at the first non-flag token, so flags after an accidental positional token can be silently ignored and a default `--root` may be used instead of the intended project.
+
+The session list form is `roundtable sessions [--root DIR]`; there is no recognized `list` subcommand. Only `register`, `heartbeat`, and `end` select session mutation forms. Any other first token falls through to the list handler rather than producing an unsupported-subcommand error. For example, do not write `roundtable sessions list --root DIR`: `list` is treated as a positional token and the later root option is not parsed. By contrast, `claims` and `mcp` reject unsupported subcommand names, and an unsupported top-level command returns an error. The main entrypoint prints returned errors to stderr and exits nonzero; per-flag-set usage output is suppressed.
+
 ## Initialize a project
 
 ```sh
