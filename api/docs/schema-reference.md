@@ -1062,6 +1062,67 @@ Required fields: `policy`, `impact`
 | `policy` | `Policy` | yes |  |  |
 | `impact` | `PolicyImpact` | yes |  |  |
 
+### Schema: PolicySchemaResponse {#schema-policyschemaresponse}
+
+Type: `object`
+
+Required fields: `schema_version`, `schema`
+
+| Property | Type | Required | Constraints | Description |
+|---|---|---|---|---|
+| `schema_version` | `string` | yes |  |  |
+| `schema` | object (any value) | yes |  |  |
+
+### Schema: PolicyValidation {#schema-policyvalidation}
+
+Type: `object`
+
+Required fields: `valid`, `result`, `policy_id`, `policy_revision_id`, `issues`, `simulation`, `deterministic_key`
+
+| Property | Type | Required | Constraints | Description |
+|---|---|---|---|---|
+| `valid` | `boolean` | yes |  |  |
+| `result` | `string` | yes | enum=["pass","fail"] |  |
+| `policy_id` | `string` | yes |  |  |
+| `policy_revision_id` | `string` | yes |  |  |
+| `issues` | array of `string` | yes |  |  |
+| `simulation` | `boolean` | yes |  |  |
+| `deterministic_key` | `string` | yes |  |  |
+
+### Schema: PolicyEvaluationInput {#schema-policyevaluationinput}
+
+Type: `object`
+
+Required fields: `subject_type`, `subject_id`
+
+| Property | Type | Required | Constraints | Description |
+|---|---|---|---|---|
+| `subject_type` | `string` | yes |  |  |
+| `subject_id` | `string` | yes |  |  |
+| `evidence` | array of `string` | no |  |  |
+
+### Schema: PolicyEvaluation {#schema-policyevaluation}
+
+Type: `object`
+
+Required fields: `policy_id`, `policy_revision_id`, `subject_type`, `subject_id`, `result`, `matched_rules`, `evidence`, `remediation`, `human_approval_required`, `deterministic_key`, `simulation`, `evaluated_at`
+
+| Property | Type | Required | Constraints | Description |
+|---|---|---|---|---|
+| `id` | `string` | no |  |  |
+| `policy_id` | `string` | yes |  |  |
+| `policy_revision_id` | `string` | yes |  |  |
+| `subject_type` | `string` | yes |  |  |
+| `subject_id` | `string` | yes |  |  |
+| `result` | `string` | yes | enum=["pass","warn"] |  |
+| `matched_rules` | array of `string` | yes |  |  |
+| `evidence` | array of `string` | yes |  |  |
+| `remediation` | array of `string` | yes |  |  |
+| `human_approval_required` | `boolean` | yes |  |  |
+| `deterministic_key` | `string` | yes |  |  |
+| `simulation` | `boolean` | yes |  |  |
+| `evaluated_at` | `string` | yes | format="date-time" |  |
+
 ### Schema: Approval {#schema-approval}
 
 Type: `object`

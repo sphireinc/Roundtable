@@ -537,12 +537,30 @@ paths:
       operationId: getDeliberation
       summary: Get a deliberation
       responses: {'200': {description: Deliberation, content: {application/json: {schema: {$ref: '#/components/schemas/Deliberation'}}}}, '404': {$ref: '#/components/responses/Problem'}}
-  /api/v1/workspaces/{id}/deliberations/{deliberation_id}/{action}:
-    parameters: [{name: id, in: path, required: true, schema: {type: string}}, {name: deliberation_id, in: path, required: true, schema: {type: string}}, {name: action, in: path, required: true, schema: {type: string, enum: [start, pause, resume, terminate]}}, {$ref: '#/components/parameters/ActorID'}, {$ref: '#/components/parameters/ActorRole'}, {$ref: '#/components/parameters/IdempotencyKey'}]
+  /api/v1/workspaces/{id}/deliberations/{deliberation_id}/start:
+    parameters: [{name: id, in: path, required: true, schema: {type: string}}, {name: deliberation_id, in: path, required: true, schema: {type: string}}, {$ref: '#/components/parameters/ActorID'}, {$ref: '#/components/parameters/ActorRole'}, {$ref: '#/components/parameters/IdempotencyKey'}]
     post:
-      operationId: transitionDeliberation
-      summary: Transition a deliberation lifecycle state
-      responses: {'200': {description: Updated deliberation, content: {application/json: {schema: {$ref: '#/components/schemas/Deliberation'}}}}, '403': {$ref: '#/components/responses/Problem'}, '409': {$ref: '#/components/responses/Problem'}}
+      operationId: startDeliberation
+      summary: Start a draft or resume a paused deliberation
+      responses: {'200': {description: Updated deliberation, content: {application/json: {schema: {$ref: '#/components/schemas/Deliberation'}}}}, '403': {$ref: '#/components/responses/Problem'}, '404': {$ref: '#/components/responses/Problem'}, '409': {$ref: '#/components/responses/Problem'}}
+  /api/v1/workspaces/{id}/deliberations/{deliberation_id}/pause:
+    parameters: [{name: id, in: path, required: true, schema: {type: string}}, {name: deliberation_id, in: path, required: true, schema: {type: string}}, {$ref: '#/components/parameters/ActorID'}, {$ref: '#/components/parameters/ActorRole'}, {$ref: '#/components/parameters/IdempotencyKey'}]
+    post:
+      operationId: pauseDeliberation
+      summary: Pause a running deliberation
+      responses: {'200': {description: Updated deliberation, content: {application/json: {schema: {$ref: '#/components/schemas/Deliberation'}}}}, '403': {$ref: '#/components/responses/Problem'}, '404': {$ref: '#/components/responses/Problem'}, '409': {$ref: '#/components/responses/Problem'}}
+  /api/v1/workspaces/{id}/deliberations/{deliberation_id}/resume:
+    parameters: [{name: id, in: path, required: true, schema: {type: string}}, {name: deliberation_id, in: path, required: true, schema: {type: string}}, {$ref: '#/components/parameters/ActorID'}, {$ref: '#/components/parameters/ActorRole'}, {$ref: '#/components/parameters/IdempotencyKey'}]
+    post:
+      operationId: resumeDeliberation
+      summary: Resume a paused deliberation
+      responses: {'200': {description: Updated deliberation, content: {application/json: {schema: {$ref: '#/components/schemas/Deliberation'}}}}, '403': {$ref: '#/components/responses/Problem'}, '404': {$ref: '#/components/responses/Problem'}, '409': {$ref: '#/components/responses/Problem'}}
+  /api/v1/workspaces/{id}/deliberations/{deliberation_id}/terminate:
+    parameters: [{name: id, in: path, required: true, schema: {type: string}}, {name: deliberation_id, in: path, required: true, schema: {type: string}}, {$ref: '#/components/parameters/ActorID'}, {$ref: '#/components/parameters/ActorRole'}, {$ref: '#/components/parameters/IdempotencyKey'}]
+    post:
+      operationId: terminateDeliberation
+      summary: Terminate a draft, running, or paused deliberation
+      responses: {'200': {description: Updated deliberation, content: {application/json: {schema: {$ref: '#/components/schemas/Deliberation'}}}}, '403': {$ref: '#/components/responses/Problem'}, '404': {$ref: '#/components/responses/Problem'}, '409': {$ref: '#/components/responses/Problem'}}
   /api/v1/workspaces/{id}/deliberations/{deliberation_id}/messages:
     parameters: [{name: id, in: path, required: true, schema: {type: string}}, {name: deliberation_id, in: path, required: true, schema: {type: string}}, {$ref: '#/components/parameters/ActorID'}, {$ref: '#/components/parameters/ActorRole'}]
     post:
@@ -668,6 +686,33 @@ paths:
       operationId: listPolicyRevisions
       summary: List immutable policy revisions
       responses: {'200': {description: Policy revisions, content: {application/json: {schema: {$ref: '#/components/schemas/PolicyRevisions'}}}}, '404': {$ref: '#/components/responses/Problem'}}
+  /api/v1/workspaces/{id}/policies/{policy_id}/schema:
+    parameters: [{name: id, in: path, required: true, schema: {type: string}}, {name: policy_id, in: path, required: true, schema: {type: string}}]
+    get:
+      operationId: getPolicySchema
+      summary: Return the policy input schema description
+      responses: {'200': {description: Static policy input schema, content: {application/json: {schema: {$ref: '#/components/schemas/PolicySchemaResponse'}}}}}
+  /api/v1/workspaces/{id}/policies/{policy_id}/validate:
+    parameters: [{name: id, in: path, required: true, schema: {type: string}}, {name: policy_id, in: path, required: true, schema: {type: string}}]
+    post:
+      operationId: validatePolicy
+      summary: Perform shallow validation of the current policy revision
+      description: Returns HTTP 200 for both valid and invalid policies. This checks only name presence, a nonempty top-level definition, and the advisory/blocking enforcement mode; it does not persist a result or execute policy rules.
+      responses: {'200': {description: Validation result, content: {application/json: {schema: {$ref: '#/components/schemas/PolicyValidation'}}}}, '404': {$ref: '#/components/responses/Problem'}}
+  /api/v1/workspaces/{id}/policies/{policy_id}/simulate:
+    parameters: [{name: id, in: path, required: true, schema: {type: string}}, {name: policy_id, in: path, required: true, schema: {type: string}}]
+    post:
+      operationId: simulatePolicy
+      summary: Return a non-persisted policy evaluation preview
+      requestBody: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/PolicyEvaluationInput'}}}}
+      responses: {'200': {description: Simulation, content: {application/json: {schema: {$ref: '#/components/schemas/PolicyEvaluation'}}}}, '400': {$ref: '#/components/responses/Problem'}, '404': {$ref: '#/components/responses/Problem'}}
+  /api/v1/workspaces/{id}/policies/{policy_id}/evaluate:
+    parameters: [{name: id, in: path, required: true, schema: {type: string}}, {name: policy_id, in: path, required: true, schema: {type: string}}, {$ref: '#/components/parameters/ActorID'}, {$ref: '#/components/parameters/ActorRole'}, {$ref: '#/components/parameters/IdempotencyKey'}]
+    post:
+      operationId: evaluatePolicy
+      summary: Persist a policy evaluation result
+      requestBody: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/PolicyEvaluationInput'}}}}
+      responses: {'201': {description: Persisted evaluation, content: {application/json: {schema: {$ref: '#/components/schemas/PolicyEvaluation'}}}}, '400': {$ref: '#/components/responses/Problem'}, '403': {$ref: '#/components/responses/Problem'}, '404': {$ref: '#/components/responses/Problem'}, '409': {$ref: '#/components/responses/Problem'}}
   /api/v1/workspaces/{id}/policies/{policy_id}/{action}:
     parameters: [{name: id, in: path, required: true, schema: {type: string}}, {name: policy_id, in: path, required: true, schema: {type: string}}, {name: action, in: path, required: true, schema: {type: string, enum: [publish, enable, disable, update-draft, clone]}}, {$ref: '#/components/parameters/ActorID'}, {$ref: '#/components/parameters/ActorRole'}, {$ref: '#/components/parameters/IdempotencyKey'}]
     post:
@@ -1687,6 +1732,47 @@ components:
       properties:
         policy: {$ref: '#/components/schemas/Policy'}
         impact: {$ref: '#/components/schemas/PolicyImpact'}
+    PolicySchemaResponse:
+      type: object
+      required: [schema_version, schema]
+      properties:
+        schema_version: {type: string}
+        schema: {type: object, additionalProperties: true}
+    PolicyValidation:
+      type: object
+      required: [valid, result, policy_id, policy_revision_id, issues, simulation, deterministic_key]
+      properties:
+        valid: {type: boolean}
+        result: {type: string, enum: [pass, fail]}
+        policy_id: {type: string}
+        policy_revision_id: {type: string}
+        issues: {type: array, items: {type: string}}
+        simulation: {type: boolean, const: true}
+        deterministic_key: {type: string}
+    PolicyEvaluationInput:
+      type: object
+      required: [subject_type, subject_id]
+      properties:
+        subject_type: {type: string}
+        subject_id: {type: string}
+        evidence: {type: array, items: {type: string}}
+    PolicyEvaluation:
+      type: object
+      required: [policy_id, policy_revision_id, subject_type, subject_id, result, matched_rules, evidence, remediation, human_approval_required, deterministic_key, simulation, evaluated_at]
+      properties:
+        id: {type: string}
+        policy_id: {type: string}
+        policy_revision_id: {type: string}
+        subject_type: {type: string}
+        subject_id: {type: string}
+        result: {type: string, enum: [pass, warn]}
+        matched_rules: {type: array, items: {type: string}}
+        evidence: {type: array, items: {type: string}}
+        remediation: {type: array, items: {type: string}}
+        human_approval_required: {type: boolean}
+        deterministic_key: {type: string}
+        simulation: {type: boolean}
+        evaluated_at: {type: string, format: date-time}
     Approval:
       type: object
       required: [id, workspace_id, subject, reason, risk, status, required_role, decision_metadata, requested_by, override_policy, created_at, updated_at]
