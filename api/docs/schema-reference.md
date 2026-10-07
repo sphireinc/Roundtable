@@ -92,10 +92,10 @@ Required fields: `root_path`
 
 | Property | Type | Required | Constraints | Description |
 |---|---|---|---|---|
-| `display_name` | `string` | no |  |  |
-| `root_alias` | `string` | no |  |  |
-| `root_path` | `string` | yes |  |  |
-| `default_branch` | `string` | no |  |  |
+| `display_name` | `string` | no |  | Human-readable workspace label; when blank during creation, the API derives it from the validated root directory name. |
+| `root_alias` | `string` | no |  | Optional short operator-facing alias for the registered root; it does not change filesystem resolution. |
+| `root_path` | `string` | yes |  | Filesystem directory to register as the workspace root; the server validates and canonicalizes it against its allowed-root configuration. |
+| `default_branch` | `string` | no |  | Optional recorded default-branch metadata; setting it does not switch the repository or verify the branch exists. |
 
 ### Schema: WorkspacePatch {#schema-workspacepatch}
 
@@ -105,9 +105,9 @@ Schema constraints: minProperties=1
 
 | Property | Type | Required | Constraints | Description |
 |---|---|---|---|---|
-| `display_name` | `string` | no |  |  |
-| `root_alias` | `string` | no |  |  |
-| `default_branch` | `string` | no |  |  |
+| `display_name` | `string` | no |  | Replacement display label when the supplied value is nonblank; an empty value leaves the stored label unchanged. |
+| `root_alias` | `string` | no |  | Replacement operator-facing alias when nonblank; an empty value leaves the stored alias unchanged. |
+| `default_branch` | `string` | no |  | Replacement default-branch metadata when nonblank; does not switch the repository's current branch. |
 
 ### Schema: Workspace {#schema-workspace}
 
@@ -117,15 +117,15 @@ Required fields: `id`, `display_name`, `canonical_repository_identity`, `status`
 
 | Property | Type | Required | Constraints | Description |
 |---|---|---|---|---|
-| `id` | `string` | yes |  |  |
-| `revision` | `integer` | no | minimum=1 |  |
-| `display_name` | `string` | yes |  |  |
-| `root_alias` | `string` | no |  |  |
-| `canonical_repository_identity` | `string` | yes |  |  |
-| `status` | `string` | yes | enum=["active","detached"] |  |
-| `default_branch` | `string` | no |  |  |
-| `created_at` | `string` | yes | format="date-time" |  |
-| `last_opened_at` | `string` | no | format="date-time" |  |
+| `id` | `string` | yes |  | Stable identifier assigned when the workspace is registered. |
+| `revision` | `integer` | no | minimum=1 | Monotonic workspace revision used by conditional updates such as If-Match; it is not a repository commit number. |
+| `display_name` | `string` | yes |  | Human-readable workspace label. |
+| `root_alias` | `string` | no |  | Optional short alias for display and operator selection. |
+| `canonical_repository_identity` | `string` | yes |  | SHA-256 identifier derived from the canonical filesystem root path; moving the checkout can change this identity, and it is not derived from a Git remote URL. |
+| `status` | `string` | yes | enum=["active","detached"] | Registry lifecycle state; detached means the workspace is no longer available for normal active workspace operations. |
+| `default_branch` | `string` | no |  | Recorded default-branch metadata; does not imply the repository is currently checked out on this branch. |
+| `created_at` | `string` | yes | format="date-time" | Workspace registration timestamp in RFC3339 date-time form. |
+| `last_opened_at` | `string` | no | format="date-time" | Timestamp set at workspace creation and update by the current handlers; ordinary reads do not refresh it, and it is omitted when not recorded. |
 
 ### Schema: WorkspaceImpact {#schema-workspaceimpact}
 
@@ -135,10 +135,10 @@ Required fields: `active_sessions`, `active_claims`, `open_proposals`, `active_t
 
 | Property | Type | Required | Constraints | Description |
 |---|---|---|---|---|
-| `active_sessions` | `integer` | yes |  |  |
-| `active_claims` | `integer` | yes |  |  |
-| `open_proposals` | `integer` | yes |  |  |
-| `active_transactions` | `integer` | yes |  |  |
+| `active_sessions` | `integer` | yes |  | Count of workspace sessions whose status is exactly active or running; not a subprocess liveness probe. |
+| `active_claims` | `integer` | yes |  | Count of workspace claims with exact active status; expiry is not equivalent to a claim being transitioned out of active status. |
+| `open_proposals` | `integer` | yes |  | Count of workspace proposals with exact pending or in_review status; other statuses are excluded. |
+| `active_transactions` | `integer` | yes |  | Count of workspace transactions with exact pending or running status. |
 
 ### Schema: RepositoryChange {#schema-repositorychange}
 
@@ -148,9 +148,9 @@ Required fields: `path`, `index`, `worktree`
 
 | Property | Type | Required | Constraints | Description |
 |---|---|---|---|---|
-| `path` | `string` | yes |  |  |
-| `index` | `string` | yes | minLength=1; maxLength=1 |  |
-| `worktree` | `string` | yes | minLength=1; maxLength=1 |  |
+| `path` | `string` | yes |  | Repository-relative path reported by Git status; rename records use the destination path parsed by the handler. |
+| `index` | `string` | yes | minLength=1; maxLength=1 | Single-character Git index status code for the staged side of this path. |
+| `worktree` | `string` | yes | minLength=1; maxLength=1 | Single-character Git worktree status code for the unstaged side of this path. |
 
 ### Schema: RepositoryRemote {#schema-repositoryremote}
 
@@ -160,8 +160,8 @@ Required fields: `name`, `url`
 
 | Property | Type | Required | Constraints | Description |
 |---|---|---|---|---|
-| `name` | `string` | yes |  |  |
-| `url` | `string` | yes |  |  |
+| `name` | `string` | yes |  | Git remote name in the inspected repository. |
+| `url` | `string` | yes |  | Remote URL reported by Git; may contain sensitive host or repository information. |
 
 ### Schema: ProtectedPathSummary {#schema-protectedpathsummary}
 
@@ -171,8 +171,8 @@ Required fields: `changed`
 
 | Property | Type | Required | Constraints | Description |
 |---|---|---|---|---|
-| `changed` | `integer` | yes | minimum=0 |  |
-| `paths` | array of `string` | no |  |  |
+| `changed` | `integer` | yes | minimum=0 | Number of changed paths matching the API's protected-path prefixes (.roundtable, .github, and TASKS.ROUNDTABLE). |
+| `paths` | array of `string` | no |  | Repository-relative changed paths counted as protected; omitted when no such paths were found. |
 
 ### Schema: RepositoryStatus {#schema-repositorystatus}
 
@@ -182,17 +182,17 @@ Required fields: `workspace_id`, `branch`, `head_sha`, `dirty`, `ahead`, `behind
 
 | Property | Type | Required | Constraints | Description |
 |---|---|---|---|---|
-| `workspace_id` | `string` | yes |  |  |
-| `root_alias` | `string` | no |  |  |
-| `branch` | `string` | yes |  |  |
-| `head_sha` | `string` | yes |  |  |
-| `dirty` | `boolean` | yes |  |  |
-| `ahead` | `integer` | yes | minimum=0 |  |
-| `behind` | `integer` | yes | minimum=0 |  |
-| `detached` | `boolean` | yes |  |  |
-| `remotes` | array of `RepositoryRemote` | yes |  |  |
-| `index` | array of `RepositoryChange` | yes |  |  |
-| `protected_paths` | `ProtectedPathSummary` | yes |  |  |
+| `workspace_id` | `string` | yes |  | Identifier of the workspace whose registered repository was inspected. |
+| `root_alias` | `string` | no |  | Optional display alias copied from the workspace registry. |
+| `branch` | `string` | yes |  | Current branch name, or literal HEAD when Git reports detached HEAD. |
+| `head_sha` | `string` | yes |  | Full object ID of the current HEAD commit. |
+| `dirty` | `boolean` | yes |  | Whether Git porcelain status reported any staged or worktree changes. |
+| `ahead` | `integer` | yes | minimum=0 | Commit count by which HEAD is ahead of its configured upstream; zero when detached or when upstream comparison fails. |
+| `behind` | `integer` | yes | minimum=0 | Commit count by which HEAD is behind its configured upstream; zero when detached or when upstream comparison fails. |
+| `detached` | `boolean` | yes |  | Whether the repository HEAD is detached. |
+| `remotes` | array of `RepositoryRemote` | yes |  | Configured Git remotes, with duplicate fetch/push entries collapsed by remote name. |
+| `index` | array of `RepositoryChange` | yes |  | Per-path index and worktree status codes from Git porcelain output. |
+| `protected_paths` | `ProtectedPathSummary` | yes |  | Summary of changed paths under the API's protected-path prefixes. |
 
 ### Schema: BranchSwitchInput {#schema-branchswitchinput}
 
@@ -203,7 +203,7 @@ Additional properties: forbidden.
 
 | Property | Type | Required | Constraints | Description |
 |---|---|---|---|---|
-| `branch` | `string` | yes | minLength=1 |  |
+| `branch` | `string` | yes | minLength=1 | Target local branch name for preflight or switch; handler rejects unsafe path-like, option-like, empty, or newline-containing values. |
 
 ### Schema: RepositoryBlocker {#schema-repositoryblocker}
 
@@ -213,9 +213,9 @@ Required fields: `code`, `message`
 
 | Property | Type | Required | Constraints | Description |
 |---|---|---|---|---|
-| `code` | `string` | yes |  |  |
-| `message` | `string` | yes |  |  |
-| `count` | `integer` | no | minimum=0 |  |
+| `code` | `string` | yes |  | Stable machine-readable reason this preflight condition blocks a switch. |
+| `message` | `string` | yes |  | Human-readable summary of the blocking repository or workspace condition. |
+| `count` | `integer` | no | minimum=0 | Count associated with a record-based blocker; omitted when the blocker is boolean or does not expose a count. |
 
 ### Schema: BranchSwitchPreflight {#schema-branchswitchpreflight}
 
@@ -225,11 +225,11 @@ Required fields: `workspace_id`, `target_branch`, `allowed`, `blockers`, `reposi
 
 | Property | Type | Required | Constraints | Description |
 |---|---|---|---|---|
-| `workspace_id` | `string` | yes |  |  |
-| `target_branch` | `string` | yes |  |  |
-| `allowed` | `boolean` | yes |  |  |
-| `blockers` | array of `RepositoryBlocker` | yes |  |  |
-| `repository` | `RepositoryStatus` | yes |  |  |
+| `workspace_id` | `string` | yes |  | Workspace whose repository and governance state were checked. |
+| `target_branch` | `string` | yes |  | Validated target branch name considered by this preflight. |
+| `allowed` | `boolean` | yes |  | True only when the current preflight produced no dirty-worktree, active-transaction, active-claim, open-proposal, active-session, or already-on-branch blocker. |
+| `blockers` | array of `RepositoryBlocker` | yes |  | Current reasons that prevent switching; this is a point-in-time assessment and must be recomputed before mutation. |
+| `repository` | `RepositoryStatus` | yes |  | Repository state inspected during this preflight. |
 
 ### Schema: BranchSwitchResponse {#schema-branchswitchresponse}
 
@@ -239,9 +239,9 @@ Required fields: `workspace`, `before`, `after`
 
 | Property | Type | Required | Constraints | Description |
 |---|---|---|---|---|
-| `workspace` | `Workspace` | yes |  |  |
-| `before` | `RepositoryStatus` | yes |  |  |
-| `after` | `RepositoryStatus` | yes |  |  |
+| `workspace` | `Workspace` | yes |  | Updated workspace registry record after the branch switch was recorded. |
+| `before` | `RepositoryStatus` | yes |  | Repository status captured immediately before the switch. |
+| `after` | `RepositoryStatus` | yes |  | Repository status inspected after the switch completed. |
 
 ### Schema: RepositoryEntity {#schema-repositoryentity}
 
@@ -251,17 +251,17 @@ Required fields: `id`, `type`, `path`
 
 | Property | Type | Required | Constraints | Description |
 |---|---|---|---|---|
-| `id` | `string` | yes |  |  |
-| `type` | `string` | yes |  |  |
-| `path` | `string` | yes |  |  |
-| `name` | `string` | no |  |  |
-| `language` | `string` | no |  |  |
-| `kind` | `string` | no |  |  |
-| `start_line` | `integer` | no | minimum=0 |  |
-| `end_line` | `integer` | no | minimum=0 |  |
-| `claim_status` | `string` | no |  |  |
-| `related_proposals` | array of `string` | no |  |  |
-| `related_entities` | array of `string` | no |  |  |
+| `id` | `string` | yes |  | Stable entity identifier, generally derived from the entity category and repository path or symbol identity. |
+| `type` | `string` | yes |  | Repository entity category used by the discovery projection. |
+| `path` | `string` | yes |  | Repository-relative path associated with the entity. |
+| `name` | `string` | no |  | Entity name when a symbol or named repository artifact is available. |
+| `language` | `string` | no |  | Detected source language for entities backed by recognized source files. |
+| `kind` | `string` | no |  | Parser/indexer classification for a discovered symbol; absent when the entity is not a symbol. |
+| `start_line` | `integer` | no | minimum=0 | One-based starting line for a discovered symbol when available; zero can indicate no indexed span. |
+| `end_line` | `integer` | no | minimum=0 | One-based ending line for a discovered symbol when available; zero can indicate no indexed span. |
+| `claim_status` | `string` | no |  | Claim status associated with this entity when a matching resource record exists. |
+| `related_proposals` | array of `string` | no |  | Proposal identifiers linked to this repository entity by the API projection. |
+| `related_entities` | array of `string` | no |  | Identifiers of other entities linked by the current repository discovery projection. |
 
 ### Schema: RepositoryEntities {#schema-repositoryentities}
 
@@ -271,8 +271,8 @@ Required fields: `items`
 
 | Property | Type | Required | Constraints | Description |
 |---|---|---|---|---|
-| `items` | array of `RepositoryEntity` | yes |  |  |
-| `next_cursor` | `string or null` | no |  |  |
+| `items` | array of `RepositoryEntity` | yes |  | Repository entities returned for the requested workspace and page. |
+| `next_cursor` | `string or null` | no |  | Opaque continuation cursor for the next page, or null when no further page is available. |
 
 ### Schema: Agent {#schema-agent}
 

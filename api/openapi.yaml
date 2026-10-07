@@ -1087,122 +1087,122 @@ components:
       type: object
       required: [root_path]
       properties:
-        display_name: {type: string}
-        root_alias: {type: string}
-        root_path: {type: string}
-        default_branch: {type: string}
+        display_name: {type: string, description: "Human-readable workspace label; when blank during creation, the API derives it from the validated root directory name."}
+        root_alias: {type: string, description: "Optional short operator-facing alias for the registered root; it does not change filesystem resolution."}
+        root_path: {type: string, description: "Filesystem directory to register as the workspace root; the server validates and canonicalizes it against its allowed-root configuration."}
+        default_branch: {type: string, description: "Optional recorded default-branch metadata; setting it does not switch the repository or verify the branch exists."}
     WorkspacePatch:
       type: object
       minProperties: 1
       properties:
-        display_name: {type: string}
-        root_alias: {type: string}
-        default_branch: {type: string}
+        display_name: {type: string, description: "Replacement display label when the supplied value is nonblank; an empty value leaves the stored label unchanged."}
+        root_alias: {type: string, description: "Replacement operator-facing alias when nonblank; an empty value leaves the stored alias unchanged."}
+        default_branch: {type: string, description: "Replacement default-branch metadata when nonblank; does not switch the repository's current branch."}
     Workspace:
       type: object
       required: [id, display_name, canonical_repository_identity, status, created_at]
       properties:
-        id: {type: string}
-        revision: {type: integer, minimum: 1}
-        display_name: {type: string}
-        root_alias: {type: string}
-        canonical_repository_identity: {type: string}
-        status: {type: string, enum: [active, detached]}
-        default_branch: {type: string}
-        created_at: {type: string, format: date-time}
-        last_opened_at: {type: string, format: date-time}
+        id: {type: string, description: "Stable identifier assigned when the workspace is registered."}
+        revision: {type: integer, minimum: 1, description: "Monotonic workspace revision used by conditional updates such as If-Match; it is not a repository commit number."}
+        display_name: {type: string, description: "Human-readable workspace label."}
+        root_alias: {type: string, description: "Optional short alias for display and operator selection."}
+        canonical_repository_identity: {type: string, description: "SHA-256 identifier derived from the canonical filesystem root path; moving the checkout can change this identity, and it is not derived from a Git remote URL."}
+        status: {type: string, enum: [active, detached], description: "Registry lifecycle state; detached means the workspace is no longer available for normal active workspace operations."}
+        default_branch: {type: string, description: "Recorded default-branch metadata; does not imply the repository is currently checked out on this branch."}
+        created_at: {type: string, format: date-time, description: "Workspace registration timestamp in RFC3339 date-time form."}
+        last_opened_at: {type: string, format: date-time, description: "Timestamp set at workspace creation and update by the current handlers; ordinary reads do not refresh it, and it is omitted when not recorded."}
     WorkspaceImpact:
       type: object
       required: [active_sessions, active_claims, open_proposals, active_transactions]
       properties:
-        active_sessions: {type: integer}
-        active_claims: {type: integer}
-        open_proposals: {type: integer}
-        active_transactions: {type: integer}
+        active_sessions: {type: integer, description: "Count of workspace sessions whose status is exactly active or running; not a subprocess liveness probe."}
+        active_claims: {type: integer, description: "Count of workspace claims with exact active status; expiry is not equivalent to a claim being transitioned out of active status."}
+        open_proposals: {type: integer, description: "Count of workspace proposals with exact pending or in_review status; other statuses are excluded."}
+        active_transactions: {type: integer, description: "Count of workspace transactions with exact pending or running status."}
     RepositoryChange:
       type: object
       required: [path, index, worktree]
       properties:
-        path: {type: string}
-        index: {type: string, minLength: 1, maxLength: 1}
-        worktree: {type: string, minLength: 1, maxLength: 1}
+        path: {type: string, description: "Repository-relative path reported by Git status; rename records use the destination path parsed by the handler."}
+        index: {type: string, minLength: 1, maxLength: 1, description: "Single-character Git index status code for the staged side of this path."}
+        worktree: {type: string, minLength: 1, maxLength: 1, description: "Single-character Git worktree status code for the unstaged side of this path."}
     RepositoryRemote:
       type: object
       required: [name, url]
       properties:
-        name: {type: string}
-        url: {type: string}
+        name: {type: string, description: "Git remote name in the inspected repository."}
+        url: {type: string, description: "Remote URL reported by Git; may contain sensitive host or repository information."}
     ProtectedPathSummary:
       type: object
       required: [changed]
       properties:
-        changed: {type: integer, minimum: 0}
-        paths: {type: array, items: {type: string}}
+        changed: {type: integer, minimum: 0, description: "Number of changed paths matching the API's protected-path prefixes (.roundtable, .github, and TASKS.ROUNDTABLE)."}
+        paths: {type: array, items: {type: string}, description: "Repository-relative changed paths counted as protected; omitted when no such paths were found."}
     RepositoryStatus:
       type: object
       required: [workspace_id, branch, head_sha, dirty, ahead, behind, detached, remotes, index, protected_paths]
       properties:
-        workspace_id: {type: string}
-        root_alias: {type: string}
-        branch: {type: string}
-        head_sha: {type: string}
-        dirty: {type: boolean}
-        ahead: {type: integer, minimum: 0}
-        behind: {type: integer, minimum: 0}
-        detached: {type: boolean}
-        remotes: {type: array, items: {$ref: '#/components/schemas/RepositoryRemote'}}
-        index: {type: array, items: {$ref: '#/components/schemas/RepositoryChange'}}
-        protected_paths: {$ref: '#/components/schemas/ProtectedPathSummary'}
+        workspace_id: {type: string, description: "Identifier of the workspace whose registered repository was inspected."}
+        root_alias: {type: string, description: "Optional display alias copied from the workspace registry."}
+        branch: {type: string, description: "Current branch name, or literal HEAD when Git reports detached HEAD."}
+        head_sha: {type: string, description: "Full object ID of the current HEAD commit."}
+        dirty: {type: boolean, description: "Whether Git porcelain status reported any staged or worktree changes."}
+        ahead: {type: integer, minimum: 0, description: "Commit count by which HEAD is ahead of its configured upstream; zero when detached or when upstream comparison fails."}
+        behind: {type: integer, minimum: 0, description: "Commit count by which HEAD is behind its configured upstream; zero when detached or when upstream comparison fails."}
+        detached: {type: boolean, description: "Whether the repository HEAD is detached."}
+        remotes: {type: array, items: {$ref: '#/components/schemas/RepositoryRemote'}, description: "Configured Git remotes, with duplicate fetch/push entries collapsed by remote name."}
+        index: {type: array, items: {$ref: '#/components/schemas/RepositoryChange'}, description: "Per-path index and worktree status codes from Git porcelain output."}
+        protected_paths: {$ref: '#/components/schemas/ProtectedPathSummary', description: "Summary of changed paths under the API's protected-path prefixes."}
     BranchSwitchInput:
       type: object
       required: [branch]
       additionalProperties: false
       properties:
-        branch: {type: string, minLength: 1}
+        branch: {type: string, minLength: 1, description: "Target local branch name for preflight or switch; handler rejects unsafe path-like, option-like, empty, or newline-containing values."}
     RepositoryBlocker:
       type: object
       required: [code, message]
       properties:
-        code: {type: string}
-        message: {type: string}
-        count: {type: integer, minimum: 0}
+        code: {type: string, description: "Stable machine-readable reason this preflight condition blocks a switch."}
+        message: {type: string, description: "Human-readable summary of the blocking repository or workspace condition."}
+        count: {type: integer, minimum: 0, description: "Count associated with a record-based blocker; omitted when the blocker is boolean or does not expose a count."}
     BranchSwitchPreflight:
       type: object
       required: [workspace_id, target_branch, allowed, blockers, repository]
       properties:
-        workspace_id: {type: string}
-        target_branch: {type: string}
-        allowed: {type: boolean}
-        blockers: {type: array, items: {$ref: '#/components/schemas/RepositoryBlocker'}}
-        repository: {$ref: '#/components/schemas/RepositoryStatus'}
+        workspace_id: {type: string, description: "Workspace whose repository and governance state were checked."}
+        target_branch: {type: string, description: "Validated target branch name considered by this preflight."}
+        allowed: {type: boolean, description: "True only when the current preflight produced no dirty-worktree, active-transaction, active-claim, open-proposal, active-session, or already-on-branch blocker."}
+        blockers: {type: array, items: {$ref: '#/components/schemas/RepositoryBlocker'}, description: "Current reasons that prevent switching; this is a point-in-time assessment and must be recomputed before mutation."}
+        repository: {$ref: '#/components/schemas/RepositoryStatus', description: "Repository state inspected during this preflight."}
     BranchSwitchResponse:
       type: object
       required: [workspace, before, after]
       properties:
-        workspace: {$ref: '#/components/schemas/Workspace'}
-        before: {$ref: '#/components/schemas/RepositoryStatus'}
-        after: {$ref: '#/components/schemas/RepositoryStatus'}
+        workspace: {$ref: '#/components/schemas/Workspace', description: "Updated workspace registry record after the branch switch was recorded."}
+        before: {$ref: '#/components/schemas/RepositoryStatus', description: "Repository status captured immediately before the switch."}
+        after: {$ref: '#/components/schemas/RepositoryStatus', description: "Repository status inspected after the switch completed."}
     RepositoryEntity:
       type: object
       required: [id, type, path]
       properties:
-        id: {type: string}
-        type: {type: string}
-        path: {type: string}
-        name: {type: string}
-        language: {type: string}
-        kind: {type: string}
-        start_line: {type: integer, minimum: 0}
-        end_line: {type: integer, minimum: 0}
-        claim_status: {type: string}
-        related_proposals: {type: array, items: {type: string}}
-        related_entities: {type: array, items: {type: string}}
+        id: {type: string, description: "Stable entity identifier, generally derived from the entity category and repository path or symbol identity."}
+        type: {type: string, description: "Repository entity category used by the discovery projection."}
+        path: {type: string, description: "Repository-relative path associated with the entity."}
+        name: {type: string, description: "Entity name when a symbol or named repository artifact is available."}
+        language: {type: string, description: "Detected source language for entities backed by recognized source files."}
+        kind: {type: string, description: "Parser/indexer classification for a discovered symbol; absent when the entity is not a symbol."}
+        start_line: {type: integer, minimum: 0, description: "One-based starting line for a discovered symbol when available; zero can indicate no indexed span."}
+        end_line: {type: integer, minimum: 0, description: "One-based ending line for a discovered symbol when available; zero can indicate no indexed span."}
+        claim_status: {type: string, description: "Claim status associated with this entity when a matching resource record exists."}
+        related_proposals: {type: array, items: {type: string}, description: "Proposal identifiers linked to this repository entity by the API projection."}
+        related_entities: {type: array, items: {type: string}, description: "Identifiers of other entities linked by the current repository discovery projection."}
     RepositoryEntities:
       type: object
       required: [items]
       properties:
-        items: {type: array, items: {$ref: '#/components/schemas/RepositoryEntity'}}
-        next_cursor: {type: [string, 'null']}
+        items: {type: array, items: {$ref: '#/components/schemas/RepositoryEntity'}, description: "Repository entities returned for the requested workspace and page."}
+        next_cursor: {type: [string, 'null'], description: "Opaque continuation cursor for the next page, or null when no further page is available."}
     Agent:
       type: object
       required: [agent_id, display_name, adapter_type, enabled, health, capabilities, supports_resume, supports_mcp, concurrency_limit, policy_weight, active_session_count]
