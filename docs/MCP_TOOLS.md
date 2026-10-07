@@ -136,6 +136,10 @@ The response is `{matches: [...]}` with each match containing a slash-normalized
 
 Conflict coverage and stale-claim rules are documented in [Claims](CLAIMS.md). Claim IDs/actor fields do not enforce operating-system access controls.
 
+`resource.get` requires an actual nonempty string `resource_id` and performs an exact key lookup; it returns the complete stored resource record, including current hash and raw metadata JSON. It does not refresh hashes, validate that metadata matches the ID, check claims, or resolve the record's path against the current repository. Missing rows and store errors are returned as tool errors.
+
+`resource.search` lists every stored resource ordered by ID, then filters in memory. `query` must be a string to be used; missing, empty, or wrongly typed values become an empty query and match every resource. Nonempty query text is lowercased but not trimmed, and substring-matched case-insensitively against ID, type, path, symbol, and language. Current hash, metadata JSON, and claims are not searched. Optional `resource_type` is an exact, case-sensitive filter; a wrong-typed value is treated as omitted. Results retain ID order. There is no pagination, result cap, resource refresh, or filesystem discovery, and an empty match slice may encode as JSON `null`. Large resource tables can therefore produce large responses; use a selective query/type and do not treat a search result as current filesystem truth.
+
 ### Proposals, votes, and decisions
 
 | Tool | Required arguments | Optional arguments / behavior |
