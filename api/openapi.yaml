@@ -781,10 +781,14 @@ paths:
     get:
       operationId: listPolicies
       summary: List workspace policy catalog entries
+      description: >-
+        Lists policy metadata owned by the workspace in created_at/id order, including current revision ID, scope, selector, severity, enforcement mode, human-approval flag, and metadata. Pagination is applied in memory; limit defaults to 50 and must be 1 through 200. Definitions are returned separately through revision endpoints. Invalid pagination returns 400 and database failures return 500.
       responses: {'200': {description: Policies, content: {application/json: {schema: {$ref: '#/components/schemas/Policies'}}}}, '404': {$ref: '#/components/responses/Problem'}}
     post:
       operationId: createPolicy
       summary: Create a disabled draft policy
+      description: >-
+        Requires X-Actor-ID, an accepted human X-Actor-Role, a nonblank Idempotency-Key, and a nonblank name. Missing ID is generated; omitted scope, severity, and enforcement_mode default to workspace, normal, and advisory. selector, metadata, approval requirement, and definition are stored; missing definition becomes an empty object. In one transaction, the handler creates the policy disabled and creates its first draft revision at version 1, then writes an audit event. It does not validate the definition or activate the policy. Invalid input returns 400, authorization failure 403, and persistence conflict 409.
       parameters: [{$ref: '#/components/parameters/ActorID'}, {$ref: '#/components/parameters/ActorRole'}, {$ref: '#/components/parameters/IdempotencyKey'}]
       requestBody: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/PolicyInput'}}}}
       responses: {'201': {description: Policy, content: {application/json: {schema: {$ref: '#/components/schemas/Policy'}}}}, '400': {$ref: '#/components/responses/Problem'}, '403': {$ref: '#/components/responses/Problem'}, '409': {$ref: '#/components/responses/Problem'}}
@@ -793,12 +797,16 @@ paths:
     get:
       operationId: getPolicy
       summary: Get one workspace policy
+      description: >-
+        Returns policy metadata only when the policy belongs to the selected workspace. The current revision's definition is not embedded; use the revisions route to read revision contents. Unknown or cross-workspace IDs return 404.
       responses: {'200': {description: Policy, content: {application/json: {schema: {$ref: '#/components/schemas/Policy'}}}}, '404': {$ref: '#/components/responses/Problem'}}
   /api/v1/workspaces/{id}/policies/{policy_id}/revisions:
     parameters: [{name: id, in: path, required: true, schema: {type: string}}, {name: policy_id, in: path, required: true, schema: {type: string}}, {name: cursor, in: query, schema: {type: string}}, {name: limit, in: query, schema: {type: integer, minimum: 1, maximum: 200, default: 50}}]
     get:
       operationId: listPolicyRevisions
       summary: List immutable policy revisions
+      description: >-
+        Verifies workspace ownership of the policy, then returns its revisions in descending version order with decoded definition JSON and creator/timestamp metadata. Pagination is applied in memory. Revisions are append-only records in the current handlers; invalid cursor/limit returns 400 and query failures return 500.
       responses: {'200': {description: Policy revisions, content: {application/json: {schema: {$ref: '#/components/schemas/PolicyRevisions'}}}}, '404': {$ref: '#/components/responses/Problem'}}
   /api/v1/workspaces/{id}/policies/{policy_id}/schema:
     parameters: [{name: id, in: path, required: true, schema: {type: string}}, {name: policy_id, in: path, required: true, schema: {type: string}}]
@@ -819,6 +827,8 @@ paths:
     post:
       operationId: simulatePolicy
       summary: Return a non-persisted policy evaluation preview
+      description: >-
+        Requires a workspace-owned policy with a readable current revision and a JSON subject_type and subject_id. Evaluates the current revision without persistence, audit, or authorization headers. Current evaluation is deliberately shallow: every top-level definition key is reported as matched; blocking mode returns warn and an evidence remediation only when evidence is empty; human_approval_required adds a remediation message but does not itself change the result. The deterministic key is derived from policy/revision/subject values. Invalid input returns 400 and policy/revision lookup failure 404.
       requestBody: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/PolicyEvaluationInput'}}}}
       responses: {'200': {description: Simulation, content: {application/json: {schema: {$ref: '#/components/schemas/PolicyEvaluation'}}}}, '400': {$ref: '#/components/responses/Problem'}, '404': {$ref: '#/components/responses/Problem'}}
   /api/v1/workspaces/{id}/policies/{policy_id}/evaluate:
@@ -826,6 +836,8 @@ paths:
     post:
       operationId: evaluatePolicy
       summary: Persist a policy evaluation result
+      description: >-
+        Requires X-Actor-ID, an accepted human X-Actor-Role, a nonblank Idempotency-Key, a workspace-owned policy/current revision, and subject_type plus subject_id. Uses the same shallow matching/result rules as simulation, then atomically stores the evaluation and an audit event. This endpoint does not apply enforcement to a transaction or automatically create an approval; human_approval_required is reported as a result/remediation signal. Invalid input returns 400, authorization failure 403, missing policy/revision 404, and persistence conflict 409.
       requestBody: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/PolicyEvaluationInput'}}}}
       responses: {'201': {description: Persisted evaluation, content: {application/json: {schema: {$ref: '#/components/schemas/PolicyEvaluation'}}}}, '400': {$ref: '#/components/responses/Problem'}, '403': {$ref: '#/components/responses/Problem'}, '404': {$ref: '#/components/responses/Problem'}, '409': {$ref: '#/components/responses/Problem'}}
   /api/v1/workspaces/{id}/policies/{policy_id}/{action}:
@@ -833,6 +845,8 @@ paths:
     post:
       operationId: transitionPolicy
       summary: Publish, enable, disable, clone, or draft a policy
+      description: >-
+        Requires X-Actor-ID, an accepted human X-Actor-Role, and a nonblank Idempotency-Key. publish marks the current revision published and policy active; enable sets policy status active without publishing its revision; disable sets disabled. update-draft creates the next numbered draft revision by copying the latest stored definition and points the policy at it; it does not accept a replacement definition. clone creates a new disabled policy and version-1 draft copied from the current revision. Every action writes a policy audit event transactionally. The response includes policy plus impact counts, but these counts query active sessions, claims, open proposals, and active transactions across the entire database, ignore individual query errors, and do not block transitions. Invalid action returns 400, authorization failure 403, missing policy 404, and transition/persistence errors 409.
       responses: {'200': {description: Policy and impact, content: {application/json: {schema: {$ref: '#/components/schemas/PolicyTransition'}}}}, '403': {$ref: '#/components/responses/Problem'}, '404': {$ref: '#/components/responses/Problem'}, '409': {$ref: '#/components/responses/Problem'}}
   /api/v1/workspaces/{id}/approvals:
     parameters: [{name: id, in: path, required: true, schema: {type: string}}, {name: cursor, in: query, schema: {type: string}}, {name: limit, in: query, schema: {type: integer, minimum: 1, maximum: 200, default: 50}}]
