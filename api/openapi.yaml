@@ -779,13 +779,14 @@ paths:
     get:
       operationId: getRunStatus
       summary: Get workspace run state and aggregate activity
+      description: Returns the latest run by started_at and selected aggregate counts. If the latest-run lookup returns no row or an error, the handler reports stopped with an empty run_id/goal and the current time; subsequent count-query errors are silently represented as zero. active_deliberations is currently counted across all workspaces. These database values do not establish whether an external agent process is running.
       responses: {'200': {description: Run status, content: {application/json: {schema: {$ref: '#/components/schemas/RunControl'}}}}, '404': {$ref: '#/components/responses/Problem'}}
   /api/v1/workspaces/{id}/runs/{action}:
     parameters: [{name: id, in: path, required: true, schema: {type: string}}, {name: action, in: path, required: true, schema: {type: string, enum: [start, pause, resume, stop, force-stop]}}, {$ref: '#/components/parameters/ActorID'}, {$ref: '#/components/parameters/ActorRole'}, {$ref: '#/components/parameters/IdempotencyKey'}]
     post:
       operationId: transitionRun
       summary: Start, pause intake, resume, or stop a workspace run
-      description: Run state is distinct from individual agent-session state. All control transitions require a human role and are audited.
+      description: Requires X-Actor-ID, X-Actor-Role (case-insensitive values human, admin, chair, view, operate, approve, govern, administer, or force-override), and a nonempty Idempotency-Key. Run state is distinct from individual agent-session/process state. start creates a new run when none exists or the latest is stopped; pause accepts active; resume accepts paused-intake or degraded; stop accepts active, paused-intake, or draining; force-stop accepts those states plus degraded. Successful result states are active for start/resume, paused-intake for pause, and stopped for stop/force-stop. Every successful transition writes an audit record in the state-update transaction. The body goal is used only when start creates a run; run_id is accepted but ignored. Invalid JSON is ignored by the current handler. The shared idempotency middleware replays matching responses for nonempty request bodies; empty-body lifecycle requests are re-evaluated on retry.
       requestBody: {required: false, content: {application/json: {schema: {$ref: '#/components/schemas/RunStartInput'}}}}
       responses: {'200': {description: Run transition, content: {application/json: {schema: {$ref: '#/components/schemas/RunTransition'}}}}, '400': {$ref: '#/components/responses/Problem'}, '403': {$ref: '#/components/responses/Problem'}, '409': {$ref: '#/components/responses/Problem'}}
   /api/v1/workspaces/{id}/dashboard/summary:
@@ -1920,28 +1921,31 @@ components:
     RunControl:
       type: object
       required: [run_id, workspace_id, goal, state, active_agent_count, active_deliberations, open_proposals, pending_approvals, blockers, updated_at]
+      description: Latest-run and aggregate projection. With no readable run row, run_id/goal are empty, state is stopped, counts are zero, and updated_at is response time. active_deliberations is global across workspaces; other counts are scoped by workspace or selected run as noted per field.
       properties:
-        run_id: {type: string}
-        workspace_id: {type: string}
-        goal: {type: string}
-        state: {type: string, enum: [stopped, starting, active, paused-intake, draining, stopping, degraded]}
-        active_agent_count: {type: integer, minimum: 0}
-        active_deliberations: {type: integer, minimum: 0}
-        open_proposals: {type: integer, minimum: 0}
-        pending_approvals: {type: integer, minimum: 0}
-        blockers: {type: integer, minimum: 0}
-        updated_at: {type: string, format: date-time}
+        run_id: {type: string, description: "ID of the latest run by started_at; empty when no run is found or the lookup fails."}
+        workspace_id: {type: string, description: "Workspace whose latest run and workspace-scoped counts are returned."}
+        goal: {type: string, description: "Latest run's stored goal after text redaction; empty when no run is found."}
+        state: {type: string, enum: [stopped, starting, active, paused-intake, draining, stopping, degraded], description: "Stored latest-run state, or stopped when the latest-run query has no row or errors. This is coordination state, not a process health probe."}
+        active_agent_count: {type: integer, minimum: 0, description: "Sessions for the selected run with status exactly active or running; count-query errors are ignored and can appear as zero."}
+        active_deliberations: {type: integer, minimum: 0, description: "All deliberations in the database with status active or running; the current query does not filter by workspace or run."}
+        open_proposals: {type: integer, minimum: 0, description: "Workspace proposals with status pending or in_review; query errors appear as zero."}
+        pending_approvals: {type: integer, minimum: 0, description: "Workspace human approvals with status requested; query errors appear as zero."}
+        blockers: {type: integer, minimum: 0, description: "Workspace proposals with status rejected; this implementation does not aggregate all possible blocker conditions. Query errors appear as zero."}
+        updated_at: {type: string, format: date-time, description: "Latest run's started_at value (not its most recent transition time), or current UTC response time when no run is found."}
     RunStartInput:
       type: object
+      description: Optional transition body. The handler decodes this leniently; malformed JSON is ignored. goal is used only when start creates a new run, and run_id is currently not used to select a run.
       properties:
-        run_id: {type: string}
-        goal: {type: string}
+        run_id: {type: string, description: "Accepted for compatibility but ignored by the current transition handler; the latest workspace run is selected instead."}
+        goal: {type: string, description: "Optional goal saved (after text redaction) only when start creates a new run; ignored for existing runs and other actions."}
     RunTransition:
       type: object
       required: [run_id, state]
+      description: Result of one successful state transition; this does not represent an external process start or termination acknowledgement.
       properties:
-        run_id: {type: string}
-        state: {type: string}
+        run_id: {type: string, description: "Run row transitioned by the action."}
+        state: {type: string, enum: [active, paused-intake, stopped], description: "Target state returned for a successful action: active for start/resume, paused-intake for pause, stopped for stop/force-stop."}
     DashboardSummary:
       type: object
       required: [workspace_id, generated_at, measurement_window, agents_online, proposal_queue, consensus_success_rate, policy_pass_rate, transaction_manager, mcp_enforcement, memory_oracle, run_state, repository]

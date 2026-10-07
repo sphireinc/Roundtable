@@ -1312,41 +1312,44 @@ Required fields: `transaction_id`, `status`, `repository_state`, `actions`
 
 Type: `object`
 
+Description: Latest-run and aggregate projection. With no readable run row, run_id/goal are empty, state is stopped, counts are zero, and updated_at is response time. active_deliberations is global across workspaces; other counts are scoped by workspace or selected run as noted per field.
 Required fields: `run_id`, `workspace_id`, `goal`, `state`, `active_agent_count`, `active_deliberations`, `open_proposals`, `pending_approvals`, `blockers`, `updated_at`
 
 | Property | Type | Required | Constraints | Description |
 |---|---|---|---|---|
-| `run_id` | `string` | yes |  |  |
-| `workspace_id` | `string` | yes |  |  |
-| `goal` | `string` | yes |  |  |
-| `state` | `string` | yes | enum=["stopped","starting","active","paused-intake","draining","stopping","degraded"] |  |
-| `active_agent_count` | `integer` | yes | minimum=0 |  |
-| `active_deliberations` | `integer` | yes | minimum=0 |  |
-| `open_proposals` | `integer` | yes | minimum=0 |  |
-| `pending_approvals` | `integer` | yes | minimum=0 |  |
-| `blockers` | `integer` | yes | minimum=0 |  |
-| `updated_at` | `string` | yes | format="date-time" |  |
+| `run_id` | `string` | yes |  | ID of the latest run by started_at; empty when no run is found or the lookup fails. |
+| `workspace_id` | `string` | yes |  | Workspace whose latest run and workspace-scoped counts are returned. |
+| `goal` | `string` | yes |  | Latest run's stored goal after text redaction; empty when no run is found. |
+| `state` | `string` | yes | enum=["stopped","starting","active","paused-intake","draining","stopping","degraded"] | Stored latest-run state, or stopped when the latest-run query has no row or errors. This is coordination state, not a process health probe. |
+| `active_agent_count` | `integer` | yes | minimum=0 | Sessions for the selected run with status exactly active or running; count-query errors are ignored and can appear as zero. |
+| `active_deliberations` | `integer` | yes | minimum=0 | All deliberations in the database with status active or running; the current query does not filter by workspace or run. |
+| `open_proposals` | `integer` | yes | minimum=0 | Workspace proposals with status pending or in_review; query errors appear as zero. |
+| `pending_approvals` | `integer` | yes | minimum=0 | Workspace human approvals with status requested; query errors appear as zero. |
+| `blockers` | `integer` | yes | minimum=0 | Workspace proposals with status rejected; this implementation does not aggregate all possible blocker conditions. Query errors appear as zero. |
+| `updated_at` | `string` | yes | format="date-time" | Latest run's started_at value (not its most recent transition time), or current UTC response time when no run is found. |
 
 ### Schema: RunStartInput {#schema-runstartinput}
 
 Type: `object`
 
+Description: Optional transition body. The handler decodes this leniently; malformed JSON is ignored. goal is used only when start creates a new run, and run_id is currently not used to select a run.
 
 | Property | Type | Required | Constraints | Description |
 |---|---|---|---|---|
-| `run_id` | `string` | no |  |  |
-| `goal` | `string` | no |  |  |
+| `run_id` | `string` | no |  | Accepted for compatibility but ignored by the current transition handler; the latest workspace run is selected instead. |
+| `goal` | `string` | no |  | Optional goal saved (after text redaction) only when start creates a new run; ignored for existing runs and other actions. |
 
 ### Schema: RunTransition {#schema-runtransition}
 
 Type: `object`
 
+Description: Result of one successful state transition; this does not represent an external process start or termination acknowledgement.
 Required fields: `run_id`, `state`
 
 | Property | Type | Required | Constraints | Description |
 |---|---|---|---|---|
-| `run_id` | `string` | yes |  |  |
-| `state` | `string` | yes |  |  |
+| `run_id` | `string` | yes |  | Run row transitioned by the action. |
+| `state` | `string` | yes | enum=["active","paused-intake","stopped"] | Target state returned for a successful action: active for start/resume, paused-intake for pause, stopped for stop/force-stop. |
 
 ### Schema: DashboardSummary {#schema-dashboardsummary}
 
