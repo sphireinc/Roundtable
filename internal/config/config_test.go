@@ -27,3 +27,59 @@ func TestMCPHTTPDefaultsAndConfigParsing(t *testing.T) {
 		t.Fatalf("MCP HTTP settings did not parse: %+v", loaded.MCP)
 	}
 }
+
+func TestLoadRejectsNegativeAgentPoolCounts(t *testing.T) {
+	for _, field := range []string{"implementers", "reviewers"} {
+		t.Run(field, func(t *testing.T) {
+			root := t.TempDir()
+			if err := os.MkdirAll(filepath.Join(root, ".roundtable"), 0o700); err != nil {
+				t.Fatal(err)
+			}
+			contents := "agents:\n  " + field + ":\n    count: -1\n"
+			if err := os.WriteFile(filepath.Join(root, DefaultConfigPath), []byte(contents), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := Load(root); err == nil {
+				t.Fatal("Load accepted a negative agent pool count")
+			}
+		})
+	}
+}
+
+func TestLoadRejectsUnavailableRoleAdapters(t *testing.T) {
+	for _, configValue := range []string{"missing", "empty"} {
+		t.Run(configValue, func(t *testing.T) {
+			root := t.TempDir()
+			if err := os.MkdirAll(filepath.Join(root, ".roundtable"), 0o700); err != nil {
+				t.Fatal(err)
+			}
+			adapter := "missing"
+			adapters := ""
+			if configValue == "empty" {
+				adapter = "custom"
+				adapters = "adapters:\n  custom:\n    command: \"\"\n"
+			}
+			contents := "agents:\n  chair:\n    adapter: " + adapter + "\n" + adapters
+			if err := os.WriteFile(filepath.Join(root, DefaultConfigPath), []byte(contents), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := Load(root); err == nil {
+				t.Fatal("Load accepted a role adapter without an executable command")
+			}
+		})
+	}
+}
+
+func TestLoadAcceptsZeroPoolsAndConfiguredCustomRoleAdapter(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, ".roundtable"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	contents := "agents:\n  implementers:\n    count: 0\n  chair:\n    adapter: custom\nadapters:\n  custom:\n    command: custom-agent\n"
+	if err := os.WriteFile(filepath.Join(root, DefaultConfigPath), []byte(contents), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Load(root); err != nil {
+		t.Fatalf("Load rejected a valid zero-sized pool or custom adapter: %v", err)
+	}
+}

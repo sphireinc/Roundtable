@@ -84,7 +84,7 @@ Run `roundtable start --root DIR` to serve the standard HTTP endpoint and the le
 
 ## Validation and limitations
 
-The loader rejects unknown ordinary scalar keys, invalid nesting, odd indentation, invalid booleans, and invalid integers. It does not currently validate the supported version value or transport value, and it does not perform comprehensive semantic validation. An unknown agent adapter reference survives loading; capability synchronization writes configured adapter entries without checking agent references, and orchestrator command lookup for an unknown name yields an empty command string. Do not rely on loading or synchronization to detect that typo. Review both [CLI behavior](CLI.md) and [adapter behavior](ADAPTERS.md) when changing configuration.
+The loader rejects unknown ordinary scalar keys, invalid nesting, odd indentation, invalid booleans, and invalid integers. After parsing, it validates that implementer and reviewer counts are nonnegative and that every configured role references a defined adapter with a nonblank command. Zero-sized pools are allowed. It does not currently validate the supported version value or transport value, and it does not perform comprehensive semantic validation. Review both [CLI behavior](CLI.md) and [adapter behavior](ADAPTERS.md) when changing configuration.
 
 ## Loading and effective values
 
@@ -100,7 +100,7 @@ Accepted boolean spellings are exactly Go's `strconv.ParseBool` forms: `1`, `t`,
 
 The parser treats `null`, `~`, `[]`, and `{}` as literal strings rather than YAML null/list/map values when they appear in string fields. For integer/boolean fields, these values fail conversion. To assign an empty string, use `""`; a bare `key:` is a section header and does not overwrite its default. Single-quoted strings retain their quote characters. These distinctions matter for executable names, paths, and adapter references.
 
-No loader checks enforce nonempty project names, paths, commands, model names, or role names. Pool counts have no configured lower or upper bound. Zero counts omit that pool from generated agent specifications. Negative counts are accepted by the parser and should not be used: in particular, the orchestrator allocates its implementer-ID slice with the configured count as capacity, so a negative implementer count can panic during assignment. Very large counts can cause excessive allocations and database work. Configure nonnegative, operationally bounded counts rather than treating parse success as safety validation.
+No loader checks enforce nonempty project names, paths, model names, or role names. Adapter commands are checked only for nonblank content, not executable validity or launchability. Pool counts have no configured upper bound; very large counts can cause excessive allocations and database work. Configure operationally bounded counts rather than treating parse success as comprehensive safety validation.
 
 Single-agent IDs/names remain fixed (`chair-1`, `architect-1`, `tester-1`, `security-1`, `memory-oracle-1`) even when their configured role strings change. Pool agents use sequential IDs (`implementer-1`, `reviewer-1`, and so on) and hard-coded `Implementer`/`Reviewer` roles. Changing a role label can affect exact role-name checks elsewhere; it is not a general role-definition mechanism. Agent model fields are loaded configuration values but are not added to the orchestrator's agent-spec command string; adapter planning and session metadata are separate surfaces.
 

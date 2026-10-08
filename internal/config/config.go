@@ -141,7 +141,41 @@ func Load(root string) (Config, error) {
 	if err := parseYAMLInto(strings.Split(string(data), "\n"), &cfg); err != nil {
 		return Config{}, err
 	}
+	if err := cfg.Validate(); err != nil {
+		return Config{}, err
+	}
 	return cfg, nil
+}
+
+func (cfg Config) Validate() error {
+	if cfg.Agents.Implementers.Count < 0 {
+		return errors.New("agents.implementers.count must be nonnegative")
+	}
+	if cfg.Agents.Reviewers.Count < 0 {
+		return errors.New("agents.reviewers.count must be nonnegative")
+	}
+	roles := []struct {
+		name    string
+		adapter string
+	}{
+		{name: "agents.chair", adapter: cfg.Agents.Chair.Adapter},
+		{name: "agents.architect", adapter: cfg.Agents.Architect.Adapter},
+		{name: "agents.implementers", adapter: cfg.Agents.Implementers.Adapter},
+		{name: "agents.reviewers", adapter: cfg.Agents.Reviewers.Adapter},
+		{name: "agents.tester", adapter: cfg.Agents.Tester.Adapter},
+		{name: "agents.security", adapter: cfg.Agents.Security.Adapter},
+		{name: "agents.memory_oracle", adapter: cfg.Agents.MemoryOracle.Adapter},
+	}
+	for _, role := range roles {
+		adapter, ok := cfg.Adapters[role.adapter]
+		if !ok {
+			return fmt.Errorf("%s.adapter references unknown adapter %q", role.name, role.adapter)
+		}
+		if strings.TrimSpace(adapter.Command) == "" {
+			return fmt.Errorf("adapters.%s.command must not be empty (referenced by %s)", role.adapter, role.name)
+		}
+	}
+	return nil
 }
 
 func parseYAMLInto(lines []string, cfg *Config) error {
