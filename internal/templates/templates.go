@@ -45,6 +45,9 @@ storage:
 mcp:
   transport: unix
   socket_path: .roundtable/mcp/roundtable.sock
+  http_address: 127.0.0.1:7117
+  tls_cert_file: ""
+  tls_key_file: ""
 agents:
   chair:
     role: Chair

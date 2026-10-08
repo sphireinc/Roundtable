@@ -304,6 +304,38 @@ func TestTickSchedulesTurnRequestsInFIFOOrder(t *testing.T) {
 	}
 }
 
+func TestTickSchedulesTurnBeforeUnrelatedProposalReviewFailure(t *testing.T) {
+	root, store, service := newTestService(t)
+	defer store.DB().Close()
+	ctx := context.Background()
+	if err := store.UpsertRun(ctx, db.Run{ID: "RUN-ISOLATION", Status: "active"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.AppendEvent(ctx, db.Event{RunID: "RUN-ISOLATION", Type: "agent.turn_requested", ActorID: "reviewer-1", PayloadJSON: `{"reason_md":"urgent"}`}); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.UpsertProposal(ctx, db.Proposal{
+		ID: "P-BROKEN", TaskID: "T-OTHER", AgentID: "implementer-1", Title: "Broken pending proposal",
+		PatchPath: filepath.Join(root, "missing.diff"), Status: "pending",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := service.Tick(ctx, "RUN-ISOLATION"); err == nil {
+		t.Fatal("expected unrelated proposal review to report its failure")
+	}
+	events, err := store.ListEvents(ctx, "RUN-ISOLATION")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, event := range events {
+		if event.Type == "agent.turn_scheduled" {
+			return
+		}
+	}
+	t.Fatalf("unrelated proposal review failure prevented turn scheduling: %+v", events)
+}
+
 func newTestService(t *testing.T) (string, *db.Store, *Service) {
 	t.Helper()
 	root := t.TempDir()

@@ -26,8 +26,11 @@ type StorageConfig struct {
 }
 
 type MCPConfig struct {
-	Transport  string
-	SocketPath string
+	Transport   string
+	SocketPath  string
+	HTTPAddress string
+	TLSCertFile string
+	TLSKeyFile  string
 }
 
 type AgentsConfig struct {
@@ -70,8 +73,9 @@ func Default() Config {
 			WAL:        true,
 		},
 		MCP: MCPConfig{
-			Transport:  "unix",
-			SocketPath: ".roundtable/mcp/roundtable.sock",
+			Transport:   "unix",
+			SocketPath:  ".roundtable/mcp/roundtable.sock",
+			HTTPAddress: "127.0.0.1:7117",
 		},
 		Agents: AgentsConfig{
 			Chair:        SingleAgentConfig{Role: "Chair", Adapter: "claude", Model: "default"},
@@ -187,6 +191,12 @@ func parseYAMLInto(lines []string, cfg *Config) error {
 			cfg.MCP.Transport = value
 		case "mcp.socket_path":
 			cfg.MCP.SocketPath = value
+		case "mcp.http_address":
+			cfg.MCP.HTTPAddress = value
+		case "mcp.tls_cert_file":
+			cfg.MCP.TLSCertFile = value
+		case "mcp.tls_key_file":
+			cfg.MCP.TLSKeyFile = value
 		case "agents.chair.role":
 			cfg.Agents.Chair.Role = value
 		case "agents.chair.adapter":

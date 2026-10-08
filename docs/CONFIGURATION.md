@@ -10,8 +10,11 @@ The Go runtime reads `.roundtable/config.yaml` using `internal/config`. `roundta
 | `project_name` | string | `Roundtable` | Human-readable project name used by runtime metadata. |
 | `storage.sqlite_path` | path | `.roundtable/roundtable.db` | SQLite database path, resolved relative to the project root by the CLI. |
 | `storage.wal` | boolean | `true` | Parsed for compatibility, but currently does not control the SQLite journal mode. `internal/db` unconditionally executes `PRAGMA journal_mode = WAL`; setting this field to `false` does not disable WAL. |
-| `mcp.transport` | string | `unix` | Transport label reported in generated metadata. The current server implementation binds a Unix-domain socket; changing this value does not enable another transport. |
-| `mcp.socket_path` | path | `.roundtable/mcp/roundtable.sock` | Socket path; relative paths are resolved under the project root. |
+| `mcp.transport` | string | `unix` | Legacy socket protocol label; it does not select the standard MCP transport. |
+| `mcp.socket_path` | path | `.roundtable/mcp/roundtable.sock` | Compatibility socket path; relative paths resolve under the project root. |
+| `mcp.http_address` | host:port | `127.0.0.1:7117` | Streamable HTTP bind address. Non-loopback binds require TLS files and `ROUNDTABLE_MCP_TOKEN`. |
+| `mcp.tls_cert_file` | path | empty | TLS certificate path, relative to project root when not absolute. Required with the key for non-loopback binds. |
+| `mcp.tls_key_file` | path | empty | TLS private-key path, relative to project root when not absolute. Keep the key outside version control. |
 
 ## Agent roles
 
@@ -57,6 +60,9 @@ storage:
 mcp:
   transport: unix
   socket_path: .roundtable/mcp/roundtable.sock
+  http_address: 127.0.0.1:7117
+  tls_cert_file: ""
+  tls_key_file: ""
 agents:
   implementers:
     count: 3
@@ -73,6 +79,8 @@ adapters:
 ```
 
 Unspecified values retain defaults. Boolean values must parse using Go's `strconv.ParseBool` forms. Integer values must parse as base-10 integers. The current parser trims surrounding double-quote characters from scalar values, does not interpret escape sequences, and treats `#` as a comment only when it begins the trimmed line; inline comments are not stripped. Keep literal values simple.
+
+Run `roundtable start --root DIR` to serve the standard HTTP endpoint and the legacy socket from one runtime. A harness may launch `roundtable mcp stdio --root DIR`; the bridge connects to the already-running owner and does not start a coordinator. Never place bearer tokens in this configuration file or command-line arguments; supply `ROUNDTABLE_MCP_TOKEN` in the process environment.
 
 ## Validation and limitations
 

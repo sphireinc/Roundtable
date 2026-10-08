@@ -1,6 +1,6 @@
 # CLI Reference
 
-The executable is `cmd/roundtable`; invoke it as `roundtable` after installation/build or use `go run ./cmd/roundtable`. The supported top-level commands are exactly `init`, `run`, `resume`, `sessions`, `table`, `watch`, `claims`, `symbols`, and `mcp`. This reference follows flag definitions in `internal/app/app.go`; unsupported command names are rejected.
+The executable is `cmd/roundtable`; invoke it as `roundtable` after installation/build or use `go run ./cmd/roundtable`. The supported top-level commands are `init`, `run`, `start`, `resume`, `sessions`, `table`, `watch`, `claims`, `symbols`, and `mcp`. This reference follows flag definitions in `internal/app/app.go`; unsupported command names are rejected.
 
 Unless stated otherwise, `--root` defaults to `.` and selects the project root containing `.roundtable/config.yaml` and the configured SQLite file.
 
@@ -17,6 +17,16 @@ roundtable init [--root DIR] [--force]
 ```
 
 Creates generated project protocol, policy, task, memory, and MCP files; opens/migrates the SQLite database; and synchronizes adapter capability records. Existing generated files are preserved by default. `--force` permits overwriting generated files. The starter layout is defined in `internal/templates`; it does not create every directory shown in older planning documents.
+
+## Continuous foreground coordinator
+
+```sh
+roundtable start [--root DIR] [--interval DURATION]
+```
+
+`start` owns the project runtime and stays in the foreground even with no active runs. It does not create a run or launch agent CLIs. It ticks every active run, serves standard MCP Streamable HTTP at the configured address (default `127.0.0.1:7117`), and retains the legacy Unix socket. Operational logs go to stdout. Ctrl-C or SIGTERM initiates shutdown; this is not boot-time service installation or crash supervision. Non-loopback HTTP requires a TLS certificate/key plus `ROUNDTABLE_MCP_TOKEN`.
+
+Configure a harness to launch `roundtable mcp stdio --root /absolute/project/path`; this bridge forwards MCP to the running HTTP endpoint and fails if `start` is unavailable. Direct HTTP clients may connect to `http://127.0.0.1:7117/mcp`.
 
 ## Run and resume orchestration
 
@@ -128,14 +138,15 @@ Prints extracted symbol kind/name/path/start/end line records for supported Go, 
 ```sh
 roundtable mcp inspect [--root DIR] [--write]
 roundtable mcp serve [--root DIR]
+roundtable mcp stdio [--root DIR] [--url URL]
 roundtable mcp call [--root DIR] --tool NAME [--args-file JSON_FILE] [--socket]
 ```
 
-`inspect` prints registered tool names; `--write` regenerates the manifest, tool schema, and server configuration under `.roundtable/mcp/`. `serve` listens on the configured local transport until its context ends. `call` reads optional JSON object arguments from `--args-file` and invokes the tool directly against the local runtime; with `--socket`, it sends the call to the running Unix socket. See [MCP Tools](MCP_TOOLS.md).
+`inspect` prints implemented standard-MCP tool names; `--write` regenerates the manifest, tool schema, and server configuration under `.roundtable/mcp/`. `serve` is a standalone legacy-socket owner and does not run the coordinator. `stdio` launches a standard MCP stdio bridge to the already-running `start` HTTP endpoint; it never opens SQLite or starts a second coordinator. `call` reads optional JSON object arguments from `--args-file` and invokes the tool directly against the local runtime; with `--socket`, it sends the call to the running compatibility socket. See [MCP Tools](MCP_TOOLS.md).
 
 ### Inspection and generated assets
 
-All MCP subcommands default `--root` to `.`. `inspect` loads configuration even without `--write`; a missing or malformed file prevents inspection. It prints one advertised tool name per line alphabetically, not schemas or a health report. Advertised names include the unimplemented `repo.dependency_context`.
+All MCP subcommands default `--root` to `.`. `inspect` loads configuration even without `--write`; a missing or malformed file prevents inspection. It prints one implemented standard-MCP tool name per line alphabetically, not schemas or a health report. `repo.dependency_context` remains excluded until implemented.
 
 `inspect --write` overwrites `AGENT_MCP_MANIFEST.md`, `tools.schema.json`, then `server.json` under `.roundtable/mcp`. It does not create missing parent directories, require `--force`, back up contents, or replace all files atomically. A later failure can leave earlier assets refreshed. New files request mode `0644`, subject to umask. It does not rewrite policy/configuration or start a listener. Generated-asset refresh during `run` instead uses the scaffold helper, which ensures runtime directories first.
 
@@ -151,7 +162,7 @@ Both modes print successful results as indented JSON plus a newline, without the
 
 ### Standalone cancellation boundary
 
-Standalone `mcp serve` starts no coordinator or TUI. Its startup message displays the configured transport label, but the server binds a Unix listener. The dispatcher passes `context.Background()` to standalone serving, and direct calls also use a background context. These command paths do not inherit the application's caller cancellation context and expose no timeout flag. Process termination is not a guarantee of graceful context-driven cleanup or rollback. The server type's context-aware lifecycle and interactive `run` composition are separate behaviors.
+`mcp serve` starts no coordinator or TUI and binds only the legacy Unix socket. It and interactive `run` share a canonical-project owner lock with `start`, so they cannot unlink or replace another owner's endpoint. Both inherit process cancellation. `mcp stdio` writes protocol frames only to stdout and diagnostics to stderr; it fails rather than starting an owner if HTTP is unavailable. See [MCP Tools](MCP_TOOLS.md) for loopback defaults and remote TLS/token requirements.
 
 ## Exit behavior
 

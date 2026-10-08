@@ -11,7 +11,9 @@ go build -o roundtable ./cmd/roundtable
 ./roundtable run --root . --goal "Coordinate this work"
 ```
 
-This assumes an already-scaffolded project with a readable `.roundtable/config.yaml`. For a new project, initialize its target root first as described in [Quickstart](QUICKSTART.md); `init` refuses existing starter files, while `--force` overwrites customizations. The runtime stores SQLite and MCP assets under `.roundtable/` by default. The MCP server uses the configured Unix socket. Protect the project directory and database; the database contains operational state and audit/event data.
+For a persistent foreground coordinator that remains available while idle, run `./roundtable start --root .` instead. It owns the shared runtime and standard MCP HTTP endpoint; harnesses use `./roundtable mcp stdio --root /absolute/project/path`. Stop it with Ctrl-C. It does not auto-start after reboot.
+
+This assumes an already-scaffolded project with a readable `.roundtable/config.yaml`. For a new project, initialize its target root first as described in [Quickstart](QUICKSTART.md); `init` refuses existing starter files, while `--force` overwrites customizations. The runtime stores SQLite and MCP assets under `.roundtable/` by default. `start` binds HTTP to loopback by default; non-loopback exposure requires TLS and bearer authentication. Protect the project directory and database; the database contains operational state and audit/event data.
 
 ## HTTP API container
 

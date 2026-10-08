@@ -20,6 +20,7 @@ import (
 	"roundtable/internal/db"
 	"roundtable/internal/mcp"
 	"roundtable/internal/orchestrator"
+	"roundtable/internal/processlock"
 	"roundtable/internal/scaffold"
 	"roundtable/internal/sessions"
 	"roundtable/internal/state"
@@ -38,6 +39,8 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 		return runInit(args[1:], stdout)
 	case "run":
 		return runRoundtable(ctx, args[1:], stdout)
+	case "start":
+		return runStart(ctx, args[1:], stdout, stderr)
 	case "resume":
 		return runResume(ctx, args[1:], stdout)
 	case "sessions":
@@ -51,14 +54,14 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	case "symbols":
 		return runSymbols(args[1:], stdout)
 	case "mcp":
-		return runMCP(args[1:], stdout)
+		return runMCP(ctx, args[1:], stdout, stderr)
 	default:
 		return usage(stderr)
 	}
 }
 
 func usage(w io.Writer) error {
-	_, _ = fmt.Fprintln(w, "usage: roundtable <init|run|resume|sessions|table|watch|claims|symbols|mcp>")
+	_, _ = fmt.Fprintln(w, "usage: roundtable <init|run|start|resume|sessions|table|watch|claims|symbols|mcp>")
 	return errors.New("unknown command")
 }
 
@@ -115,17 +118,22 @@ func runRoundtable(ctx context.Context, args []string, stdout io.Writer) error {
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
+	ownerLock, err := processlock.Acquire(*root)
+	if err != nil {
+		return err
+	}
+	defer ownerLock.Close()
 
 	cfg, err := config.Load(*root)
 	if err != nil {
 		return err
 	}
-	sqlDB, err := db.Open(filepath.Join(*root, cfg.Storage.SQLitePath))
+	runtime, runtimeCleanup, err := mcp.OpenRuntime(*root)
 	if err != nil {
 		return err
 	}
-	defer sqlDB.Close()
-	store := db.NewStore(sqlDB, nil)
+	defer runtimeCleanup()
+	store := runtime.Store()
 	if err := syncAdapterCapabilities(ctx, store, cfg); err != nil {
 		return err
 	}
@@ -171,7 +179,7 @@ func runRoundtable(ctx context.Context, args []string, stdout io.Writer) error {
 	if err != nil {
 		return err
 	}
-	server := mcp.NewServer(*root, resolveSocketPath(*root, cfg.MCP.SocketPath), mcp.DefaultRegistry())
+	server := mcp.NewServerWithRuntime(runtime, resolveSocketPath(*root, cfg.MCP.SocketPath), mcp.DefaultRegistry())
 	if err := server.Start(ctx); err != nil {
 		return err
 	}
@@ -220,20 +228,45 @@ func runRoundtable(ctx context.Context, args []string, stdout io.Writer) error {
 	}
 }
 
-func runMCP(args []string, stdout io.Writer) error {
+func runMCP(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	if len(args) == 0 {
-		return errors.New("usage: roundtable mcp <inspect|serve|call>")
+		return errors.New("usage: roundtable mcp <inspect|serve|stdio|call>")
 	}
 	switch args[0] {
 	case "inspect":
 		return runMCPInspect(args[1:], stdout)
 	case "serve":
-		return runMCPServe(context.Background(), args[1:], stdout)
+		return runMCPServe(ctx, args[1:], stdout)
+	case "stdio":
+		return runMCPStdio(ctx, args[1:], stdout, stderr)
 	case "call":
 		return runMCPCall(args[1:], stdout)
 	default:
 		return errors.New("unsupported mcp command")
 	}
+}
+
+func runMCPStdio(ctx context.Context, args []string, stdout, stderr io.Writer) error {
+	fs := flag.NewFlagSet("mcp stdio", flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	root := fs.String("root", ".", "project root")
+	endpoint := fs.String("url", "", "Streamable HTTP MCP endpoint")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	cfg, err := config.Load(*root)
+	if err != nil {
+		return err
+	}
+	url := *endpoint
+	if url == "" {
+		scheme := "http"
+		if cfg.MCP.TLSCertFile != "" && cfg.MCP.TLSKeyFile != "" {
+			scheme = "https"
+		}
+		url = scheme + "://" + cfg.MCP.HTTPAddress + "/mcp"
+	}
+	return mcp.RunStdioBridge(ctx, os.Stdin, stdout, stderr, url, mcp.HTTPAuth{Token: os.Getenv("ROUNDTABLE_MCP_TOKEN")})
 }
 
 func runMCPInspect(args []string, stdout io.Writer) error {
@@ -273,7 +306,7 @@ func runMCPInspect(args []string, stdout io.Writer) error {
 		}
 	}
 
-	for _, name := range registry.ToolNames() {
+	for _, name := range registry.StandardToolNames() {
 		_, _ = fmt.Fprintln(stdout, name)
 	}
 	return nil
@@ -286,13 +319,23 @@ func runMCPServe(ctx context.Context, args []string, stdout io.Writer) error {
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
+	ownerLock, err := processlock.Acquire(*root)
+	if err != nil {
+		return err
+	}
+	defer ownerLock.Close()
 
 	cfg, err := config.Load(*root)
 	if err != nil {
 		return err
 	}
 
-	server := mcp.NewServer(*root, filepath.Join(*root, cfg.MCP.SocketPath), mcp.DefaultRegistry())
+	runtime, cleanup, err := mcp.OpenRuntime(*root)
+	if err != nil {
+		return err
+	}
+	defer cleanup()
+	server := mcp.NewServerWithRuntime(runtime, resolveSocketPath(*root, cfg.MCP.SocketPath), mcp.DefaultRegistry())
 	if err := server.Start(ctx); err != nil {
 		return err
 	}

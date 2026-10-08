@@ -75,10 +75,13 @@ func (s *Service) Tick(ctx context.Context, runID string) error {
 	if err := s.assignOpenTasks(ctx, runID); err != nil {
 		return err
 	}
+	if err := s.scheduleNextTurnRequest(ctx, runID); err != nil {
+		return err
+	}
 	if err := s.requestPendingProposalReviews(ctx, runID); err != nil {
 		return err
 	}
-	return s.scheduleNextTurnRequest(ctx, runID)
+	return nil
 }
 
 // Run keeps applying idempotent orchestration ticks until the run converges,

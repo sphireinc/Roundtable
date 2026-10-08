@@ -79,7 +79,7 @@ func TestMCPInspectWritesGeneratedRegistryAssets(t *testing.T) {
 		t.Fatalf("expected registry-generated schema to include table.watch, got: %s", written)
 	}
 	manifest := mustReadFile(t, filepath.Join(root, ".roundtable/mcp/AGENT_MCP_MANIFEST.md"))
-	if !strings.Contains(manifest, "not a standards-complete MCP transport") {
+	if !strings.Contains(manifest, "not itself a standards-complete MCP transport") {
 		t.Fatalf("expected generated manifest to state the socket protocol boundary, got: %s", manifest)
 	}
 	if !strings.Contains(output.String(), "proposal.create") {
@@ -517,11 +517,8 @@ func TestEndToEndRunResumeWatchSessionsFlow(t *testing.T) {
 		t.Fatalf("write config failed: %v", err)
 	}
 
-	runCtx, cancel := context.WithCancel(context.Background())
-	time.AfterFunc(50*time.Millisecond, cancel)
 	output.Reset()
-	err = Run(runCtx, []string{"run", "--root", root, "--run", "RUN-1", "--goal", "bootstrap", "--headless"}, &output, &output)
-	if err != nil && !strings.Contains(err.Error(), "context canceled") {
+	if err := Run(context.Background(), []string{"run", "--root", root, "--run", "RUN-1", "--goal", "bootstrap", "--headless"}, &output, &output); err != nil {
 		t.Fatalf("run failed unexpectedly: %v", err)
 	}
 
@@ -555,11 +552,8 @@ func TestEndToEndRunResumeWatchSessionsFlow(t *testing.T) {
 	mustApp(t, err)
 	mustApp(t, sqlDB.Close())
 
-	runCtx, cancel = context.WithCancel(context.Background())
-	time.AfterFunc(50*time.Millisecond, cancel)
 	output.Reset()
-	err = Run(runCtx, []string{"run", "--root", root, "--resume", "--run", "RUN-1", "--headless"}, &output, &output)
-	if err != nil && !strings.Contains(err.Error(), "context canceled") {
+	if err := Run(context.Background(), []string{"run", "--root", root, "--resume", "--run", "RUN-1", "--headless"}, &output, &output); err != nil {
 		t.Fatalf("resume run failed unexpectedly: %v", err)
 	}
 
@@ -650,6 +644,29 @@ func TestRunHeadlessExecutesOrchestrationTick(t *testing.T) {
 	}
 	if task.AssignedAgentID == "" || task.Status != "in_progress" {
 		t.Fatalf("expected orchestrator-assigned task, got %+v", task)
+	}
+}
+
+func TestRunHeadlessLeavesActiveRunForForegroundCoordinator(t *testing.T) {
+	root := t.TempDir()
+	var output strings.Builder
+	if err := Run(context.Background(), []string{"init", "--root", root}, &output, &output); err != nil {
+		t.Fatalf("init failed: %v", err)
+	}
+	if err := Run(context.Background(), []string{"run", "--root", root, "--goal", "coordinate follow-up work", "--headless"}, &output, &output); err != nil {
+		t.Fatalf("headless run failed: %v", err)
+	}
+	sqlDB, err := db.Open(filepath.Join(root, ".roundtable/roundtable.db"))
+	if err != nil {
+		t.Fatalf("open db failed: %v", err)
+	}
+	defer sqlDB.Close()
+	runs, err := db.NewStore(sqlDB, nil).ListRuns(context.Background())
+	if err != nil {
+		t.Fatalf("list initialized runs: %v", err)
+	}
+	if len(runs) != 1 || runs[0].Status != "active" {
+		t.Fatalf("headless handoff runs = %+v, want one active run", runs)
 	}
 }
 

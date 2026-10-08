@@ -2,9 +2,11 @@
 
 The Go coordinator is implemented in `internal/orchestrator`. It maintains the shared run state and performs idempotent scheduling work; it does not launch external agent processes. Agent work enters through the MCP tool boundary and is represented by persisted tasks, proposals, votes, decisions, claims, and events.
 
+`roundtable start` is the continuously running project owner. It stays alive while idle, ticks each active run independently, and exposes coordinator health through `/healthz`; it does not create a run. The default interval is one second. Per-run tick failures are retried with capped backoff and mark service health degraded without preventing other runs from ticking. The official MCP HTTP endpoint and stdio bridge both dispatch through the same runtime. Foreground operation does not install a boot service or restart after host reboot.
+
 ## Run lifecycle
 
-`roundtable run` loads `.roundtable/config.yaml`, opens/migrates SQLite, synchronizes configured agents and adapter capabilities, creates or resumes a run, writes generated MCP assets, and starts the orchestrator. Interactive mode starts the MCP Unix socket server and TUI alongside the loop. Headless mode runs without those services and defaults to one orchestration iteration.
+`roundtable run` loads `.roundtable/config.yaml`, opens/migrates SQLite, synchronizes configured agents and adapter capabilities, creates or resumes one run, writes generated MCP assets, and starts the finite-per-run orchestrator. Interactive mode also starts the legacy Unix socket and TUI. Headless mode runs without those services and defaults to one orchestration iteration. Use `roundtable start` when the coordinator must remain alive across runs and idle periods; it has no TUI and creates no run.
 
 The loop performs one idempotent tick per iteration:
 

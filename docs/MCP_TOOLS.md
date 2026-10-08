@@ -1,8 +1,18 @@
 # MCP Tool Reference
 
-The local agent tool surface is declared in `internal/mcp/registry.go` and dispatched by `internal/mcp/runtime.go`. The registry currently contains **39 advertised tools**; **38 have runtime dispatch handlers**. `repo.dependency_context` is declared but not implemented. Registry membership is not proof of executable support. Use the generated `.roundtable/mcp/tools.schema.json` for machine-readable JSON schemas; regenerate generated MCP assets with `roundtable mcp inspect --write` after registry changes.
+The local agent tool surface is declared in `internal/mcp/registry.go` and dispatched by `internal/mcp/runtime.go`. The registry contains 39 entries; standard MCP discovery exposes the 38 tools with runtime handlers and excludes `repo.dependency_context`. Use the generated `.roundtable/mcp/tools.schema.json` for the supported tool schemas; regenerate assets with `roundtable mcp inspect --write` after registry changes.
 
-The runtime uses a local Unix-domain socket by default. Its registry/schema are MCP-inspired, but the socket is a Roundtable-specific newline-delimited JSON protocol, not a standards-complete MCP/JSON-RPC transport. It does not expose per-tool HTTP auth or a cryptographic agent identity on the socket; `agent_id` and actor fields are tool arguments, not proof of identity. Protect the socket and project account. Do not treat capability flags or a read-only tool name as a complete OS sandbox.
+`roundtable start` serves standard MCP Streamable HTTP at `http://127.0.0.1:7117/mcp` by default and the legacy Unix socket against the same runtime. Harnesses that launch stdio processes use `roundtable mcp stdio --root DIR`; this bridge requires the HTTP owner to already be running. The Unix socket remains a Roundtable-specific newline-delimited JSON protocol, not MCP JSON-RPC. It has no cryptographic agent identity; actor fields are caller-supplied. Protect the project account and do not treat tool names or capability flags as an OS sandbox.
+
+For Codex CLI, configure the stdio process in project-local `.codex/config.toml` or add it with the Codex MCP CLI; do not edit global configuration as part of project setup:
+
+```toml
+[mcp_servers.roundtable]
+command = "/absolute/path/to/roundtable"
+args = ["mcp", "stdio", "--root", "/absolute/path/to/project"]
+```
+
+Other stdio harnesses use the same command/argument vector in their own MCP configuration format. For a remote listener, export `ROUNDTABLE_MCP_TOKEN` to both the `start` process and the stdio bridge process, or supply the bearer token through a trusted client credential mechanism. Direct HTTP clients send `Authorization: Bearer <token>`. Never put the token in command-line arguments, checked-in configuration, or logs. The default local HTTP endpoint is unauthenticated and loopback-only.
 
 ## Local socket protocol
 
@@ -106,7 +116,7 @@ Most string helpers accept only actual JSON strings and default only for missing
 
 #### Dependency context availability
 
-There is currently no local dependency-context parser, manifest discovery, lockfile resolution, transitive dependency graph, package-version lookup, or vulnerability scan behind `repo.dependency_context`. Supplying a valid manifest path does not change the result: the runtime reaches its unimplemented-tool fallback before any path inspection. Over the socket, this becomes `{"ok":false,"error":"tool not implemented: repo.dependency_context"}`; `roundtable mcp call` reports the tool error rather than returning dependency data. The name remains present in inspection output and generated schemas.
+There is currently no local dependency-context parser, manifest discovery, lockfile resolution, transitive dependency graph, package-version lookup, or vulnerability scan behind `repo.dependency_context`. Supplying a valid manifest path does not change the result: the runtime reaches its unimplemented-tool fallback before any path inspection. The name remains in the internal registry for future implementation, but standard MCP discovery, `mcp inspect`, and generated tool schemas exclude it.
 
 For current work, read known manifests and lockfiles using `repo.read_file` and inspect relevant imports with `repo.search` or `repo.symbols`. Those tools expose file content or declarations, not a resolved dependency graph. Clearly distinguish direct manifest declarations from lockfile-resolved versions and transitive dependencies in any agent summary. Do not infer installed packages, successful dependency resolution, compatibility, or security status merely from a manifest. External package-manager commands are separate operations with their own trust and execution boundaries; see [Tests and Evidence](TEST_EXECUTION.md).
 

@@ -18,7 +18,7 @@ Roundtable's target model is many agents deliberating over one shared project st
 - `internal/scaffold`: ordered directory/file creation for initialization and generated MCP asset refresh; writes are not transactional.
 - `internal/db`: SQLite connection, WAL/foreign-key/busy-timeout pragmas, schema migration, persistence repositories.
 - `internal/state`: read-model snapshot assembled from persisted tables.
-- `internal/mcp`: central tool registry, local runtime handlers, generated tool schema/manifest, Unix socket server.
+- `internal/mcp`: central tool registry, governed runtime handlers, generated MCP schema/manifest, standard Streamable HTTP and stdio transports, and legacy Unix socket IPC.
 - `internal/orchestrator`: agent-record synchronization, task assignment, proposal review requests, FIFO agent turn scheduling, retrying run loop, convergence decisions.
 - `internal/claims`: resource normalization, overlap/conflict checks, TTL, transitions, and stale-session reconciliation.
 - `internal/symbols`: Go AST parsing and structural TypeScript/Python extraction for symbol resources.
@@ -78,7 +78,7 @@ The WebSocket sends a periodic ping containing the current persisted workspace s
 - HTTP workspace registration validates roots against a configured allowlist. That check does not mean every later route revalidates filesystem containment or entity/workspace association: patch previews use lexical checks without symlink resolution, and HTTP apply bypasses the workspace-scoped transaction lookup. See the implementation-grounded API/transaction references before exposing filesystem operations.
 - HTTP bearer tokens classify human/agent identity in request context, but current `humanAuthorized` checks original actor/role headers instead of that context. An accepted agent token with a human-role header can satisfy it. Process-local idempotency replay can also bypass fresh security checks. These are documented authorization defects, not enforced isolation guarantees; keep both token classes inside a trusted boundary until repaired and verified.
 - Browser configuration is public build-time configuration. No privileged bearer token belongs in a `NEXT_PUBLIC_*` variable.
-- A Unix socket is a local trust boundary, not a network authentication protocol.
+- Loopback HTTP is the standard MCP default; remote HTTP requires TLS and bearer authentication. The legacy Unix socket remains a local trust boundary, not a network authentication protocol.
 
 ### Configuration and Evidence Boundaries
 

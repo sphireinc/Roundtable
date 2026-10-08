@@ -69,9 +69,9 @@ Roundtable currently has **three distinct executable surfaces**:
 | **HTTP API** | `api/` | Standalone REST/WebSocket administrative and operational surfaces | Separate process and configuration; not an RPC control channel into the running Go coordinator |
 | **Web administration UI** | `ui/` | Browser-based operational interface | Dashboard integrated; many other navigation destinations are not yet completed |
 
-At the center is SQLite, which stores the durable project record. The Go coordinator performs scheduling and state transitions. Attached agents use a local **MCP-inspired tool interface** to read context and submit work. Repository mutations are handled through proposal/transaction services instead of direct agent edits.
+At the center is SQLite, which stores the durable project record. The foreground Go coordinator performs scheduling and state transitions. Codex and other harnesses connect over standard MCP Streamable HTTP or launch a stdio bridge; the legacy Unix socket remains a Roundtable-specific compatibility protocol. Repository mutations are handled through proposal/transaction services instead of direct agent edits.
 
-> **MCP compatibility note:** The present local socket uses Roundtable-specific newline-delimited JSON messages over a Unix-domain socket. It is **not a standards-complete MCP/JSON-RPC server** and should not be represented as plug-and-play support for every MCP client. See [MCP tools and transport](docs/MCP_TOOLS.md).
+> **Transport boundary:** Standard MCP is provided by the HTTP endpoint and stdio bridge. The local Unix socket still uses Roundtable-specific newline-delimited JSON; it is **not itself a standards-complete MCP/JSON-RPC server**. See [MCP tools and transport](docs/MCP_TOOLS.md).
 
 ### Intended end-to-end flow
 
@@ -158,7 +158,22 @@ Start an interactive coordination run:
   --goal "Implement an authentication feature with tests and review"
 ```
 
-This starts the local coordinator, Unix socket tool server, and terminal UI. **It does not start Codex, Claude, Gemini, or another coding agent; it will wait for work entered through the tool interface.** The `--goal` text is persisted on the run but is not automatically turned into task records.
+This starts the local coordinator, Unix socket tool server, and terminal UI. **It does not start Codex, Claude, Gemini, or another coding agent; it will wait for work entered through the tool interface.** The `--goal` text is persisted on the run but is not automatically turned into task records. This interactive mode is an alternative to `start`, not a process to run alongside it.
+
+For a continuously running project owner without a TUI, seed a run before starting the foreground service. On a fresh project, the headless command initializes a run, executes one cycle, and exits while leaving active work for `start` to coordinate:
+
+```bash
+./roundtable run --root ../roundtable-demo \
+  --goal "Implement an authentication feature with tests and review" --headless
+```
+
+Then start the foreground service:
+
+```bash
+./roundtable start --root ../roundtable-demo
+```
+
+It stays alive while idle, ticks every active run, and serves standard MCP at `http://127.0.0.1:7117/mcp` by default. Stop it with Ctrl-C. It does not auto-start after reboot. Configure a local harness to launch `roundtable mcp stdio --root /absolute/path/to/project`; the bridge requires the foreground owner to already be running.
 
 In another terminal, from the Roundtable source checkout, inspect the state and tool registry:
 

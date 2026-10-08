@@ -35,6 +35,13 @@ type Runtime struct {
 	turnMu    sync.Mutex
 }
 
+// Store exposes the runtime's shared authoritative store to the coordinator.
+func (r *Runtime) Store() *db.Store { return r.store }
+
+func (r *Runtime) Config() config.Config { return r.config }
+
+func (r *Runtime) Root() string { return r.root }
+
 type CallRequest struct {
 	Tool string         `json:"tool"`
 	Args map[string]any `json:"args"`
