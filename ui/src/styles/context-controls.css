@@ -1,3 +1,10 @@
+.shell-context-strip { position: relative; display: grid; gap: var(--rt-space-3); padding: 18px clamp(18px, 4vw, 54px) 16px; overflow: hidden; background: linear-gradient(105deg, #1d2d40 0%, #19232f 56%, #1a2029 100%); border-bottom: 1px solid #39536e; box-shadow: inset 4px 0 0 var(--rt-color-accent); }
+.shell-context-strip-main { display: grid; gap: var(--rt-space-3); min-width: 0; }
+.shell-context-strip-heading { display: flex; align-items: baseline; flex-wrap: wrap; gap: var(--rt-space-3); }
+.shell-context-strip-heading .rt-eyebrow { color: #91c6ff; }
+.shell-context-strip-subtitle { color: #b3c3d5; font-size: var(--rt-size-meta); }
+.shell-context-governance { display: flex; align-items: center; flex-wrap: wrap; gap: var(--rt-space-2); padding-top: var(--rt-space-2); border-top: 1px solid rgb(145 198 255 / 18%); color: #b3c3d5; font-size: var(--rt-size-meta); }
+.shell-context-governance-label { color: #91c6ff; font: 600 var(--rt-size-table-header) var(--rt-font-mono); letter-spacing: .1em; text-transform: uppercase; }
 .context-controls { display: flex; align-items: center; flex-wrap: wrap; gap: var(--rt-space-3); min-width: 0; }
 .context-field { display: grid; gap: 4px; }
 .context-field label { color: var(--rt-color-text-muted); font-size: var(--rt-size-meta); }
@@ -18,4 +25,7 @@
 .rt-status-connecting, .rt-status-reconnecting { color: var(--rt-color-warning); }
 .rt-status-connected { color: var(--rt-color-success); }
 .rt-status-disconnected { color: var(--rt-color-danger); }
-@media (max-width: 1000px) { .shell-topbar { align-items: flex-start; flex-direction: column; } .context-controls { width: 100%; } }
+.shell-topbar-title { display: flex; align-items: baseline; flex-wrap: wrap; gap: var(--rt-space-3); }
+.shell-topbar-context { color: var(--rt-color-text-muted); font-size: var(--rt-size-meta); }
+@media (max-width: 1000px) { .shell-topbar { align-items: center; flex-direction: row; } .shell-actions { flex-wrap: wrap; justify-content: flex-end; } .context-controls { width: 100%; } }
+@media (max-width: 640px) { .shell-topbar { align-items: flex-start; flex-direction: column; gap: var(--rt-space-2); } .shell-actions { justify-content: flex-start; } .shell-context-strip { padding-block: 15px; } .shell-context-governance { align-items: flex-start; } .context-field select { max-width: min(190px, 78vw); } .branch-control { flex-wrap: wrap; } }

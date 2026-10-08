@@ -1,5 +1,5 @@
 "use client";
-import { useEffect, type ReactNode } from "react";
+import React, { useEffect, type ReactNode } from "react";
 import { usePathname } from "next/navigation";
 import type { NodeHealth } from "@/types/api";
 import type { APIClient } from "@/api/client";
@@ -32,8 +32,11 @@ export function AppShell({ workspaceId, buildVersion, health, api, wsUrl, onWork
       <div className="sidebar-node"><p className="rt-eyebrow">{sidebarCollapsed ? "NODE" : "Local node"}</p>{!sidebarCollapsed && <><StatusPill status={health?.status ?? "unknown"} /><p className="node-detail">API {health?.version ?? "unknown"} · SQLite {database}</p><p className="node-detail">Workspace / {workspaceId}</p><p className="node-detail">Events <StatusPill status={eventStream} /></p>{degraded > 0 && <p className="node-warning" role="status">{degraded} degraded warning{degraded === 1 ? "" : "s"}</p>}</>}</div>
     </aside>
     <section className="shell-main">
-      <header className="shell-topbar"><ContextControls api={api} wsUrl={wsUrl} workspaceId={workspaceId} onWorkspaceChange={onWorkspaceChange} /><div className="shell-actions"><a className="toolbar-link" href="/search">Search</a><a className="toolbar-link" href="/notifications">Notifications</a><details className="user-menu"><summary>Human user</summary><div className="user-menu-panel"><span>Local operator</span><a href="/settings">Settings</a></div></details><span className="build">build {buildVersion}</span><StatusPill status={health?.status ?? "unknown"} /></div></header>
-      <div className="shell-runbar"><span className="rt-eyebrow">Run state</span><StatusPill status="authoritative" /><span className="rt-muted">State changes are governed by the API transaction manager.</span></div>
+      <header className="shell-topbar"><div className="shell-topbar-title"><span className="rt-eyebrow">Roundtable</span><span className="shell-topbar-context">Shared project control plane</span></div><div className="shell-actions"><a className="toolbar-link" href="/search">Search</a><a className="toolbar-link" href="/notifications">Notifications</a><details className="user-menu"><summary>Human user</summary><div className="user-menu-panel"><span>Local operator</span><a href="/settings">Settings</a></div></details><span className="build">build {buildVersion}</span><StatusPill status={health?.status ?? "unknown"} /></div></header>
+      <section className="shell-context-strip" aria-label="Project status">
+        <div className="shell-context-strip-main"><div className="shell-context-strip-heading"><span className="rt-eyebrow">Active project context</span><span className="shell-context-strip-subtitle">Workspace, repository, and live coordination</span></div><ContextControls api={api} wsUrl={wsUrl} workspaceId={workspaceId} onWorkspaceChange={onWorkspaceChange} /></div>
+        <div className="shell-context-governance"><span className="shell-context-governance-label">Shared state</span><StatusPill status="authoritative" /><span>Repository changes are governed by the API transaction manager.</span></div>
+      </section>
       <main className="shell-content">{children}</main>
     </section>
   </div>;
