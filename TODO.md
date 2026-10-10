@@ -1,3 +1,2 @@
   - Connect adapters to actual external process execution/session capture instead of command-plan generation only.
-  - Harden the symbol engine further if you want true tree-sitter-backed parsing rather than improved structural parsing.
   - Do production hardening: config validation, error surfacing, performance tuning, and operational docs.

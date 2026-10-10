@@ -4,13 +4,13 @@ The symbol index provides source-level resource identifiers for claim conflict c
 
 ## Supported languages and extracted declarations
 
-| Language | File extensions | Extraction approach | Current symbol kinds |
-| --- | --- | --- | --- |
-| Go | `.go` | Go standard-library `go/parser` and AST | functions, methods, types, interfaces, structs, exported constants |
-| TypeScript | `.ts`, `.tsx` | line-oriented regular expressions and brace-depth tracking | functions, arrow-function constants, classes, interfaces, methods, types, constants, enums |
-| Python | `.py` | indentation-aware declaration scanning | functions and classes |
+The index uses pinned official Tree-sitter grammars compiled through the Go bindings: Go `.go`, TypeScript `.ts`, TypeScript-grammar TSX `.tsx`, and Python `.py`. `.tsx` retains the existing `typescript` language label. Extension detection is case-insensitive; JavaScript extensions are not supported.
 
-Results include a normalized path, detected language, kind, name, start/end line, and resource ID of the form `symbol:<path>#<name>`. Go parsing reports syntax errors; unsupported file extensions return no symbols. TypeScript and Python extraction is structural and can miss declarations or misinterpret unusual formatting, decorators, comments, multiline signatures, or syntax extensions. It does not resolve imports, types, overloads, scopes, or references.
+Go indexes functions, methods, named types, structs, interfaces, and exported constants. TypeScript and TSX index named functions (including nested named functions), classes, direct class/interface methods and signatures, interfaces, type aliases, enums, and `const` declarations. A const initialized by an arrow/function expression has kind `function`; other consts have kind `const`. Class properties and `let`/`var` declarations are not indexed. Python indexes classes and regular/async functions; functions lexically inside a class retain kind `function` and use the existing `Class.function` name convention. Nested declaration names otherwise remain unqualified. Go methods retain `Receiver.Method`; TS methods retain `Container.method`.
+
+Results preserve the existing fields and `symbol:<path>#<name>` resource ID. Lines are one-based and inclusive; ranges use the grammar declaration node, except Python decorator lines are deliberately excluded and the range begins at `def`/`class`. Sorting remains path, start line, then name. Duplicate names are not deduplicated, even when they yield identical resource IDs.
+
+The entire syntax tree is checked for Tree-sitter `ERROR` and `MISSING` nodes. Any such node makes the operation fail with an error and no symbols; there is no partial-result or legacy-parser fallback. A valid syntax tree is not semantic/type checking: imports, bindings, references, overload resolution, and type correctness are out of scope. Parsing uses only the supplied source bytes. Native parser and tree objects are scoped to each indexing operation and closed deterministically.
 
 ## CLI
 
@@ -36,16 +36,14 @@ The MCP `repo.symbols` handler requires a nonempty `path` even though its advert
 
 ### Declaration and range details
 
-- Go functions and methods include unexported declarations. Method names use `Receiver.Method`; pointer and generic receiver forms are reduced to their receiver type name. Type aliases and other named types are emitted as `type`, except interface and struct AST nodes, which use their respective kinds. Top-level variables and unexported constants are omitted. Exported constant ranges cover the identifier itself rather than its initializer or complete declaration. A Go syntax error returns an error rather than partial symbols.
-- TypeScript recognizes a limited set of line-start declarations, optionally prefixed by `export`. Function declarations may also use `async`. Forms such as `export default function`, abstract classes, `let`/`var` declarations, and many generic or multiline signatures are not covered by these expressions. A constant beginning with a parenthesized parameter expression is classified as a function without requiring an actual arrow token; single unparenthesized arrow parameters are not recognized as functions.
-- TypeScript class/interface method detection requires an opening brace on the method's declaration line. Signature-only interface methods are therefore omitted. Names are qualified with the nearest tracked class/interface. Control names `if`, `for`, `while`, `switch`, and `catch` are excluded, but this is not complete syntax validation. Constants and type aliases remain single-line ranges; tracked blocks extend to the closing brace or end of input.
-- TypeScript brace counting ignores braces in single-, double-, and backtick-quoted text on the current line. Quote state does not persist between lines, and comments, regular-expression literals, and template interpolation are not fully parsed. Braces in comments or multiline constructs can distort nesting and end lines.
-- Python recognizes line-start `def` and `class`, not `async def`. A function inside a tracked class is named `Class.function` but retains kind `function`. Nested function names are not qualified with their enclosing function. Decorator lines are not included in declaration start lines. Tabs count as four indentation columns rather than Python's general tab-expansion rules.
-- Python blank lines and comment-only lines do not update the last-code-line marker. A block ends at the last nonblank, non-comment line before dedentation, or at the final such line in the file. Multiline strings and signatures are not lexically parsed, so declaration-like text within them can be mistaken for code.
+- Go methods use the receiver's type name, dropping pointer and generic arguments. Named types use kind `struct`/`interface` when their underlying declaration has that form, otherwise `type`. Exported constant names are individually indexed at their identifier spans; unexported constants and variables are omitted.
+- TS/TSX class/interface method qualification applies only to direct members. A local function nested in a method is not reclassified as a method. The parser includes comments, strings, templates, multiline signatures, and decorators in syntax structure rather than interpreting declaration-like text in those regions as source declarations.
+- Python async functions have the same `function` kind as regular functions. Functions under a class use the nearest class name prefix. Decorators are not included in Python declaration start lines.
+- Grammar versions are pinned in `go.mod`/`go.sum`; `THIRD_PARTY_NOTICES.md` contains the upstream MIT attributions and license texts. Building retains the project's existing CGO/C compiler toolchain prerequisite.
 
 Use these ranges for navigation and coordination, not as a guarantee that a proposed patch affects only one semantic declaration. File/directory claims and patch review remain necessary when extraction is incomplete or IDs overlap.
 
-There is no tree-sitter dependency or language grammar registry in the current implementation. Supporting another language requires updating extension detection, implementing extraction, preserving stable resource ID behavior, and adding parser/edge-case tests. A future tree-sitter implementation would need explicit grammar/version distribution and error-recovery semantics; it is not an installed feature today.
+Supporting another language requires adding an explicitly pinned grammar, extension dispatch, extraction semantics, license notice, and parser/edge-case tests. Tree-sitter symbol ranges remain navigation and coordination aids, not a sandbox or proof that patches are semantically confined.
 ## Proposal-Time Symbol Resolution
 
 The proposal service's `resolveSymbolResource` is not a general index refresh. Non-symbol resources, empty paths, and empty symbol names are returned unchanged. A stored span with positive start and end at least start is also returned immediately, **without reindexing**. A declaration can move, disappear, or change identity while proposal validation continues using that previously stored numeric range.

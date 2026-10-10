@@ -53,9 +53,11 @@ func TestRuntimeResourceClaimAndStatus(t *testing.T) {
 
 func TestRuntimeRepoSymbols(t *testing.T) {
 	root := newRuntimeRoot(t)
-	sourcePath := filepath.Join(root, "sample.py")
-	if err := os.WriteFile(sourcePath, []byte("class MemoryOracle:\n    pass\n\ndef query_memory():\n    pass\n"), 0o644); err != nil {
-		t.Fatal(err)
+	fixtures := []struct{ filename, source, language, name string }{
+		{"sample.go", "package sample\nfunc Build() {}\n", "go", "Build"},
+		{"sample.ts", "export function build() {}\n", "typescript", "build"},
+		{"sample.tsx", "const View = () => <main />\n", "typescript", "View"},
+		{"sample.py", "class MemoryOracle:\n    pass\n\nasync def query_memory():\n    pass\n", "python", "MemoryOracle"},
 	}
 
 	rt, cleanup, err := OpenRuntime(root)
@@ -64,13 +66,27 @@ func TestRuntimeRepoSymbols(t *testing.T) {
 	}
 	defer cleanup()
 
-	result, err := rt.Call(context.Background(), "repo.symbols", map[string]any{"path": sourcePath})
-	if err != nil {
-		t.Fatalf("repo.symbols failed: %v", err)
-	}
-	found := result["symbols"].([]symbols.Symbol)
-	if len(found) != 2 {
-		t.Fatalf("unexpected symbols: %+v", found)
+	for _, fixture := range fixtures {
+		t.Run(fixture.filename, func(t *testing.T) {
+			sourcePath := filepath.Join(root, fixture.filename)
+			if err := os.WriteFile(sourcePath, []byte(fixture.source), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			result, err := rt.Call(context.Background(), "repo.symbols", map[string]any{"path": sourcePath})
+			if err != nil {
+				t.Fatalf("repo.symbols failed: %v", err)
+			}
+			found := result["symbols"].([]symbols.Symbol)
+			if len(found) == 0 {
+				t.Fatalf("expected symbols, got %+v", result)
+			}
+			for _, symbol := range found {
+				if symbol.Name == fixture.name && symbol.Language == fixture.language {
+					return
+				}
+			}
+			t.Fatalf("expected %s (%s), got %+v", fixture.name, fixture.language, found)
+		})
 	}
 }
 
