@@ -1,2 +1,2 @@
-  - Connect adapters to actual external process execution/session capture instead of command-plan generation only.
+  - Verify provider-pinned CLI compatibility and implement/test provider-specific external session ID capture and resume where supported.
   - Do production hardening: config validation, error surfacing, performance tuning, and operational docs.
