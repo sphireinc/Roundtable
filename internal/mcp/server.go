@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net"
 	"os"
 	"path/filepath"
@@ -237,8 +238,9 @@ func (s *Server) handleConn(ctx context.Context, conn net.Conn) {
 	}
 	req, err := ParseCallRequest(line)
 	if err != nil {
-		data, _ := EncodeResponse(nil, err)
-		_, _ = conn.Write(append(data, '\n'))
+		if writeErr := writeResponse(conn, nil, err); writeErr != nil {
+			slog.Error("write MCP error response", "error", writeErr)
+		}
 		return
 	}
 	s.connectionsMu.Lock()
@@ -249,8 +251,33 @@ func (s *Server) handleConn(ctx context.Context, conn net.Conn) {
 	s.connections[conn] = true
 	s.connectionsMu.Unlock()
 	result, err := s.runtime.Call(ctx, req.Tool, req.Args)
-	data, _ := EncodeResponse(result, err)
-	_, _ = conn.Write(append(data, '\n'))
+	if writeErr := writeResponse(conn, result, err); writeErr != nil {
+		slog.Error("write MCP response", "error", writeErr)
+	}
+}
+
+func writeResponse(writer io.Writer, result map[string]any, callErr error) error {
+	data, err := EncodeResponse(result, callErr)
+	var encodingErr error
+	if err != nil {
+		encodingErr = fmt.Errorf("encode MCP response: %w", err)
+		data, err = EncodeResponse(nil, errors.New("failed to encode MCP response"))
+		if err != nil {
+			return errors.Join(encodingErr, fmt.Errorf("encode MCP fallback response: %w", err))
+		}
+	}
+	data = append(data, '\n')
+	for len(data) > 0 {
+		written, err := writer.Write(data)
+		if err != nil {
+			return errors.Join(encodingErr, fmt.Errorf("write MCP response: %w", err))
+		}
+		if written == 0 {
+			return errors.Join(encodingErr, fmt.Errorf("write MCP response: %w", io.ErrShortWrite))
+		}
+		data = data[written:]
+	}
+	return encodingErr
 }
 
 func trimSpace(data []byte) []byte {

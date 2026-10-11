@@ -2,6 +2,7 @@ package mcp
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -196,6 +197,31 @@ func TestServerCloseAllowsInFlightToolCallToFinish(t *testing.T) {
 		t.Fatal("server close did not finish after in-flight call drained")
 	}
 }
+
+func TestWriteResponseSurfacesEncodingAndWriterErrors(t *testing.T) {
+	var response bytes.Buffer
+	err := writeResponse(&response, map[string]any{"unsupported": make(chan int)}, nil)
+	if err == nil {
+		t.Fatal("writeResponse accepted a result that cannot be JSON encoded")
+	}
+	var decoded CallResponse
+	if decodeErr := json.Unmarshal(response.Bytes(), &decoded); decodeErr != nil {
+		t.Fatalf("decode fallback response: %v", decodeErr)
+	}
+	if decoded.OK || decoded.Error != "failed to encode MCP response" {
+		t.Fatalf("fallback response = %+v", decoded)
+	}
+
+	wantErr := errors.New("client disconnected")
+	writer := errorWriter{err: wantErr}
+	if err := writeResponse(writer, map[string]any{"ok": true}, nil); !errors.Is(err, wantErr) {
+		t.Fatalf("writeResponse error = %v, want wrapped %v", err, wantErr)
+	}
+}
+
+type errorWriter struct{ err error }
+
+func (w errorWriter) Write([]byte) (int, error) { return 0, w.err }
 
 func socketUnavailable(err error) bool {
 	return errors.Is(err, syscall.EPERM) || errors.Is(err, syscall.EACCES) || errors.Is(err, syscall.EOPNOTSUPP)
