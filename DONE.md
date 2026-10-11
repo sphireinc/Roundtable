@@ -60,3 +60,4 @@
   - Bounded event cursor polling: indexed `(run_id, id)` pages for MCP watch cursors, preserving pagination and agent visibility semantics; query-plan and regression coverage pass.
   - Config startup validation: reject unsupported empty sections/scalar-as-section syntax, format versions, and MCP transport labels with actionable diagnostics and documented behavior.
   - Production hardening umbrella: config semantic/section/value validation, MCP response error reporting, bounded indexed event cursor polling, and matching operations/configuration documentation; see completed tasks 0011-0013 and commits `870e017`, `c8b5704`, `e345039`, `d8a6918`.
+  - TUI Human Command Terminal: editable asynchronous Roundtable command entry with quoted tokenization, enforced command/root boundaries, cancellation, bounded output, tests, and operator documentation; legacy task 0005 remains open for its other acceptance criteria.

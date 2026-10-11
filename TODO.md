@@ -1,1 +1,2 @@
   - Run authenticated smoke tests against immutable, provider-pinned Codex, Claude, and Gemini CLI images; confirm structured-output flags and captured IDs. Adapter parsing/argv unit and supervisor persistence coverage is implemented, but live provider compatibility is not yet verified. Built-in provider resume remains intentionally disabled under the disposable-worker policy.
+  - Complete remaining `TASKS.ROUNDTABLE/0005-tui.md` acceptance: live event delivery, consensus/blocker detail in the Live Table, and keyboard selection-driven Inspector views.

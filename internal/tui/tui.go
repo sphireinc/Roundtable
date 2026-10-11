@@ -22,24 +22,35 @@ type Options struct {
 	WatchFeed       []string
 	RefreshInterval time.Duration
 	Refresh         func(context.Context) (state.Snapshot, []string, error)
+	ExecuteCommand  func(context.Context, string) (string, error)
+	ctx             context.Context
 }
 
 func Run(ctx context.Context, output io.Writer, opts Options) error {
+	opts.ctx = ctx
 	program := tea.NewProgram(newModel(opts), tea.WithOutput(output), tea.WithContext(ctx))
 	_, err := program.Run()
 	return err
 }
 
 type model struct {
-	width  int
-	height int
-	opts   Options
+	width         int
+	height        int
+	opts          Options
+	commandInput  string
+	commandOutput []string
+	commandBusy   bool
 }
 
 type refreshMsg struct {
 	snapshot  state.Snapshot
 	watchFeed []string
 	err       error
+}
+
+type commandResultMsg struct {
+	output string
+	err    error
 }
 
 func newModel(opts Options) model {
@@ -60,8 +71,40 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.height = msg.Height
 	case tea.KeyMsg:
 		switch msg.String() {
-		case "ctrl+c", "q":
+		case "ctrl+c":
 			return m, tea.Quit
+		}
+		switch msg.Type {
+		case tea.KeyEnter:
+			if m.commandBusy {
+				return m, nil
+			}
+			command := strings.TrimSpace(m.commandInput)
+			m.commandInput = ""
+			if command == "" {
+				return m, nil
+			}
+			m.commandOutput = appendCommandLines(m.commandOutput, "$ "+command)
+			if m.opts.ExecuteCommand == nil {
+				m.commandOutput = appendCommandLines(m.commandOutput, "! command execution is unavailable")
+				return m, nil
+			}
+			m.commandBusy = true
+			return m, executeCommand(m.opts.ctx, m.opts.ExecuteCommand, command)
+		case tea.KeyBackspace, tea.KeyDelete:
+			runes := []rune(m.commandInput)
+			if len(runes) > 0 {
+				m.commandInput = string(runes[:len(runes)-1])
+			}
+		case tea.KeyCtrlU:
+			m.commandInput = ""
+		case tea.KeyRunes:
+			if m.commandInput == "" && msg.String() == "q" {
+				return m, tea.Quit
+			}
+			if len([]rune(m.commandInput))+len(msg.Runes) <= 2048 {
+				m.commandInput += string(msg.Runes)
+			}
 		}
 	case refreshMsg:
 		if msg.err == nil {
@@ -71,8 +114,51 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.opts.Refresh != nil {
 			return m, scheduleRefresh(m.opts.RefreshInterval, m.opts.Refresh)
 		}
+	case commandResultMsg:
+		m.commandBusy = false
+		output := msg.output
+		if len(output) > 16*1024 {
+			output = "... output truncated ...\n" + output[len(output)-16*1024:]
+		}
+		output = strings.ToValidUTF8(output, "?")
+		if output = strings.TrimSpace(output); output != "" {
+			m.commandOutput = appendCommandLines(m.commandOutput, strings.Split(output, "\n")...)
+		}
+		if msg.err != nil {
+			errText := msg.err.Error()
+			if len(errText) > 2048 {
+				errText = errText[:2048] + "..."
+			}
+			m.commandOutput = appendCommandLines(m.commandOutput, "! "+strings.ToValidUTF8(errText, "?"))
+		}
 	}
 	return m, nil
+}
+
+func executeCommand(ctx context.Context, execute func(context.Context, string) (string, error), command string) tea.Cmd {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	return func() tea.Msg {
+		output, err := execute(ctx, command)
+		return commandResultMsg{output: output, err: err}
+	}
+}
+
+func appendCommandLines(lines []string, additions ...string) []string {
+	for _, addition := range additions {
+		for _, line := range strings.Split(addition, "\n") {
+			line = strings.TrimRight(line, "\r")
+			if len([]rune(line)) > 512 {
+				line = string([]rune(line)[:512]) + "..."
+			}
+			lines = append(lines, line)
+		}
+	}
+	if len(lines) > 80 {
+		lines = append([]string(nil), lines[len(lines)-80:]...)
+	}
+	return lines
 }
 
 func scheduleRefresh(interval time.Duration, refresh func(context.Context) (state.Snapshot, []string, error)) tea.Cmd {
@@ -137,13 +223,24 @@ func (m model) watchFeedLines() []string {
 }
 
 func (m model) commandLines() []string {
-	return []string{
-		"> ask chair bootstrap roundtable",
-		"> approve P-0001",
-		"> reject P-0002 --reason \"needs changes\"",
-		"> show tx TX-0001",
-		"> memory query refresh tokens",
+	contentHeight := max(1, max(6, m.height-max(6, m.height/2-1)-3)-2)
+	lines := []string{}
+	if m.commandBusy {
+		lines = append(lines, "working...")
 	}
+	if len(m.commandOutput) == 0 {
+		lines = append(lines, "Roundtable commands; no shell", "Try: mcp call --tool proposal.list")
+	} else {
+		outputHeight := max(0, contentHeight-2-len(lines))
+		if outputHeight > len(m.commandOutput) {
+			outputHeight = len(m.commandOutput)
+		}
+		if outputHeight > 0 {
+			lines = append(lines, m.commandOutput[len(m.commandOutput)-outputHeight:]...)
+		}
+	}
+	lines = append(lines, "rt> "+m.commandInput, "Enter run; Ctrl+U clear; q quit")
+	return lines
 }
 
 func (m model) inspectorLines() []string {

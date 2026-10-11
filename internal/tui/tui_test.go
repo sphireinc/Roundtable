@@ -6,6 +6,8 @@ import (
 	"testing"
 	"time"
 
+	tea "github.com/charmbracelet/bubbletea"
+
 	"roundtable/internal/db"
 	"roundtable/internal/state"
 )
@@ -61,7 +63,7 @@ func TestViewRendersSnapshotDrivenPanes(t *testing.T) {
 		"WATCH FEED",
 		"proposal.created implementer-1 T-1",
 		"COMMAND / HUMAN TERMINAL",
-		"> show tx TX-0001",
+		"rt> ",
 		"INSPECTOR",
 		"Proposal: P-1 [pending]",
 		"Transaction: TX-1 [applied]",
@@ -85,6 +87,7 @@ func TestViewFallsBackWithoutSnapshotData(t *testing.T) {
 		"Goal: not set",
 		"MCP server listening",
 		"Socket: .roundtable/mcp/roundtable.s",
+		"Roundtable commands; no shell",
 		"No proposals, transactions, or appro",
 	} {
 		if !strings.Contains(view, want) {
@@ -144,5 +147,52 @@ func TestScheduleRefreshReturnsTickCommand(t *testing.T) {
 	msg := cmd()
 	if _, ok := msg.(refreshMsg); !ok {
 		t.Fatalf("expected refreshMsg, got %T", msg)
+	}
+}
+
+func TestCommandTerminalAcceptsInputAndShowsCommandResult(t *testing.T) {
+	var executed string
+	m := newModel(Options{ExecuteCommand: func(_ context.Context, command string) (string, error) {
+		executed = command
+		return "claim C-1 active", nil
+	}})
+	for _, r := range []rune("claims list") {
+		updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}})
+		m = updated.(model)
+	}
+	updated, command := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = updated.(model)
+	if command == nil || !m.commandBusy {
+		t.Fatal("enter should schedule command execution")
+	}
+	if got := m.commandInput; got != "" {
+		t.Fatalf("command input after submit = %q, want empty", got)
+	}
+	updated, _ = m.Update(command())
+	m = updated.(model)
+	if executed != "claims list" {
+		t.Fatalf("executed command = %q", executed)
+	}
+	view := m.View()
+	if !strings.Contains(view, "$ claims list") || !strings.Contains(view, "claim C-1 active") || strings.Contains(view, "working...") {
+		t.Fatalf("command result not reflected in terminal:\n%s", view)
+	}
+}
+
+func TestCommandTerminalBackspaceAndEmptyEnter(t *testing.T) {
+	m := newModel(Options{})
+	for _, r := range []rune("abc") {
+		updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}})
+		m = updated.(model)
+	}
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyBackspace})
+	m = updated.(model)
+	if m.commandInput != "ab" {
+		t.Fatalf("input after backspace = %q", m.commandInput)
+	}
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = updated.(model)
+	if cmd != nil || m.commandBusy || m.commandInput != "" {
+		t.Fatalf("empty submit changed command state: %+v", m)
 	}
 }

@@ -206,6 +206,9 @@ func runRoundtable(ctx context.Context, args []string, stdout io.Writer) error {
 			RunID:      activeRun.ID,
 			Snapshot:   snapshot,
 			WatchFeed:  watchFeed,
+			ExecuteCommand: func(commandCtx context.Context, command string) (string, error) {
+				return executeTerminalCommand(commandCtx, *root, command)
+			},
 			Refresh: func(refreshCtx context.Context) (state.Snapshot, []string, error) {
 				nextSnapshot, err := state.LoadSnapshot(refreshCtx, store)
 				if err != nil {
@@ -243,7 +246,7 @@ func runMCP(ctx context.Context, args []string, stdout, stderr io.Writer) error 
 	case "stdio":
 		return runMCPStdio(ctx, args[1:], stdout, stderr)
 	case "call":
-		return runMCPCall(args[1:], stdout)
+		return runMCPCall(ctx, args[1:], stdout)
 	default:
 		return errors.New("unsupported mcp command")
 	}
@@ -382,7 +385,7 @@ func runMCPServe(ctx context.Context, args []string, stdout io.Writer) error {
 	return nil
 }
 
-func runMCPCall(args []string, stdout io.Writer) error {
+func runMCPCall(ctx context.Context, args []string, stdout io.Writer) error {
 	fs := flag.NewFlagSet("call", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
 	root := fs.String("root", ".", "project root")
@@ -406,7 +409,7 @@ func runMCPCall(args []string, stdout io.Writer) error {
 	}
 
 	if *useSocket {
-		return callMCPSocket(*root, *toolName, payload, stdout)
+		return callMCPSocket(ctx, *root, *toolName, payload, stdout)
 	}
 
 	runtime, cleanup, err := mcp.OpenRuntime(*root)
@@ -415,7 +418,7 @@ func runMCPCall(args []string, stdout io.Writer) error {
 	}
 	defer cleanup()
 
-	result, err := runtime.Call(context.Background(), *toolName, payload)
+	result, err := runtime.Call(ctx, *toolName, payload)
 	if err != nil {
 		return err
 	}
@@ -940,16 +943,18 @@ func openSessionService(root string) (*sessions.Service, func(), config.Config, 
 	return sessions.NewService(db.NewStore(sqlDB, nil)), cleanup, cfg, nil
 }
 
-func callMCPSocket(root, toolName string, payload map[string]any, stdout io.Writer) error {
+func callMCPSocket(ctx context.Context, root, toolName string, payload map[string]any, stdout io.Writer) error {
 	cfg, err := config.Load(root)
 	if err != nil {
 		return err
 	}
-	conn, err := net.Dial("unix", resolveSocketPath(root, cfg.MCP.SocketPath))
+	conn, err := (&net.Dialer{}).DialContext(ctx, "unix", resolveSocketPath(root, cfg.MCP.SocketPath))
 	if err != nil {
 		return err
 	}
 	defer conn.Close()
+	stopClose := context.AfterFunc(ctx, func() { _ = conn.Close() })
+	defer stopClose()
 
 	request, err := json.Marshal(mcp.CallRequest{Tool: toolName, Args: payload})
 	if err != nil {
