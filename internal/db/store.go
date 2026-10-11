@@ -306,6 +306,49 @@ func (s *Store) ListEvents(ctx context.Context, runID string) ([]Event, error) {
 	return out, rows.Err()
 }
 
+// ListEventsAfter returns at most limit events after the global event cursor.
+func (s *Store) ListEventsAfter(ctx context.Context, runID string, afterID int64, limit int) ([]Event, error) {
+	if afterID < 0 {
+		return nil, errors.New("event cursor must be nonnegative")
+	}
+	if limit <= 0 {
+		return nil, errors.New("event page limit must be positive")
+	}
+	query := `
+		SELECT id, run_id, type, COALESCE(actor_id, ''), COALESCE(task_id, ''), payload_json, created_at
+		FROM events
+		WHERE id > ?
+		ORDER BY id
+		LIMIT ?
+	`
+	args := []any{afterID, limit}
+	if runID != "" {
+		query = `
+			SELECT id, run_id, type, COALESCE(actor_id, ''), COALESCE(task_id, ''), payload_json, created_at
+			FROM events
+			WHERE run_id = ? AND id > ?
+			ORDER BY id
+			LIMIT ?
+		`
+		args = []any{runID, afterID, limit}
+	}
+	rows, err := s.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("list events after %d: %w", afterID, err)
+	}
+	defer rows.Close()
+
+	out := make([]Event, 0, limit)
+	for rows.Next() {
+		var event Event
+		if err := rows.Scan(&event.ID, &event.RunID, &event.Type, &event.ActorID, &event.TaskID, &event.PayloadJSON, &event.CreatedAt); err != nil {
+			return nil, fmt.Errorf("scan event: %w", err)
+		}
+		out = append(out, event)
+	}
+	return out, rows.Err()
+}
+
 func (s *Store) UpsertRun(ctx context.Context, run Run) error {
 	_, err := s.db.ExecContext(ctx, `
 		INSERT INTO runs (id, goal, status, ended_at, metadata_json)

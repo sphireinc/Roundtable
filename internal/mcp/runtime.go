@@ -233,33 +233,23 @@ func (r *Runtime) agentTurnWatch(ctx context.Context, identity agentauth.Identit
 	if after < 0 {
 		return nil, errors.New("after_event_id must be zero or greater")
 	}
-	events, err := r.store.ListEvents(ctx, identity.RunID)
+	events, err := r.store.ListEventsAfter(ctx, identity.RunID, after, limit+1)
 	if err != nil {
 		return nil, err
 	}
-	scanned := make([]db.Event, 0, limit+1)
-	for _, event := range events {
-		if event.ID <= after {
-			continue
-		}
-		scanned = append(scanned, event)
-		if len(scanned) == limit+1 {
-			break
-		}
-	}
-	hasMore := len(scanned) > limit
+	hasMore := len(events) > limit
 	if hasMore {
-		scanned = scanned[:limit]
+		events = events[:limit]
 	}
-	visible := make([]db.Event, 0, len(scanned))
-	for _, event := range scanned {
+	visible := make([]db.Event, 0, len(events))
+	for _, event := range events {
 		if agentTurnEventVisible(event, identity.AgentID) {
 			visible = append(visible, event)
 		}
 	}
 	next := after
-	if len(scanned) > 0 {
-		next = scanned[len(scanned)-1].ID
+	if len(events) > 0 {
+		next = events[len(events)-1].ID
 	}
 	return map[string]any{
 		"run_id": identity.RunID, "events": visible,
@@ -1100,32 +1090,26 @@ func (r *Runtime) tableWatch(ctx context.Context, args map[string]any) (map[stri
 	if err != nil {
 		return nil, err
 	}
-	events, err := r.store.ListEvents(ctx, runID)
-	if err != nil {
-		return nil, err
-	}
 	_, cursorProvided := args["after_event_id"]
 	afterEventID := int64(intArgDefault(args, "after_event_id", 0))
 	hasMoreEvents := false
 	if afterEventID < 0 {
 		return nil, errors.New("after_event_id must be zero or greater")
 	}
+	var events []db.Event
 	if cursorProvided {
-		filtered := make([]db.Event, 0, limit+1)
-		for _, event := range events {
-			if event.ID <= afterEventID {
-				continue
-			}
-			filtered = append(filtered, event)
-			if len(filtered) == limit+1 {
-				break
-			}
-		}
-		hasMoreEvents = len(filtered) > limit
+		events, err = r.store.ListEventsAfter(ctx, runID, afterEventID, limit+1)
+	} else {
+		events, err = r.store.ListEvents(ctx, runID)
+	}
+	if err != nil {
+		return nil, err
+	}
+	if cursorProvided {
+		hasMoreEvents = len(events) > limit
 		if hasMoreEvents {
-			filtered = filtered[:limit]
+			events = events[:limit]
 		}
-		events = filtered
 	} else if len(events) > limit {
 		events = events[len(events)-limit:]
 	}

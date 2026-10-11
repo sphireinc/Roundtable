@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -71,6 +72,46 @@ func TestAppendEventPublishesToSubscribers(t *testing.T) {
 	}
 	if len(events) != 1 {
 		t.Fatalf("expected 1 event, got %d", len(events))
+	}
+}
+
+func TestListEventsAfterUsesBoundedIndexedRunPage(t *testing.T) {
+	store := newTestStore(t)
+	ctx := context.Background()
+	for i := 0; i < 100; i++ {
+		if _, err := store.AppendEvent(ctx, Event{RunID: "RUN-PAGED", Type: "test.event", PayloadJSON: `{}`}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	page, err := store.ListEventsAfter(ctx, "RUN-PAGED", 90, 3)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(page) != 3 || page[0].ID != 91 || page[1].ID != 92 || page[2].ID != 93 {
+		t.Fatalf("bounded event page = %+v", page)
+	}
+
+	rows, err := store.DB().QueryContext(ctx, `EXPLAIN QUERY PLAN SELECT id FROM events WHERE run_id = ? AND id > ? ORDER BY id LIMIT ?`, "RUN-PAGED", 90, 3)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+	var indexed bool
+	for rows.Next() {
+		var id, parent, notUsed int
+		var detail string
+		if err := rows.Scan(&id, &parent, &notUsed, &detail); err != nil {
+			t.Fatal(err)
+		}
+		if strings.Contains(detail, "idx_events_run_id_id") {
+			indexed = true
+		}
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatal(err)
+	}
+	if !indexed {
+		t.Fatal("cursor query did not use idx_events_run_id_id")
 	}
 }
 

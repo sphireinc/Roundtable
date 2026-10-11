@@ -64,6 +64,7 @@ func migrate(db *sql.DB) error {
 			payload_json TEXT NOT NULL,
 			created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 		);`,
+		`CREATE INDEX IF NOT EXISTS idx_events_run_id_id ON events(run_id, id);`,
 		`CREATE TABLE IF NOT EXISTS agents (
 			id TEXT PRIMARY KEY,
 			role TEXT NOT NULL,
