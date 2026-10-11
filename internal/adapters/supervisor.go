@@ -264,8 +264,8 @@ func (s *ExecutionSupervisor) Launch(parent context.Context, req StartAgentReque
 		if req.ProposalID == "" || proposalErr != nil || proposal.TaskID != task.ID || proposal.AgentID == agent.ID || proposal.Status != "pending" && proposal.Status != "in_review" {
 			return nil, errors.New("review execution requires a proposal-bound assignment for another agent's active proposal")
 		}
-		role := strings.ToLower(strings.TrimSpace(req.Role))
-		if role == "tester" && proposal.Status != "in_review" || role == "security" && proposal.Risk != "high" && proposal.Risk != "critical" || role != "reviewer" && role != "tester" && role != "security" {
+		role := agentauth.CanonicalRole(req.Role)
+		if role == "tester" && proposal.Status != "in_review" || role == "security" && proposal.Risk != "high" && proposal.Risk != "critical" || role != "reviewer" && role != "tester" && role != "security" && role != "memory_oracle" {
 			return nil, errors.New("agent role is not eligible for this proposal review")
 		}
 	}
@@ -455,6 +455,10 @@ func composeExecutionPrompt(req StartAgentRequest, task db.Task) string {
 	}
 	prompt.WriteString("\nAssigned task:\n")
 	prompt.WriteString(task.BodyMD)
+	if agentauth.CanonicalRole(req.Role) == "memory_oracle" {
+		prompt.WriteString("\n\nMemory Oracle review contract:\n")
+		prompt.WriteString("Use memory.task_history to inspect this task's decisions, proposals, recent events, and active task/project memory. Use memory.query or memory.summarize for durable memory entries; memory.summarize summarizes memory entries only. Synthesize a concise history of relevant prior decisions and constraints, then persist it with memory.record in this task's scope, citing a relevant source_event_id from the returned history when available. Use proposal.get and proposal.patch_read to inspect the assigned proposal. Compare the actual proposed change with cited durable decisions; do not infer contradiction from topic similarity alone. Submit only concrete, source-cited warnings through memory.oracle_report. Warnings are advisory and do not vote, block, approve, reject, or alter proposal or transaction state.\n")
+	}
 	return prompt.String()
 }
 
@@ -469,6 +473,8 @@ func (s *ExecutionSupervisor) adapterForRole(role string) (string, string, strin
 		return cfg.Agents.Tester.Adapter, "", cfg.Agents.Tester.Model, nil
 	case "security", "security_agent":
 		return cfg.Agents.Security.Adapter, "", cfg.Agents.Security.Model, nil
+	case "memoryoracle", "memory_oracle":
+		return cfg.Agents.MemoryOracle.Adapter, "", cfg.Agents.MemoryOracle.Model, nil
 	default:
 		return "", "", "", fmt.Errorf("role %q is not eligible for external container execution", role)
 	}

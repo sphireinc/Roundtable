@@ -288,6 +288,24 @@ func migrate(db *sql.DB) error {
 	if _, err := db.Exec("INSERT OR IGNORE INTO schema_migrations(version) VALUES (6)"); err != nil {
 		return fmt.Errorf("record proposal vote index migration: %w", err)
 	}
+	if _, err := db.Exec("CREATE INDEX IF NOT EXISTS idx_events_run_task_id_id ON events(run_id, task_id, id)"); err != nil {
+		return fmt.Errorf("create task event index: %w", err)
+	}
+	if _, err := db.Exec("INSERT OR IGNORE INTO schema_migrations(version) VALUES (7)"); err != nil {
+		return fmt.Errorf("record task event index migration: %w", err)
+	}
+	for _, index := range []string{
+		"CREATE INDEX IF NOT EXISTS idx_proposals_task_created ON proposals(task_id, created_at DESC, id DESC)",
+		"CREATE INDEX IF NOT EXISTS idx_decisions_task_created ON decisions(task_id, created_at DESC, id DESC)",
+		"CREATE INDEX IF NOT EXISTS idx_memory_scope_status_importance ON memory_entries(scope, status, importance DESC, id)",
+	} {
+		if _, err := db.Exec(index); err != nil {
+			return fmt.Errorf("create bounded task history index: %w", err)
+		}
+	}
+	if _, err := db.Exec("INSERT OR IGNORE INTO schema_migrations(version) VALUES (8)"); err != nil {
+		return fmt.Errorf("record bounded task history indexes migration: %w", err)
+	}
 	return nil
 }
 

@@ -139,6 +139,29 @@ func TestListEventsAfterUsesBoundedIndexedRunPage(t *testing.T) {
 	}
 }
 
+func TestListTaskEventsReturnsBoundedChronologicalScope(t *testing.T) {
+	store := newTestStore(t)
+	ctx := context.Background()
+	for _, event := range []Event{
+		{RunID: "R-1", TaskID: "T-1", Type: "task.started"},
+		{RunID: "R-1", TaskID: "T-2", Type: "other.task"},
+		{RunID: "R-1", TaskID: "T-1", Type: "decision.recorded"},
+		{RunID: "R-2", TaskID: "T-1", Type: "other.run"},
+		{RunID: "R-1", TaskID: "T-1", Type: "memory.recorded"},
+	} {
+		if _, err := store.AppendEvent(ctx, event); err != nil {
+			t.Fatal(err)
+		}
+	}
+	events, truncated, err := store.ListTaskEvents(ctx, "R-1", "T-1", 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !truncated || len(events) != 2 || events[0].Type != "decision.recorded" || events[1].Type != "memory.recorded" {
+		t.Fatalf("unexpected bounded task events: %+v truncated=%v", events, truncated)
+	}
+}
+
 func TestUpsertVoteKeepsOneBallotPerReviewerAndProposal(t *testing.T) {
 	store := newTestStore(t)
 	ctx := context.Background()

@@ -42,12 +42,20 @@ func DefaultRegistry() *Registry {
 				prop("override_policy", "boolean"),
 			)...)),
 			tool("memory.mark_stale", "Mark a memory entry stale after it has been contradicted by a newer decision.", requiredSchema("memory_id", "reason_md")),
-			tool("memory.query", "Query persistent project memory and prior decisions.", schema([]string{"query"}, optionalProperties(
+			tool("memory.task_history", "Read bounded task history, decisions, proposals, and active task/project memory for an assigned Memory Oracle review.", schema(nil, optionalProperties(
+				prop("task_id", "string"),
+				prop("run_id", "string"),
+			)...)),
+			tool("memory.oracle_report", "Persist an advisory Memory Oracle warning tied to an assigned proposal and active source memory entries; this does not change governance state.", schema([]string{"warning_md", "memory_ids"}, optionalProperties(
+				prop("memory_ids", "array", map[string]any{"items": map[string]any{"type": "string"}}),
+			)...)),
+			tool("memory.query", "Query persistent memory and prior decisions; Memory Oracle access is limited to its assigned task and project scopes.", schema([]string{"query"}, optionalProperties(
 				prop("scope", "string"),
 				prop("kind", "string"),
 				prop("limit", "integer"),
+				prop("active_only", "boolean"),
 			)...)),
-			tool("memory.record", "Record a durable memory entry.", schema([]string{"scope", "kind", "title", "body_md"}, optionalProperties(
+			tool("memory.record", "Record a durable memory entry; Memory Oracle records are limited to its assigned task and project scopes.", schema([]string{"scope", "kind", "title", "body_md"}, optionalProperties(
 				prop("source_event_id", "integer"),
 				prop("importance", "integer"),
 			)...)),
@@ -65,6 +73,7 @@ func DefaultRegistry() *Registry {
 				prop("rollback_notes", "string"),
 			)...)),
 			tool("proposal.get", "Fetch a proposal by id.", requiredSchema("proposal_id")),
+			tool("proposal.patch_read", "Read the bounded stored patch for the proposal assigned to a Memory Oracle review.", requiredSchema("proposal_id")),
 			tool("proposal.list", "List local proposals, optionally filtered by task or status.", schema(nil, optionalProperties(
 				prop("task_id", "string"),
 				prop("status", "string"),

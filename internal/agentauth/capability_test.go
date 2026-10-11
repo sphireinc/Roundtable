@@ -99,3 +99,24 @@ func TestReviewerAndTesterCapabilitiesAreSeparated(t *testing.T) {
 		t.Fatal("reviewer unexpectedly received tester evidence capability")
 	}
 }
+
+func TestMemoryOracleCapabilityIsProposalBoundAndAdvisory(t *testing.T) {
+	authority := New(nil)
+	token, err := authority.Issue(Identity{
+		SessionID: "S-memory", AgentID: "A-memory", TaskID: "T-1", ProposalID: "P-1",
+		RunID: "R-1", Role: "MemoryOracle", BaseRevision: "rev", BaseStateHash: "tree",
+	}, time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tool := range []string{"task.get", "proposal.get", "memory.task_history", "memory.query", "memory.summarize", "memory.record", "memory.oracle_report"} {
+		if err := authority.Authorize(token, tool); err != nil {
+			t.Errorf("Memory Oracle cannot use %s: %v", tool, err)
+		}
+	}
+	for _, tool := range []string{"vote.cast", "security.review", "patch.apply", "memory.mark_stale", "human.request_approval", "proposal.create"} {
+		if err := authority.Authorize(token, tool); err == nil {
+			t.Errorf("Memory Oracle unexpectedly received %s authority", tool)
+		}
+	}
+}

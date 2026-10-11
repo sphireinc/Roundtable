@@ -104,6 +104,61 @@ func TestAgentStandardServerExposesOnlyCapabilityTools(t *testing.T) {
 	}
 }
 
+func TestMemoryOracleStandardServerExposesAdvisoryToolsOnly(t *testing.T) {
+	root := newRuntimeRoot(t)
+	runtime, cleanup, err := OpenRuntime(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer cleanup()
+	ctx := context.Background()
+	if err := runtime.store.UpsertTask(ctx, db.Task{ID: "T-oracle", Title: "Oracle", Status: "in_progress"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := runtime.store.UpsertProposal(ctx, db.Proposal{ID: "P-oracle", TaskID: "T-oracle", AgentID: "A-implementer", Title: "Change", Status: "in_review"}); err != nil {
+		t.Fatal(err)
+	}
+	authority := agentauth.New(nil)
+	runtime.SetAgentAuthority(authority)
+	identity := agentauth.Identity{SessionID: "S-oracle", AgentID: "A-oracle", TaskID: "T-oracle", ProposalID: "P-oracle", RunID: "R-oracle", Role: "MemoryOracle", BaseRevision: "rev", BaseStateHash: "tree"}
+	token := issueRuntimeTestCapability(t, runtime, authority, identity)
+	server, err := NewAgentStandardServer(runtime, token)
+	if err != nil {
+		t.Fatal(err)
+	}
+	listener, err := net.Listen("tcp4", "127.0.0.1:0")
+	if err != nil {
+		t.Skipf("sandbox does not permit loopback listeners: %v", err)
+	}
+	httpServer := &httptest.Server{Listener: listener, Config: &http.Server{Handler: NewStreamableHTTPHandler(server, HTTPOptions{Address: "127.0.0.1:7117"})}}
+	httpServer.Start()
+	defer httpServer.Close()
+	client := sdkmcp.NewClient(&sdkmcp.Implementation{Name: "oracle-test", Version: "test"}, nil)
+	session, err := client.Connect(ctx, &sdkmcp.StreamableClientTransport{Endpoint: httpServer.URL + "/mcp", DisableStandaloneSSE: true}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer session.Close()
+	page, err := session.ListTools(ctx, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := map[string]bool{}
+	for _, tool := range page.Tools {
+		found[tool.Name] = true
+	}
+	for _, name := range []string{"memory.task_history", "memory.query", "memory.summarize", "memory.record", "memory.oracle_report", "proposal.get", "proposal.patch_read"} {
+		if !found[name] {
+			t.Errorf("Memory Oracle tool surface omits %q", name)
+		}
+	}
+	for _, name := range []string{"vote.cast", "patch.apply", "human.request_approval", "task.create", "memory.mark_stale"} {
+		if found[name] {
+			t.Errorf("Memory Oracle tool surface exposes forbidden %q", name)
+		}
+	}
+}
+
 func TestScopedAgentHTTPHandlerBindsAndRechecksCapability(t *testing.T) {
 	root := newRuntimeRoot(t)
 	runtime, cleanup, err := OpenRuntime(root)

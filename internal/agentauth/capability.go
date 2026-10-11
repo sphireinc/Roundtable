@@ -97,6 +97,10 @@ func AllowedTool(role, tool string) bool {
 	return allowed(normalizeRole(role), tool)
 }
 
+func CanonicalRole(role string) string {
+	return normalizeRole(role)
+}
+
 func (a *Authority) AuthorizeIdentity(token, tool string) (Identity, error) {
 	identity, err := a.Resolve(token)
 	if err != nil {
@@ -132,6 +136,8 @@ func normalizeRole(role string) string {
 		return "tester"
 	case "security", "security_agent":
 		return "security"
+	case "memoryoracle", "memory_oracle":
+		return "memory_oracle"
 	default:
 		return ""
 	}
@@ -155,6 +161,8 @@ func allowed(role, tool string) bool {
 		return oneOf(tool, "resource.claim", "resource.release", "test.suggest", "test.evidence.submit")
 	case "security":
 		return oneOf(tool, "resource.claim", "resource.release", "security.review", "test.suggest")
+	case "memory_oracle":
+		return oneOf(tool, "memory.task_history", "memory.query", "memory.summarize", "memory.record", "memory.oracle_report", "proposal.patch_read")
 	default:
 		return false
 	}

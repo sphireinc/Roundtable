@@ -40,8 +40,8 @@ func TestOpenBootstrapsControlPlaneSchema(t *testing.T) {
 	if err := sqlDB.QueryRow("SELECT MAX(version) FROM schema_migrations").Scan(&version); err != nil {
 		t.Fatalf("migration version: %v", err)
 	}
-	if version != 6 {
-		t.Fatalf("migration version = %d, want 6", version)
+	if version != 8 {
+		t.Fatalf("migration version = %d, want 8", version)
 	}
 	for _, column := range []string{"revision"} {
 		var count int
@@ -50,6 +50,42 @@ func TestOpenBootstrapsControlPlaneSchema(t *testing.T) {
 		}
 		if count != 1 {
 			t.Fatalf("workspace column %s missing", column)
+		}
+	}
+}
+
+func TestTaskHistoryQueriesUseBoundedIndexes(t *testing.T) {
+	db, err := Open(filepath.Join(t.TempDir(), "roundtable.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	for _, query := range []string{
+		"EXPLAIN QUERY PLAN SELECT id FROM proposals WHERE task_id = ? ORDER BY created_at DESC, id DESC LIMIT ?",
+		"EXPLAIN QUERY PLAN SELECT id FROM decisions WHERE task_id = ? ORDER BY created_at DESC, id DESC LIMIT ?",
+		"EXPLAIN QUERY PLAN SELECT id FROM memory_entries WHERE status = 'active' AND scope IN (?, 'project') ORDER BY importance DESC, id LIMIT ?",
+	} {
+		rows, err := db.Query(query, "T-1", 100)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var plan strings.Builder
+		for rows.Next() {
+			var id, parent, notUsed int
+			var detail string
+			if err := rows.Scan(&id, &parent, &notUsed, &detail); err != nil {
+				rows.Close()
+				t.Fatal(err)
+			}
+			plan.WriteString(detail)
+		}
+		if err := rows.Err(); err != nil {
+			rows.Close()
+			t.Fatal(err)
+		}
+		rows.Close()
+		if strings.Contains(plan.String(), "SCAN proposals") || strings.Contains(plan.String(), "SCAN decisions") || strings.Contains(plan.String(), "SCAN memory_entries") {
+			t.Errorf("history query did not use a scoped index: %s: %s", query, plan.String())
 		}
 	}
 }
@@ -80,6 +116,34 @@ func TestVoteTallyQueryUsesProposalIndex(t *testing.T) {
 	}
 	if !strings.Contains(plan.String(), "idx_votes_proposal_id") {
 		t.Fatalf("vote tally query does not use proposal index: %s", plan.String())
+	}
+}
+
+func TestTaskEventQueryUsesRunTaskIndex(t *testing.T) {
+	db, err := Open(filepath.Join(t.TempDir(), "roundtable.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	rows, err := db.Query(`EXPLAIN QUERY PLAN SELECT id FROM events WHERE run_id = ? AND task_id = ? ORDER BY id DESC LIMIT ?`, "R-1", "T-1", 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+	var plan strings.Builder
+	for rows.Next() {
+		var id, parent, notUsed int
+		var detail string
+		if err := rows.Scan(&id, &parent, &notUsed, &detail); err != nil {
+			t.Fatal(err)
+		}
+		plan.WriteString(detail)
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(plan.String(), "idx_events_run_task_id_id") {
+		t.Fatalf("task event query does not use run/task index: %s", plan.String())
 	}
 }
 

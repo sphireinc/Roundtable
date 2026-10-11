@@ -349,6 +349,46 @@ func (s *Store) ListEventsAfter(ctx context.Context, runID string, afterID int64
 	return out, rows.Err()
 }
 
+// ListTaskEvents returns the newest task events in chronological order and reports whether older events were omitted.
+func (s *Store) ListTaskEvents(ctx context.Context, runID, taskID string, limit int) ([]Event, bool, error) {
+	if runID == "" || taskID == "" {
+		return nil, false, errors.New("run_id and task_id are required")
+	}
+	if limit <= 0 {
+		return nil, false, errors.New("task event limit must be positive")
+	}
+	if limit > 200 {
+		limit = 200
+	}
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT id, run_id, type, COALESCE(actor_id, ''), COALESCE(task_id, ''), payload_json, created_at
+		FROM events WHERE run_id = ? AND task_id = ? ORDER BY id DESC LIMIT ?
+	`, runID, taskID, limit+1)
+	if err != nil {
+		return nil, false, fmt.Errorf("list task events for %s: %w", taskID, err)
+	}
+	defer rows.Close()
+	newestFirst := make([]Event, 0, limit+1)
+	for rows.Next() {
+		var event Event
+		if err := rows.Scan(&event.ID, &event.RunID, &event.Type, &event.ActorID, &event.TaskID, &event.PayloadJSON, &event.CreatedAt); err != nil {
+			return nil, false, fmt.Errorf("scan task event: %w", err)
+		}
+		newestFirst = append(newestFirst, event)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, false, err
+	}
+	truncated := len(newestFirst) > limit
+	if truncated {
+		newestFirst = newestFirst[:limit]
+	}
+	for left, right := 0, len(newestFirst)-1; left < right; left, right = left+1, right-1 {
+		newestFirst[left], newestFirst[right] = newestFirst[right], newestFirst[left]
+	}
+	return newestFirst, truncated, nil
+}
+
 func (s *Store) UpsertRun(ctx context.Context, run Run) error {
 	_, err := s.db.ExecContext(ctx, `
 		INSERT INTO runs (id, goal, status, ended_at, metadata_json)
@@ -903,6 +943,39 @@ func (s *Store) ListProposals(ctx context.Context) ([]Proposal, error) {
 	return out, rows.Err()
 }
 
+func (s *Store) ListTaskProposals(ctx context.Context, taskID string, limit int) ([]Proposal, bool, error) {
+	if taskID == "" {
+		return nil, false, errors.New("task id is required")
+	}
+	if limit <= 0 || limit > 200 {
+		limit = 100
+	}
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT id, task_id, agent_id, title, summary_md, patch_path, status, risk, COALESCE(base_revision, ''), COALESCE(base_state_hash, ''), COALESCE(proposer_session_id, ''), created_at
+		FROM proposals WHERE task_id = ? ORDER BY created_at DESC, id DESC LIMIT ?
+	`, taskID, limit+1)
+	if err != nil {
+		return nil, false, fmt.Errorf("list task proposals: %w", err)
+	}
+	defer rows.Close()
+	var out []Proposal
+	for rows.Next() {
+		var v Proposal
+		if err := rows.Scan(&v.ID, &v.TaskID, &v.AgentID, &v.Title, &v.SummaryMD, &v.PatchPath, &v.Status, &v.Risk, &v.BaseRevision, &v.BaseStateHash, &v.ProposerSessionID, &v.CreatedAt); err != nil {
+			return nil, false, fmt.Errorf("scan task proposal: %w", err)
+		}
+		out = append(out, v)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, false, err
+	}
+	truncated := len(out) > limit
+	if truncated {
+		out = out[:limit]
+	}
+	return out, truncated, nil
+}
+
 func (s *Store) ReplaceProposalResources(ctx context.Context, proposalID string, resourceIDs []string) error {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -1077,6 +1150,39 @@ func (s *Store) ListDecisions(ctx context.Context) ([]Decision, error) {
 		out = append(out, v)
 	}
 	return out, rows.Err()
+}
+
+func (s *Store) ListTaskDecisions(ctx context.Context, taskID string, limit int) ([]Decision, bool, error) {
+	if taskID == "" {
+		return nil, false, errors.New("task id is required")
+	}
+	if limit <= 0 || limit > 200 {
+		limit = 100
+	}
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT id, COALESCE(proposal_id, ''), COALESCE(task_id, ''), decision, rationale_md, decided_by, created_at
+		FROM decisions WHERE task_id = ? ORDER BY created_at DESC, id DESC LIMIT ?
+	`, taskID, limit+1)
+	if err != nil {
+		return nil, false, fmt.Errorf("list task decisions: %w", err)
+	}
+	defer rows.Close()
+	var out []Decision
+	for rows.Next() {
+		var v Decision
+		if err := rows.Scan(&v.ID, &v.ProposalID, &v.TaskID, &v.Decision, &v.RationaleMD, &v.DecidedBy, &v.CreatedAt); err != nil {
+			return nil, false, fmt.Errorf("scan task decision: %w", err)
+		}
+		out = append(out, v)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, false, err
+	}
+	truncated := len(out) > limit
+	if truncated {
+		out = out[:limit]
+	}
+	return out, truncated, nil
 }
 
 func (s *Store) UpsertTransaction(ctx context.Context, transaction Transaction) error {
@@ -1348,6 +1454,40 @@ func (s *Store) ListMemoryEntries(ctx context.Context) ([]MemoryEntry, error) {
 		out = append(out, v)
 	}
 	return out, rows.Err()
+}
+
+func (s *Store) ListActiveTaskMemory(ctx context.Context, taskID string, limit int) ([]MemoryEntry, bool, error) {
+	if taskID == "" {
+		return nil, false, errors.New("task id is required")
+	}
+	if limit <= 0 || limit > 200 {
+		limit = 100
+	}
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT id, scope, kind, title, body_md, COALESCE(source_event_id, 0), importance, status, created_at, updated_at
+		FROM memory_entries WHERE status = 'active' AND scope IN (?, 'project')
+		ORDER BY importance DESC, id LIMIT ?
+	`, taskID, limit+1)
+	if err != nil {
+		return nil, false, fmt.Errorf("list active task memory: %w", err)
+	}
+	defer rows.Close()
+	var out []MemoryEntry
+	for rows.Next() {
+		var v MemoryEntry
+		if err := rows.Scan(&v.ID, &v.Scope, &v.Kind, &v.Title, &v.BodyMD, &v.SourceEventID, &v.Importance, &v.Status, &v.CreatedAt, &v.UpdatedAt); err != nil {
+			return nil, false, fmt.Errorf("scan task memory: %w", err)
+		}
+		out = append(out, v)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, false, err
+	}
+	truncated := len(out) > limit
+	if truncated {
+		out = out[:limit]
+	}
+	return out, truncated, nil
 }
 
 func wrapErr(action string, err error) error {

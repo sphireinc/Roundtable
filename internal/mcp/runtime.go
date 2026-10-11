@@ -86,11 +86,55 @@ func (r *Runtime) CallAgent(ctx context.Context, token, tool string, args map[st
 		}
 		bound[key] = authoritative
 	}
-	if identity.ProposalID != "" {
+	if identity.ProposalID != "" && proposalBoundTool(tool) {
 		if supplied, ok := bound["proposal_id"]; ok && supplied != identity.ProposalID {
 			return nil, fmt.Errorf("agent capability does not permit overriding proposal_id")
 		}
 		bound["proposal_id"] = identity.ProposalID
+	}
+	role := agentauth.CanonicalRole(identity.Role)
+	if strings.HasPrefix(tool, "memory.") && role != "memory_oracle" {
+		return nil, agentauth.ErrUnauthorized
+	}
+	if role == "memory_oracle" {
+		switch tool {
+		case "memory.query":
+			scope := stringArg(bound, "scope")
+			if scope == "" {
+				bound["scope"] = identity.TaskID
+			} else if scope != identity.TaskID && scope != "project" {
+				return nil, agentauth.ErrUnauthorized
+			}
+			bound["active_only"] = true
+		case "memory.summarize":
+			if scope := stringArg(bound, "scope"); scope != "" && scope != identity.TaskID {
+				return nil, agentauth.ErrUnauthorized
+			}
+			bound["task_id"] = identity.TaskID
+			bound["scope"] = identity.TaskID
+			bound["active_only"] = true
+		case "memory.record":
+			scope := stringArg(bound, "scope")
+			if scope == "" {
+				scope = identity.TaskID
+			}
+			if scope != identity.TaskID && scope != "project" {
+				return nil, agentauth.ErrUnauthorized
+			}
+			bound["scope"] = scope
+			bound["status"] = "active"
+			delete(bound, "memory_id")
+			sourceEventID := int64(intArgDefault(bound, "source_event_id", 0))
+			if sourceEventID < 0 {
+				return nil, agentauth.ErrUnauthorized
+			}
+			if sourceEventID > 0 {
+				event, err := r.store.GetEvent(ctx, sourceEventID)
+				if err != nil || event.RunID != identity.RunID || event.TaskID != identity.TaskID {
+					return nil, agentauth.ErrUnauthorized
+				}
+			}
+		}
 	}
 	if tool == "table.watch" {
 		return r.agentTurnWatch(ctx, identity, bound)
@@ -130,7 +174,7 @@ func (r *Runtime) CallAgent(ctx context.Context, token, tool string, args map[st
 		bound["base_hash"] = baseHash
 		ctx = context.WithValue(ctx, agentClaimHashCheckedKey{}, true)
 	}
-	if tool == "proposal.get" || tool == "vote.cast" || tool == "vote.list" || tool == "security.review" || tool == "test.evidence.submit" {
+	if tool == "proposal.get" || tool == "proposal.patch_read" || tool == "memory.oracle_report" || tool == "vote.cast" || tool == "vote.list" || tool == "security.review" || tool == "test.evidence.submit" {
 		proposalID := stringArg(bound, "proposal_id")
 		if identity.ProposalID == "" || proposalID != identity.ProposalID {
 			return nil, agentauth.ErrUnauthorized
@@ -151,6 +195,15 @@ func (r *Runtime) CallAgent(ctx context.Context, token, tool string, args map[st
 			return nil, agentauth.ErrUnauthorized
 		}
 		return map[string]any{"proposals": []db.Proposal{proposal}}, nil
+	}
+	if tool == "memory.task_history" {
+		return r.memoryTaskHistory(ctx, bound)
+	}
+	if tool == "memory.oracle_report" {
+		return r.memoryOracleReport(ctx, bound)
+	}
+	if tool == "proposal.patch_read" {
+		return r.proposalPatchRead(ctx, bound)
 	}
 	if tool == "vote.cast" {
 		delete(bound, "vote_id")
@@ -273,7 +326,7 @@ func agentTurnEventVisible(event db.Event, agentID string) bool {
 
 func (r *Runtime) validateLiveAgentIdentity(ctx context.Context, identity agentauth.Identity) error {
 	agent, err := r.store.GetAgent(ctx, identity.AgentID)
-	if err != nil || !agent.IsEnabled || !strings.EqualFold(strings.TrimSpace(agent.Role), identity.Role) {
+	if err != nil || !agent.IsEnabled || agentauth.CanonicalRole(agent.Role) == "" || agentauth.CanonicalRole(agent.Role) != agentauth.CanonicalRole(identity.Role) {
 		return agentauth.ErrUnauthorized
 	}
 	task, err := r.store.GetTask(ctx, identity.TaskID)
@@ -289,7 +342,7 @@ func (r *Runtime) validateLiveAgentIdentity(ctx context.Context, identity agenta
 		if err != nil || identity.ProposalID == "" || proposal.TaskID != identity.TaskID || proposal.AgentID == identity.AgentID || proposal.Status != "pending" && proposal.Status != "in_review" {
 			return agentauth.ErrUnauthorized
 		}
-		role := strings.ToLower(strings.TrimSpace(identity.Role))
+		role := agentauth.CanonicalRole(identity.Role)
 		switch role {
 		case "reviewer":
 		case "tester":
@@ -300,6 +353,7 @@ func (r *Runtime) validateLiveAgentIdentity(ctx context.Context, identity agenta
 			if proposal.Risk != "high" && proposal.Risk != "critical" {
 				return agentauth.ErrUnauthorized
 			}
+		case "memory_oracle":
 		default:
 			return agentauth.ErrUnauthorized
 		}
@@ -697,6 +751,8 @@ func (r *Runtime) Call(ctx context.Context, tool string, args map[string]any) (m
 		return r.proposals.ProposalCreate(ctx, args)
 	case "proposal.get":
 		return r.proposals.ProposalGet(ctx, args)
+	case "proposal.patch_read":
+		return r.proposalPatchRead(ctx, args)
 	case "proposal.list":
 		return r.proposals.ProposalList(ctx, args)
 	case "proposal.attach_patch":
@@ -725,6 +781,10 @@ func (r *Runtime) Call(ctx context.Context, tool string, args map[string]any) (m
 		return r.taskUpdateStatus(ctx, args)
 	case "memory.query":
 		return r.memoryQuery(ctx, args)
+	case "memory.task_history":
+		return r.memoryTaskHistory(ctx, args)
+	case "memory.oracle_report":
+		return r.memoryOracleReport(ctx, args)
 	case "memory.record":
 		return r.memoryRecord(ctx, args)
 	case "memory.summarize":
@@ -1222,6 +1282,9 @@ func (r *Runtime) memoryQuery(ctx context.Context, args map[string]any) (map[str
 	}
 	var matched []scored
 	for _, entry := range entries {
+		if boolArgDefault(args, "active_only", false) && entry.Status != "active" {
+			continue
+		}
 		if scope != "" && entry.Scope != scope {
 			continue
 		}
@@ -1288,7 +1351,7 @@ func (r *Runtime) memorySummarize(ctx context.Context, args map[string]any) (map
 	}
 	filtered := make([]db.MemoryEntry, 0, len(entries))
 	for _, entry := range entries {
-		if entry.Status == "stale" {
+		if entry.Status == "stale" || boolArgDefault(args, "active_only", false) && entry.Status != "active" {
 			continue
 		}
 		if scope != "" && entry.Scope != scope {

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net"
 	"net/http"
 	"os"
@@ -292,6 +293,38 @@ func TestExecutionPromptContainsServerAssignedRoleAndScope(t *testing.T) {
 		if !strings.Contains(prompt, expected) {
 			t.Errorf("execution prompt missing %q", expected)
 		}
+	}
+}
+
+func TestExecutionSupervisorLaunchesProposalBoundMemoryOracleInContainer(t *testing.T) {
+	repository := supervisorGitRepo(t)
+	store := supervisorStore(t)
+	ctx := context.Background()
+	if err := store.UpsertAgent(ctx, db.Agent{ID: "A-oracle", Role: "MemoryOracle", Name: "Memory Oracle", Adapter: "codex", IsEnabled: true}); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.UpsertTask(ctx, db.Task{ID: "T-1", Title: "Review memory", BodyMD: "Review the proposal against prior decisions.", Status: "in_progress", AssignedAgentID: "A-implementer", ReadablePaths: []string{"README.md"}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.UpsertProposal(ctx, db.Proposal{ID: "P-1", TaskID: "T-1", AgentID: "A-implementer", Title: "Proposed change", SummaryMD: "Change workflow", PatchPath: ".roundtable/patches/P-1.diff", Status: "pending"}); err != nil {
+		t.Fatal(err)
+	}
+	runtime := &supervisorFakeRuntime{started: make(chan struct{}), duringRun: func(_ context.Context, spec sandbox.Spec) error {
+		prompt := strings.Join(spec.Command, " ")
+		for _, expected := range []string{"Role: MemoryOracle", "Memory Oracle review contract", "memory.task_history", "memory.oracle_report", "persist it with memory.record", "advisory"} {
+			if !strings.Contains(prompt, expected) {
+				return fmt.Errorf("container command omitted Memory Oracle prompt text %q", expected)
+			}
+		}
+		return nil
+	}}
+	supervisor := newSupervisorWithTestMCP(t, repository, store, agentauth.New(nil), runtime)
+	handle, err := supervisor.Launch(ctx, StartAgentRequest{SessionID: "S-oracle", AgentID: "A-oracle", RunID: "R-1", TaskID: "T-1", ProposalID: "P-1", Role: "caller-supplied"}, time.Minute)
+	if err != nil {
+		t.Fatalf("launch Memory Oracle through sandbox supervisor: %v", err)
+	}
+	if _, err := handle.Wait(ctx); err != nil {
+		t.Fatal(err)
 	}
 }
 
@@ -881,6 +914,7 @@ func supervisorConfig() config.Config {
 	cfg.Adapters["codex"] = config.AdapterConfig{Image: "agent:test", Command: "codex", SupportsMCP: true, ProviderHosts: []string{"api.example.com"}}
 	cfg.Agents.Implementers.Adapter = "codex"
 	cfg.Agents.Reviewers.Adapter = "codex"
+	cfg.Agents.MemoryOracle.Adapter = "codex"
 	return cfg
 }
 

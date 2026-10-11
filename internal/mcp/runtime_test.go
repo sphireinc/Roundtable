@@ -142,6 +142,168 @@ func TestProposalBoundReviewerCanReadAndVoteWithoutOwningImplementationTask(t *t
 	}
 }
 
+func TestMemoryOracleReadsScopedTaskHistoryAndReportsAdvisoryWarning(t *testing.T) {
+	root := newRuntimeRoot(t)
+	rt, cleanup, err := OpenRuntime(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer cleanup()
+	ctx := context.Background()
+	if err := os.MkdirAll(filepath.Join(root, ".roundtable", "patches"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, ".roundtable", "patches", "P-memory.diff"), []byte("diff --git a/a.txt b/a.txt\n+new\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := rt.store.UpsertRun(ctx, db.Run{ID: "R-memory", Goal: "memory test", Status: "active"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := rt.store.UpsertTask(ctx, db.Task{ID: "T-memory", Title: "Memory task", Status: "in_progress", AssignedAgentID: "A-implementer"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := rt.store.UpsertProposal(ctx, db.Proposal{ID: "P-memory", TaskID: "T-memory", AgentID: "A-implementer", Title: "Potential conflict", SummaryMD: "Change the retained workflow", PatchPath: ".roundtable/patches/P-memory.diff", Status: "pending"}); err != nil {
+		t.Fatal(err)
+	}
+	for _, memory := range []db.MemoryEntry{
+		{ID: "M-task", Scope: "T-memory", Kind: "decision", Title: "Keep workflow", BodyMD: "Do not remove the retained workflow.", Status: "active"},
+		{ID: "M-project", Scope: "project", Kind: "decision", Title: "Use proposals", BodyMD: "Repository changes must use proposals.", Status: "active"},
+		{ID: "M-global", Scope: "global", Kind: "decision", Title: "Global fact", BodyMD: "Not available to an Oracle task review.", Status: "active"},
+		{ID: "M-other", Scope: "T-other", Kind: "decision", Title: "Private other task", BodyMD: "Not in scope.", Status: "active"},
+		{ID: "M-stale", Scope: "T-memory", Kind: "decision", Title: "Stale fact", BodyMD: "Not current.", Status: "stale"},
+	} {
+		if err := rt.store.UpsertMemoryEntry(ctx, memory); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := rt.store.UpsertDecision(ctx, db.Decision{ID: "D-memory", TaskID: "T-memory", ProposalID: "P-memory", Decision: "accepted", RationaleMD: "Keep workflow", DecidedBy: "operator"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := rt.store.AppendEvent(ctx, db.Event{RunID: "R-memory", TaskID: "T-memory", Type: "task.updated", PayloadJSON: `{}`}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := rt.store.AppendEvent(ctx, db.Event{RunID: "R-memory", TaskID: "T-other", Type: "private.other", PayloadJSON: `{}`}); err != nil {
+		t.Fatal(err)
+	}
+	identity := agentauth.Identity{SessionID: "S-memory", AgentID: "A-memory", TaskID: "T-memory", ProposalID: "P-memory", RunID: "R-memory", Role: "MemoryOracle", BaseRevision: "rev", BaseStateHash: "tree"}
+	authority := agentauth.New(nil)
+	rt.SetAgentAuthority(authority)
+	token := issueRuntimeTestCapability(t, rt, authority, identity)
+	if _, err := rt.CallAgent(ctx, token, "memory.task_history", map[string]any{"task_id": "T-other"}); err == nil {
+		t.Fatal("Memory Oracle overrode its task-bound identity")
+	}
+	history, err := rt.CallAgent(ctx, token, "memory.task_history", map[string]any{})
+	if err != nil {
+		t.Fatalf("read task history: %v", err)
+	}
+	if history["task"].(db.Task).ID != "T-memory" || len(history["proposals"].([]db.Proposal)) != 1 || len(history["decisions"].([]db.Decision)) != 1 {
+		t.Fatalf("task context omitted task records: %+v", history)
+	}
+	if history["proposals_truncated"] != false || history["decisions_truncated"] != false || history["events_truncated"] != false || history["memory_entries_truncated"] != false {
+		t.Fatalf("small task history incorrectly reported truncation: %+v", history)
+	}
+	events := history["events"].([]db.Event)
+	if len(events) != 1 || events[0].Type != "task.updated" {
+		t.Fatalf("task context leaked another task's events: %+v", events)
+	}
+	memories := history["memory_entries"].([]db.MemoryEntry)
+	if len(memories) != 2 || memories[0].ID != "M-task" && memories[1].ID != "M-task" {
+		t.Fatalf("task context returned unrelated or stale memory: %+v", memories)
+	}
+	for _, memory := range memories {
+		if memory.Scope == "global" || memory.Status != "active" {
+			t.Fatalf("task context exposed out-of-scope memory: %+v", memory)
+		}
+	}
+	patch, err := rt.CallAgent(ctx, token, "proposal.patch_read", map[string]any{})
+	if err != nil || patch["patch"] != "diff --git a/a.txt b/a.txt\n+new\n" {
+		t.Fatalf("read assigned proposal patch: result=%+v err=%v", patch, err)
+	}
+	if _, err := rt.CallAgent(ctx, token, "memory.query", map[string]any{"query": "Private", "scope": "T-other"}); err == nil {
+		t.Fatal("Memory Oracle queried another task's memory")
+	}
+	if _, err := rt.CallAgent(ctx, token, "memory.query", map[string]any{"query": "Global", "scope": "global"}); err == nil {
+		t.Fatal("Memory Oracle queried global memory outside its task/project boundary")
+	}
+	summary, err := rt.CallAgent(ctx, token, "memory.summarize", map[string]any{})
+	if err != nil || summary["entry_count"] != 1 || !strings.Contains(summary["summary_md"].(string), "Keep workflow") {
+		t.Fatalf("summarize assigned task memory: summary=%+v err=%v", summary, err)
+	}
+	if _, err := rt.CallAgent(ctx, token, "vote.cast", map[string]any{"proposal_id": "P-memory", "vote": "approve"}); err == nil {
+		t.Fatal("Memory Oracle received proposal voting authority")
+	}
+	if _, err := rt.CallAgent(ctx, token, "memory.record", map[string]any{"scope": "T-other", "kind": "summary", "title": "forbidden", "body_md": "forbidden"}); err == nil {
+		t.Fatal("Memory Oracle wrote outside task/project scope")
+	}
+	recorded, err := rt.CallAgent(ctx, token, "memory.record", map[string]any{
+		"memory_id": "M-project", "scope": "T-memory", "kind": "summary", "title": "Durable task decision", "body_md": "Accepted proposal workflow remains required.",
+		"source_event_id": 1,
+	})
+	if err != nil {
+		t.Fatalf("record task memory: %v", err)
+	}
+	entry := recorded["entry"].(db.MemoryEntry)
+	if entry.ID == "M-project" || entry.Scope != "T-memory" || entry.Status != "active" || entry.SourceEventID != 1 {
+		t.Fatalf("agent-supplied ID/status escaped the scoped durable memory write: %+v", entry)
+	}
+	if _, err := rt.CallAgent(ctx, token, "memory.record", map[string]any{
+		"scope": "T-memory", "kind": "summary", "title": "bad source", "body_md": "bad", "source_event_id": 2,
+	}); err == nil {
+		t.Fatal("Memory Oracle linked task memory to an event from another task")
+	}
+	report, err := rt.CallAgent(ctx, token, "memory.oracle_report", map[string]any{
+		"warning_md": "Proposal may contradict M-task: it removes the retained workflow.",
+		"memory_ids": []any{"M-task", "M-project"},
+	})
+	if err != nil {
+		t.Fatalf("submit advisory warning: %v", err)
+	}
+	warningEvent := report["warning_event"].(db.Event)
+	if warningEvent.Type != "memory.oracle_warning" || warningEvent.ActorID != "A-memory" || warningEvent.TaskID != "T-memory" {
+		t.Fatalf("warning was not durably attributed: %+v", warningEvent)
+	}
+	proposal, err := rt.store.GetProposal(ctx, "P-memory")
+	if err != nil || proposal.Status != "pending" {
+		t.Fatalf("advisory warning changed proposal governance state: proposal=%+v err=%v", proposal, err)
+	}
+	votes, err := rt.store.ListVotes(ctx, "P-memory")
+	if err != nil || len(votes) != 0 {
+		t.Fatalf("advisory warning created governance votes: %+v err=%v", votes, err)
+	}
+	if _, err := rt.CallAgent(ctx, token, "memory.oracle_report", map[string]any{"warning_md": "bad scope", "memory_ids": []any{"M-other"}}); err == nil {
+		t.Fatal("Memory Oracle cited another task's memory")
+	}
+	if _, err := rt.CallAgent(ctx, token, "memory.oracle_report", map[string]any{"warning_md": "global scope", "memory_ids": []any{"M-global"}}); err == nil {
+		t.Fatal("Memory Oracle cited global memory outside its task/project boundary")
+	}
+	if err := os.Remove(filepath.Join(root, ".roundtable", "patches", "P-memory.diff")); err != nil {
+		t.Fatal(err)
+	}
+	outside := filepath.Join(t.TempDir(), "secret.diff")
+	if err := os.WriteFile(outside, []byte("secret"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outside, filepath.Join(root, ".roundtable", "patches", "P-memory.diff")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := rt.CallAgent(ctx, token, "proposal.patch_read", map[string]any{}); err == nil {
+		t.Fatal("proposal patch reader followed a symlink outside the repository root")
+	}
+	if err := os.Remove(filepath.Join(root, ".roundtable", "patches", "P-memory.diff")); err != nil {
+		t.Fatal(err)
+	}
+	internalSecret := filepath.Join(root, ".env")
+	if err := os.WriteFile(internalSecret, []byte("SECRET=value\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(internalSecret, filepath.Join(root, ".roundtable", "patches", "P-memory.diff")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := rt.CallAgent(ctx, token, "proposal.patch_read", map[string]any{}); err == nil {
+		t.Fatal("proposal patch reader followed an in-repository symlink to an unauthorized file")
+	}
+}
+
 func TestProposalBoundTesterCanSubmitUntrustedTestEvidence(t *testing.T) {
 	root := newRuntimeRoot(t)
 	rt, cleanup, err := OpenRuntime(root)
@@ -1685,14 +1847,14 @@ func TestRuntimeProposalRequestReview(t *testing.T) {
 		t.Fatalf("expected in_review proposal, got %+v", proposal)
 	}
 	roles := result["review_roles"].([]string)
-	if len(roles) < 2 || roles[0] == "" {
+	if len(roles) < 2 || roles[0] == "" || !strings.Contains(fmt.Sprint(roles), "MemoryOracle") {
 		t.Fatalf("expected review roles, got %+v", roles)
 	}
 	reviewers := result["reviewers"].([]map[string]any)
-	if len(reviewers) < 2 {
+	if len(reviewers) < 3 {
 		t.Fatalf("expected reviewers, got %+v", reviewers)
 	}
-	if !strings.Contains(fmt.Sprint(reviewers), "reviewer-1") || !strings.Contains(fmt.Sprint(reviewers), "security-1") {
+	if !strings.Contains(fmt.Sprint(reviewers), "reviewer-1") || !strings.Contains(fmt.Sprint(reviewers), "security-1") || !strings.Contains(fmt.Sprint(reviewers), "MemoryOracle") {
 		t.Fatalf("expected mapped reviewer agents, got %+v", reviewers)
 	}
 	if required, _ := result["security_review_required"].(bool); !required {

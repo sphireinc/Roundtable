@@ -18,6 +18,7 @@ var implementedTools = map[string]bool{
 	"human.request_approval": true, "human.approval_status": true, "security.review": true,
 	"task.list": true, "task.get": true, "task.create": true, "task.update_status": true,
 	"memory.query": true, "memory.record": true, "memory.summarize": true, "memory.mark_stale": true,
+	"memory.task_history": true, "memory.oracle_report": true, "proposal.patch_read": true,
 	"test.suggest": true, "test.run": true, "test.get_result": true, "test.evidence.submit": true, "repo.read_file": true, "repo.search": true,
 	"resource.claim": true, "resource.release": true, "resource.claim_status": true, "resource.get": true,
 	"resource.search": true, "repo.symbols": true,

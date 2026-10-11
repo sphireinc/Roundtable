@@ -1,6 +1,10 @@
 # Persistent Memory
 
-Roundtable currently provides a SQLite-backed memory-entry store and MCP tools for querying, recording, summarizing, and marking entries stale. “Memory Oracle” is the product concept/role name; the current Go runtime does not launch a dedicated Memory Oracle agent, automatically extract memories, detect contradictions, or use embeddings.
+Roundtable provides a SQLite-backed memory-entry store and MCP tools for querying, recording, summarizing, and marking entries stale. Proposal review requests include a `MemoryOracle` advisory reviewer. The existing agent supervisor can launch that role inside the configured container and gives it a proposal-bound MCP capability; it can inspect task history and the bounded stored patch, then persist a source-cited warning event. This is not an automatic contradiction detector: the configured model makes the comparison, and its warning is advisory only. It cannot vote, change proposal state, or approve/apply a patch. The supervisor launch remains an explicit orchestration action; requesting review does not itself start a provider process.
+
+The Memory Oracle capability limits queries and records to the assigned task scope or `project` scope. Task history includes at most the latest 100 task proposals, decisions, assigned-run/task events, and active task/project memory entries. The response reports truncation separately for each list. The Oracle prompt requires it to synthesize relevant prior decisions/constraints and persist a concise task-scoped summary, citing a history event when available. Warnings must cite one or more active memory IDs in those same scopes and are stored as `memory.oracle_warning` events. Provider workspaces remain disposable; this role does not enable provider-session resume.
+
+Patch inspection rejects symlinks in the canonical artifact path and reads through a repository-root handle. The security boundary assumes the coordinator/operator controls writes to the authoritative `.roundtable/patches` tree; external agent containers have no writable mount there. A separate malicious host process with the same filesystem write authority is outside the container-agent threat model.
 
 ## Entry fields
 

@@ -1124,7 +1124,8 @@ func (s *Service) proposalPatchFiles(proposal db.Proposal) ([]string, error) {
 
 func (s *Service) reviewRolesForProposal(risk string, policyResult policy.Result) []string {
 	roles := map[string]struct{}{
-		"Reviewer": {},
+		"Reviewer":     {},
+		"MemoryOracle": {},
 	}
 	for _, profile := range policyResult.Profiles {
 		rule, ok := s.policy.Rules().Consensus[profile]
