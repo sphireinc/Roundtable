@@ -4,7 +4,7 @@
 
 ## Layout and displayed data
 
-The view draws four bordered panes: Live Table (run status/goal, task and claim counts, enabled agent count, pending proposals, requested approvals, latest transactions), Watch Feed (provided activity lines or socket placeholder), Command/Human Terminal (input, bounded command output, and errors), and Inspector (latest proposal, transaction, approval summary). The inspector does not track keyboard-selected entities.
+The view draws four bordered panes: Live Table (run status/goal, task and claim counts, enabled agent count, pending proposals, requested approvals, latest transactions), Watch Feed (in-process event subscription with periodic database reconciliation), Command/Human Terminal (input, bounded command output, and errors), and Inspector (latest proposal, transaction, approval summary). The inspector does not track keyboard-selected entities.
 
 Pane widths/heights derive from terminal size and have a minimum width/height. At narrow sizes content is clipped by rune count rather than adaptively reflowed, so the current view is not guaranteed to be usable at all terminal sizes.
 
@@ -39,7 +39,7 @@ Counts use exact status strings across the supplied snapshot, not an additional 
 
 The live table shows up to two transactions ordered by descending `AppliedAt`. The inspector independently chooses the newest-created proposal, latest-applied transaction, and latest-updated human approval. It does not restrict these choices to pending or successful records. Equal timestamp ordering is unspecified. A header for one run does not imply every pane contains only that run's records.
 
-The run command supplies the latest six events for its run, displayed in chronological order as event type, actor (or `system`), and task ID (or `-`). It appends the socket path and quit hint. These are plain text lines, not event payloads, timestamps, clickable records, or streamed command output. The `MCP server listening` fallback is placeholder text, not an independently measured socket-health check.
+The run command supplies the latest six events for its run, displayed in chronological order as event type, actor (or `system`), and task ID (or `-`). The in-process store event bus appends new events immediately; a two-second database refresh reconciles the display if buffered notifications are dropped. Writes from another process do not publish to this process-local bus and appear on the next refresh. The feed is capped at eight lines and does not include event payloads, timestamps, or clickable records. The `MCP server listening` fallback is placeholder text, not an independently measured socket-health check.
 
 ### Refresh and rendering limitations
 

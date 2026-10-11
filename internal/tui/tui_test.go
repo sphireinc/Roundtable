@@ -9,6 +9,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 
 	"roundtable/internal/db"
+	"roundtable/internal/events"
 	"roundtable/internal/state"
 )
 
@@ -103,8 +104,8 @@ func TestRefreshMessageUpdatesSnapshotAndWatchFeed(t *testing.T) {
 			Tasks: []db.Task{{ID: "T-1", Title: "Bootstrap", Status: "in_progress"}},
 		},
 		WatchFeed: []string{"proposal.created implementer-1 T-1"},
-		Refresh: func(context.Context) (state.Snapshot, []string, error) {
-			return state.Snapshot{}, nil, nil
+		Refresh: func(context.Context) (state.Snapshot, []string, int64, error) {
+			return state.Snapshot{}, nil, 0, nil
 		},
 		RefreshInterval: time.Millisecond,
 	})
@@ -116,7 +117,8 @@ func TestRefreshMessageUpdatesSnapshotAndWatchFeed(t *testing.T) {
 				{ID: "T-2", Title: "Review", Status: "blocked"},
 			},
 		},
-		watchFeed: []string{"vote.cast reviewer-1 T-2"},
+		watchFeed:     []string{"vote.cast reviewer-1 T-2"},
+		latestEventID: 1,
 	})
 
 	next, ok := updated.(model)
@@ -138,8 +140,8 @@ func TestRefreshMessageUpdatesSnapshotAndWatchFeed(t *testing.T) {
 }
 
 func TestScheduleRefreshReturnsTickCommand(t *testing.T) {
-	cmd := scheduleRefresh(time.Millisecond, func(context.Context) (state.Snapshot, []string, error) {
-		return state.Snapshot{}, []string{"tick"}, nil
+	cmd := scheduleRefresh(time.Millisecond, func(context.Context) (state.Snapshot, []string, int64, error) {
+		return state.Snapshot{}, []string{"tick"}, 1, nil
 	})
 	if cmd == nil {
 		t.Fatal("expected refresh tick command")
@@ -194,5 +196,67 @@ func TestCommandTerminalBackspaceAndEmptyEnter(t *testing.T) {
 	m = updated.(model)
 	if cmd != nil || m.commandBusy || m.commandInput != "" {
 		t.Fatalf("empty submit changed command state: %+v", m)
+	}
+}
+
+func TestWatchEventStreamAppendsOnlyNewEventsForActiveRun(t *testing.T) {
+	stream := make(chan db.Event, 1)
+	m := newModel(Options{
+		RunID:         "RUN-1",
+		WatchFeed:     []string{"older event"},
+		LatestEventID: 10,
+		EventStream:   stream,
+	})
+	updated, _ := m.Update(watchEventMsg{event: db.Event{ID: 11, RunID: "RUN-1", Type: "task.created", ActorID: "chair", TaskID: "T-1"}, ok: true})
+	m = updated.(model)
+	if m.opts.LatestEventID != 11 || m.opts.WatchFeed[len(m.opts.WatchFeed)-1] != "task.created chair T-1" {
+		t.Fatalf("new event not appended to watch feed: %+v", m.opts)
+	}
+	updated, _ = m.Update(watchEventMsg{event: db.Event{ID: 11, RunID: "RUN-1", Type: "task.created"}, ok: true})
+	m = updated.(model)
+	if len(m.opts.WatchFeed) != 2 {
+		t.Fatalf("duplicate event changed feed: %+v", m.opts.WatchFeed)
+	}
+	updated, _ = m.Update(watchEventMsg{event: db.Event{ID: 12, RunID: "RUN-OTHER", Type: "task.created"}, ok: true})
+	m = updated.(model)
+	if m.opts.LatestEventID != 11 || len(m.opts.WatchFeed) != 2 {
+		t.Fatalf("other-run event changed feed: %+v", m.opts)
+	}
+}
+
+func TestWatchEventStreamReadsFromSubscription(t *testing.T) {
+	bus := events.NewBus[db.Event]()
+	stream := bus.Subscribe(1)
+	defer bus.Unsubscribe(stream)
+	m := newModel(Options{RunID: "RUN-1", EventStream: stream})
+	bus.Publish(db.Event{ID: 1, RunID: "RUN-1", Type: "proposal.created"})
+	updated, command := m.Update(mustReadWatchEvent(t, waitForWatchEvent(stream)))
+	m = updated.(model)
+	if len(m.opts.WatchFeed) != 1 || m.opts.WatchFeed[0] != "proposal.created system -" || command == nil {
+		t.Fatalf("subscription event was not delivered: model=%+v command=%v", m.opts, command)
+	}
+}
+
+func mustReadWatchEvent(t *testing.T, command tea.Cmd) tea.Msg {
+	t.Helper()
+	if command == nil {
+		t.Fatal("expected watch-event wait command")
+	}
+	return command()
+}
+
+func TestOlderRefreshDoesNotOverwriteLiveWatchEvent(t *testing.T) {
+	m := newModel(Options{
+		RunID:         "RUN-1",
+		LatestEventID: 12,
+		WatchFeed:     []string{"event 12"},
+		Refresh: func(context.Context) (state.Snapshot, []string, int64, error) {
+			return state.Snapshot{}, []string{"stale event 11"}, 11, nil
+		},
+	})
+	updated, _ := m.Update(refreshMsg{watchFeed: []string{"stale event 11"}, latestEventID: 11})
+	m = updated.(model)
+	if len(m.opts.WatchFeed) != 1 || m.opts.WatchFeed[0] != "event 12" || m.opts.LatestEventID != 12 {
+		t.Fatalf("stale refresh rewound live event feed: %+v", m.opts)
 	}
 }

@@ -174,11 +174,13 @@ func runRoundtable(ctx context.Context, args []string, stdout io.Writer) error {
 	if err := insertRunSnapshot(ctx, store, activeRun.ID); err != nil {
 		return err
 	}
+	eventStream := store.Events().Subscribe(128)
+	defer store.Events().Unsubscribe(eventStream)
 	snapshot, err := state.LoadSnapshot(ctx, store)
 	if err != nil {
 		return err
 	}
-	watchFeed, err := loadWatchFeed(ctx, store, activeRun.ID, cfg.MCP.SocketPath, 6)
+	watchFeed, latestEventID, err := loadWatchFeed(ctx, store, activeRun.ID, cfg.MCP.SocketPath, 6)
 	if err != nil {
 		return err
 	}
@@ -201,24 +203,26 @@ func runRoundtable(ctx context.Context, args []string, stdout io.Writer) error {
 	tuiDone := make(chan error, 1)
 	go func() {
 		tuiDone <- tui.Run(loopCtx, stdout, tui.Options{
-			Goal:       activeRun.Goal,
-			SocketPath: cfg.MCP.SocketPath,
-			RunID:      activeRun.ID,
-			Snapshot:   snapshot,
-			WatchFeed:  watchFeed,
+			Goal:          activeRun.Goal,
+			SocketPath:    cfg.MCP.SocketPath,
+			RunID:         activeRun.ID,
+			Snapshot:      snapshot,
+			WatchFeed:     watchFeed,
+			LatestEventID: latestEventID,
+			EventStream:   eventStream,
 			ExecuteCommand: func(commandCtx context.Context, command string) (string, error) {
 				return executeTerminalCommand(commandCtx, *root, command)
 			},
-			Refresh: func(refreshCtx context.Context) (state.Snapshot, []string, error) {
+			Refresh: func(refreshCtx context.Context) (state.Snapshot, []string, int64, error) {
 				nextSnapshot, err := state.LoadSnapshot(refreshCtx, store)
 				if err != nil {
-					return state.Snapshot{}, nil, err
+					return state.Snapshot{}, nil, 0, err
 				}
-				nextWatchFeed, err := loadWatchFeed(refreshCtx, store, activeRun.ID, cfg.MCP.SocketPath, 6)
+				nextWatchFeed, nextLatestEventID, err := loadWatchFeed(refreshCtx, store, activeRun.ID, cfg.MCP.SocketPath, 6)
 				if err != nil {
-					return state.Snapshot{}, nil, err
+					return state.Snapshot{}, nil, 0, err
 				}
-				return nextSnapshot, nextWatchFeed, nil
+				return nextSnapshot, nextWatchFeed, nextLatestEventID, nil
 			},
 		})
 	}()
@@ -1070,10 +1074,14 @@ func insertRunSnapshot(ctx context.Context, store *db.Store, runID string) error
 	})
 }
 
-func loadWatchFeed(ctx context.Context, store *db.Store, runID, socketPath string, limit int) ([]string, error) {
+func loadWatchFeed(ctx context.Context, store *db.Store, runID, socketPath string, limit int) ([]string, int64, error) {
 	events, err := store.ListEvents(ctx, runID)
 	if err != nil {
-		return nil, err
+		return nil, 0, err
+	}
+	var latestEventID int64
+	if len(events) > 0 {
+		latestEventID = events[len(events)-1].ID
 	}
 	if limit > 0 && len(events) > limit {
 		events = events[len(events)-limit:]
@@ -1087,7 +1095,7 @@ func loadWatchFeed(ctx context.Context, store *db.Store, runID, socketPath strin
 	}
 	lines = append(lines, fmt.Sprintf("Socket: %s", blankCLI(socketPath, "not set")))
 	lines = append(lines, "Press q to quit")
-	return lines, nil
+	return lines, latestEventID, nil
 }
 
 func printWatchSnapshot(stdout io.Writer, result map[string]any, lastEventID int64, incremental bool) int64 {

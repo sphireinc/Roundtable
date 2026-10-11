@@ -20,8 +20,10 @@ type Options struct {
 	RunID           string
 	Snapshot        state.Snapshot
 	WatchFeed       []string
+	LatestEventID   int64
+	EventStream     <-chan db.Event
 	RefreshInterval time.Duration
-	Refresh         func(context.Context) (state.Snapshot, []string, error)
+	Refresh         func(context.Context) (state.Snapshot, []string, int64, error)
 	ExecuteCommand  func(context.Context, string) (string, error)
 	ctx             context.Context
 }
@@ -43,9 +45,15 @@ type model struct {
 }
 
 type refreshMsg struct {
-	snapshot  state.Snapshot
-	watchFeed []string
-	err       error
+	snapshot      state.Snapshot
+	watchFeed     []string
+	latestEventID int64
+	err           error
+}
+
+type watchEventMsg struct {
+	event db.Event
+	ok    bool
 }
 
 type commandResultMsg struct {
@@ -58,10 +66,14 @@ func newModel(opts Options) model {
 }
 
 func (m model) Init() tea.Cmd {
-	if m.opts.Refresh == nil {
-		return nil
+	var commands []tea.Cmd
+	if m.opts.Refresh != nil {
+		commands = append(commands, scheduleRefresh(m.opts.RefreshInterval, m.opts.Refresh))
 	}
-	return scheduleRefresh(m.opts.RefreshInterval, m.opts.Refresh)
+	if m.opts.EventStream != nil {
+		commands = append(commands, waitForWatchEvent(m.opts.EventStream))
+	}
+	return tea.Batch(commands...)
 }
 
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -109,10 +121,29 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case refreshMsg:
 		if msg.err == nil {
 			m.opts.Snapshot = msg.snapshot
-			m.opts.WatchFeed = msg.watchFeed
+			if msg.latestEventID >= m.opts.LatestEventID {
+				m.opts.WatchFeed = msg.watchFeed
+				m.opts.LatestEventID = msg.latestEventID
+			}
 		}
 		if m.opts.Refresh != nil {
 			return m, scheduleRefresh(m.opts.RefreshInterval, m.opts.Refresh)
+		}
+	case watchEventMsg:
+		if !msg.ok {
+			m.opts.EventStream = nil
+			return m, nil
+		}
+		if msg.event.RunID == m.opts.RunID && msg.event.ID > m.opts.LatestEventID {
+			m.opts.LatestEventID = msg.event.ID
+			line := fmt.Sprintf("%s %s %s", msg.event.Type, blankEvent(msg.event.ActorID, "system"), blankEvent(msg.event.TaskID, "-"))
+			m.opts.WatchFeed = append(m.opts.WatchFeed, line)
+			if len(m.opts.WatchFeed) > 8 {
+				m.opts.WatchFeed = append([]string(nil), m.opts.WatchFeed[len(m.opts.WatchFeed)-8:]...)
+			}
+		}
+		if m.opts.EventStream != nil {
+			return m, waitForWatchEvent(m.opts.EventStream)
 		}
 	case commandResultMsg:
 		m.commandBusy = false
@@ -161,18 +192,33 @@ func appendCommandLines(lines []string, additions ...string) []string {
 	return lines
 }
 
-func scheduleRefresh(interval time.Duration, refresh func(context.Context) (state.Snapshot, []string, error)) tea.Cmd {
+func waitForWatchEvent(stream <-chan db.Event) tea.Cmd {
+	return func() tea.Msg {
+		event, ok := <-stream
+		return watchEventMsg{event: event, ok: ok}
+	}
+}
+
+func scheduleRefresh(interval time.Duration, refresh func(context.Context) (state.Snapshot, []string, int64, error)) tea.Cmd {
 	if interval <= 0 {
 		interval = 2 * time.Second
 	}
 	return tea.Tick(interval, func(time.Time) tea.Msg {
-		snapshot, watchFeed, err := refresh(context.Background())
+		snapshot, watchFeed, latestEventID, err := refresh(context.Background())
 		return refreshMsg{
-			snapshot:  snapshot,
-			watchFeed: watchFeed,
-			err:       err,
+			snapshot:      snapshot,
+			watchFeed:     watchFeed,
+			latestEventID: latestEventID,
+			err:           err,
 		}
 	})
+}
+
+func blankEvent(value, fallback string) string {
+	if value == "" {
+		return fallback
+	}
+	return value
 }
 
 func (m model) View() string {
