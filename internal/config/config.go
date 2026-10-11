@@ -162,6 +162,12 @@ func Load(root string) (Config, error) {
 }
 
 func (cfg Config) Validate() error {
+	if cfg.Version != 1 {
+		return fmt.Errorf("version must be 1, got %d", cfg.Version)
+	}
+	if cfg.MCP.Transport != "unix" {
+		return fmt.Errorf("mcp.transport must be unix, got %q", cfg.MCP.Transport)
+	}
 	if cfg.Agents.Implementers.Count < 0 {
 		return errors.New("agents.implementers.count must be nonnegative")
 	}
@@ -246,6 +252,9 @@ func parseYAMLInto(lines []string, cfg *Config) error {
 		}
 
 		if !hasValue {
+			if !supportedConfigSection(section) {
+				return fmt.Errorf("unsupported config section: %s", strings.Join(section, "."))
+			}
 			continue
 		}
 
@@ -324,6 +333,30 @@ func parseYAMLInto(lines []string, cfg *Config) error {
 		}
 	}
 	return nil
+}
+
+func supportedConfigSection(section []string) bool {
+	if len(section) == 1 {
+		switch section[0] {
+		case "storage", "mcp", "agents", "adapters":
+			return true
+		default:
+			return false
+		}
+	}
+	if len(section) != 2 {
+		return false
+	}
+	switch section[0] {
+	case "agents":
+		switch section[1] {
+		case "chair", "architect", "implementers", "reviewers", "tester", "security", "memory_oracle":
+			return true
+		}
+	case "adapters":
+		return section[1] != ""
+	}
+	return false
 }
 
 func setAdapterValue(cfg *Config, section []string, value string) error {

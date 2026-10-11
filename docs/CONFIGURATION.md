@@ -6,11 +6,11 @@ The Go runtime reads `.roundtable/config.yaml` using `internal/config`. `roundta
 
 | Key | Type | Default | Meaning |
 | --- | --- | --- | --- |
-| `version` | integer | `1` | Configuration format version. |
+| `version` | integer | `1` | Configuration format version; only `1` is supported. |
 | `project_name` | string | `Roundtable` | Human-readable project name used by runtime metadata. |
 | `storage.sqlite_path` | path | `.roundtable/roundtable.db` | SQLite database path, resolved relative to the project root by the CLI. |
 | `storage.wal` | boolean | `true` | Parsed for compatibility, but currently does not control the SQLite journal mode. `internal/db` unconditionally executes `PRAGMA journal_mode = WAL`; setting this field to `false` does not disable WAL. |
-| `mcp.transport` | string | `unix` | Legacy socket protocol label; it does not select the standard MCP transport. |
+| `mcp.transport` | string | `unix` | Legacy socket protocol label; only `unix` is supported, and it does not select the standard MCP transport. |
 | `mcp.socket_path` | path | `.roundtable/mcp/roundtable.sock` | Compatibility socket path; relative paths resolve under the project root. |
 | `mcp.http_address` | host:port | `127.0.0.1:7117` | Streamable HTTP bind address. Non-loopback binds require TLS files and `ROUNDTABLE_MCP_TOKEN`. |
 | `mcp.tls_cert_file` | path | empty | TLS certificate path, relative to project root when not absolute. Required with the key for non-loopback binds. |
@@ -92,7 +92,7 @@ Containers run as UID/GID 1000 with all capabilities dropped, no-new-privileges,
 
 ## Validation and limitations
 
-The loader rejects unknown ordinary scalar keys, invalid nesting, odd indentation, invalid booleans, and invalid integers. After parsing, it validates that implementer and reviewer counts are nonnegative and that every configured role references a defined adapter with a nonblank command. Zero-sized pools are allowed. It does not currently validate the supported version value or transport value, and it does not perform comprehensive semantic validation. Review both [CLI behavior](CLI.md) and [adapter behavior](ADAPTERS.md) when changing configuration.
+The loader rejects unknown scalar keys and empty sections, invalid nesting, odd indentation, invalid booleans, and invalid integers. A field that expects a scalar cannot be written as a parent section. After parsing, it validates that version is `1`, transport is `unix`, implementer and reviewer counts are nonnegative, and every configured role references a defined adapter with a nonblank command. Zero-sized pools are allowed. It does not perform comprehensive semantic validation. Review both [CLI behavior](CLI.md) and [adapter behavior](ADAPTERS.md) when changing configuration.
 
 ## Loading and effective values
 
@@ -121,7 +121,7 @@ These are implementation details of `parseYAMLInto` and `splitKV`, not promises 
 - A line is a comment only when its first non-whitespace character is `#`. An inline `#` is literal value content; do not append YAML-style inline comments.
 - Blank lines and full-line comments do not change the current indentation section.
 - Section indentation is counted in spaces and must be an even number. Tabs are not indentation. Nesting may add only one two-space level at a time.
-- An empty value (for example `storage:`) is treated as a section header. It does not clear or set a scalar field. An unknown empty section with no child entries is currently ignored, while an unknown key with a value or an unsupported child fails.
+- An empty value (for example `storage:`) is treated as a section header. It does not clear or set a scalar field. Empty headers must name a supported section; unknown sections and scalar fields written as sections fail immediately, even when they have no child entries.
 - Repeated scalar keys are accepted and the last parsed assignment wins. Duplicate sections are not rejected.
 - Custom adapter names are stored as the segment between `adapters.` and the field. Keep names simple: the format has no escaping for `.` or `:` in a key, and adapter nesting must be exactly `adapters.<name>.<field>`.
 - Values are parsed directly into the default configuration. Omitted fields keep defaults; specifying only some fields on a custom adapter leaves its other fields at zero values (`false` or empty string), not built-in capabilities.
@@ -139,11 +139,14 @@ The loader returns the first encountered error, not an aggregate report. Parser 
 | `invalid config line` | A nonblank/noncomment line has no colon separator. A YAML document marker such as `---` is not accepted as a document delimiter. |
 | `missing config key` | The text before the first colon is empty after trimming. |
 | `invalid config nesting near ...` | The line skips beyond the next permitted section level. Inspect preceding nonblank/noncomment lines, since they establish the section path. |
+| `unsupported config section: ...` | The empty-value header is not a supported section, or a scalar field was used as a parent. Check the section name and indentation. |
 | `unsupported config key: ...` | The computed ordinary scalar path is not supported. Check spelling and indentation, not merely the final key name. |
 | `invalid value for <path>: ...` | A recognized ordinary integer/boolean value failed Go conversion. Inline comments and single quotes remain in the value and can cause this. |
+| `version must be 1, got ...` | The configuration format version is unsupported; use version `1`. |
+| `mcp.transport must be unix, got ...` | The configured transport label is unsupported; use `unix`. |
 | `unsupported adapter nesting: ...` | A scalar adapter path does not have exactly three segments. Check `adapters`, name, and field nesting. |
 | `unsupported adapter key: ...` | The adapter field is not one of the configured capability/command fields. |
 
 Adapter boolean conversion failures are returned directly from `strconv.ParseBool`, rather than wrapped with the ordinary `invalid value for <path>` prefix. The absence of a key-specific prefix does not imply a filesystem or adapter-process failure. `Load` returns an empty `Config` alongside a parse error rather than exposing the partially assigned default configuration; do not continue startup using that result.
 
-A successful load is syntax/conversion evidence only. It does not prove that counts are sensible, a version/transport is supported operationally, adapters exist, paths are contained or writable, commands can launch, or a resume pattern works. Diagnose these through their actual runtime surfaces and keep loader success separate from service readiness.
+A successful load is syntax/conversion evidence only. It does not prove that counts are operationally sensible, adapters exist beyond the role-command relationship, paths are contained or writable, commands can launch, or a resume pattern works. Diagnose these through their actual runtime surfaces and keep loader success separate from service readiness.

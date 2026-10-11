@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -125,5 +126,47 @@ func TestConfigRejectsWildcardProviderHostsAndRuntimeCredentialVariables(t *test
 		if _, err := Load(root); err == nil {
 			t.Fatalf("config accepted unsafe provider egress or credential policy: %q", contents)
 		}
+	}
+}
+
+func TestLoadRejectsUnknownOrScalarConfigSections(t *testing.T) {
+	for _, section := range []string{
+		"storge:",
+		"mcp:\n  tls:",
+		"agents:\n  chair:\n    adapter:",
+		"adapters:\n  codex:\n    command:",
+	} {
+		t.Run(strings.ReplaceAll(section, "\n", "_"), func(t *testing.T) {
+			root := t.TempDir()
+			if err := os.MkdirAll(filepath.Join(root, ".roundtable"), 0o700); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(root, DefaultConfigPath), []byte(section+"\n"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := Load(root); err == nil {
+				t.Fatalf("Load accepted unsupported section header %q", section)
+			}
+		})
+	}
+}
+
+func TestLoadRejectsUnsupportedVersionAndMCPTransport(t *testing.T) {
+	for _, contents := range []string{
+		"version: 2\n",
+		"mcp:\n  transport: http\n",
+	} {
+		t.Run(strings.ReplaceAll(contents, "\n", "_"), func(t *testing.T) {
+			root := t.TempDir()
+			if err := os.MkdirAll(filepath.Join(root, ".roundtable"), 0o700); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(root, DefaultConfigPath), []byte(contents), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := Load(root); err == nil {
+				t.Fatalf("Load accepted unsupported config setting %q", contents)
+			}
+		})
 	}
 }
