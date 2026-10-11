@@ -17,6 +17,7 @@ type Snapshot struct {
 	Transactions        []db.Transaction
 	HumanApprovals      []db.HumanApproval
 	SecurityReviews     []db.SecurityReview
+	TestRuns            []db.TestRun
 	Memories            []db.MemoryEntry
 }
 
@@ -68,6 +69,10 @@ func LoadSnapshot(ctx context.Context, store *db.Store) (Snapshot, error) {
 	if err != nil {
 		return Snapshot{}, err
 	}
+	testRuns, err := store.ListTestRuns(ctx)
+	if err != nil {
+		return Snapshot{}, err
+	}
 	memories, err := store.ListMemoryEntries(ctx)
 	if err != nil {
 		return Snapshot{}, err
@@ -84,6 +89,7 @@ func LoadSnapshot(ctx context.Context, store *db.Store) (Snapshot, error) {
 		Transactions:        transactions,
 		HumanApprovals:      approvals,
 		SecurityReviews:     securityReviews,
+		TestRuns:            testRuns,
 		Memories:            memories,
 	}, nil
 }

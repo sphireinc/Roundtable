@@ -3,6 +3,7 @@ module roundtable
 go 1.26.0
 
 require (
+	github.com/charmbracelet/bubbles v0.16.1
 	github.com/charmbracelet/bubbletea v1.3.4
 	github.com/google/jsonschema-go v0.4.3
 	github.com/gorilla/websocket v1.5.3

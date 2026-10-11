@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/charmbracelet/bubbles/spinner"
 	tea "github.com/charmbracelet/bubbletea"
 
 	"roundtable/internal/db"
@@ -101,6 +102,115 @@ func TestViewFallsBackWithoutSnapshotData(t *testing.T) {
 	}
 }
 
+func TestViewSanitizesTerminalControlsAcrossPanes(t *testing.T) {
+	m := newModel(Options{
+		Goal:      "inspect",
+		RunID:     "RUN-1\x1b[2J",
+		Snapshot:  state.Snapshot{Tasks: []db.Task{{ID: "T-1", Title: "task\x1b]0;title\x07", Status: "blocked"}}},
+		WatchFeed: []string{"event\x1b[2J"},
+	})
+	m.width = 100
+	m.height = 24
+	m.commandOutput = []string{"command output\x1b]0;title\x07"}
+	view := m.View()
+	if strings.ContainsAny(view, "\x1b\x07") {
+		t.Fatalf("view contains terminal control characters: %q", view)
+	}
+	if !strings.Contains(view, "task") || !strings.Contains(view, "event") || !strings.Contains(view, "command output") {
+		t.Fatalf("sanitization removed ordinary visible content:\n%s", view)
+	}
+}
+
+func TestInspectorSelectionCyclesThroughSupportedEntities(t *testing.T) {
+	m := newModel(Options{Snapshot: state.Snapshot{
+		Tasks:           []db.Task{{ID: "T-1", Title: "Inspect task", Status: "blocked"}},
+		Proposals:       []db.Proposal{{ID: "P-1", Title: "Inspect proposal", Status: "pending"}},
+		Claims:          []db.Claim{{ID: "C-1", TaskID: "T-1", AgentID: "A-1", ResourceID: "R-1", Status: "active"}},
+		Agents:          []db.Agent{{ID: "A-1", Name: "Implementer", Role: "implementer", Adapter: "codex", Status: "working", IsEnabled: true}},
+		Memories:        []db.MemoryEntry{{ID: "M-1", Kind: "fact", Title: "Inspect memory", Status: "active"}},
+		TestRuns:        []db.TestRun{{ID: "TR-1", Command: "go test", Status: "passed", ReportedOutcome: "success"}},
+		SecurityReviews: []db.SecurityReview{{ID: "SR-1", Status: "findings", SummaryMD: "Inspect security"}},
+	}})
+	want := []struct{ header, detail string }{
+		{"Selected item: Task T-1", "Title: Inspect task"},
+		{"Selected item: Proposal P-1", "Title: Inspect proposal"},
+		{"Selected item: Claim C-1", "Resource: R-1"},
+		{"Selected item: Agent A-1", "Name: Implementer"},
+		{"Selected item: Memory M-1", "Title: Inspect memory"},
+		{"Selected item: Test TR-1", "Command: go test"},
+		{"Selected item: Security SR-1", "Summary: Inspect security"},
+	}
+	for _, expected := range want {
+		updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyTab})
+		m = updated.(model)
+		lines := strings.Join(m.inspectorLines(), "\n")
+		if !strings.Contains(lines, expected.header) || !strings.Contains(lines, expected.detail) {
+			t.Fatalf("inspector selection missing header/detail %q / %q:\n%s", expected.header, expected.detail, lines)
+		}
+	}
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyTab})
+	m = updated.(model)
+	if got := m.inspectorLines()[0]; got != want[0].header {
+		t.Fatalf("forward selection did not wrap: got %q, want %q", got, want[0].header)
+	}
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyShiftTab})
+	m = updated.(model)
+	if got := m.inspectorLines()[0]; got != want[len(want)-1].header {
+		t.Fatalf("reverse selection did not wrap: got %q, want %q", got, want[len(want)-1].header)
+	}
+}
+
+func TestInspectorSelectionPersistsAcrossRefreshAndClearsWhenRemoved(t *testing.T) {
+	snapshot := state.Snapshot{Tasks: []db.Task{{ID: "T-1", Title: "Inspect task", Status: "blocked"}}}
+	m := newModel(Options{Snapshot: snapshot})
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyTab})
+	m = updated.(model)
+	updated, _ = m.Update(refreshMsg{snapshot: snapshot})
+	m = updated.(model)
+	if got := m.inspectorLines()[0]; got != "Selected item: Task T-1" {
+		t.Fatalf("refresh lost selected entity: %q", got)
+	}
+	updated, _ = m.Update(refreshMsg{snapshot: state.Snapshot{}})
+	m = updated.(model)
+	if got := m.inspectorLines()[0]; got != "Selected item: auto" {
+		t.Fatalf("removed entity retained stale selection: %q", got)
+	}
+}
+
+func TestInspectorNormalizesMultilineValues(t *testing.T) {
+	m := newModel(Options{Snapshot: state.Snapshot{
+		Tasks:          []db.Task{{ID: "T-1\nInjected", Title: "Task title\nInjected\x1b[2J", Status: "blocked", AssignedAgentID: "A-1\nInjected"}},
+		Proposals:      []db.Proposal{{ID: "P-1\nInjected", Title: "Proposal title\nInjected\x1b]0;evil\x07", Status: "pending", TaskID: "T-1\nInjected", Risk: "high\nInjected"}},
+		Transactions:   []db.Transaction{{ID: "TX-1\nInjected", Status: "applied", AppliedBy: "chair\nInjected"}},
+		HumanApprovals: []db.HumanApproval{{ID: "H-1\nInjected", Status: "requested"}},
+	}})
+	for _, tc := range []struct {
+		key  tea.KeyType
+		want string
+	}{
+		{tea.KeyTab, "Selected item: Task T-1 Injected"},
+		{tea.KeyTab, "Selected item: Proposal P-1 Injected"},
+	} {
+		updated, _ := m.Update(tea.KeyMsg{Type: tc.key})
+		m = updated.(model)
+		lines := m.inspectorLines()
+		if !strings.Contains(strings.Join(lines, "\n"), tc.want) {
+			t.Fatalf("multiline selection was not normalized to %q: %q", tc.want, lines)
+		}
+		for _, line := range lines {
+			if strings.ContainsAny(line, "\r\n\x1b\x07") {
+				t.Fatalf("inspector line contains a terminal control: %q", line)
+			}
+		}
+	}
+	m.hasSelection = false
+	for _, line := range m.inspectorLines() {
+		if strings.ContainsAny(line, "\r\n") {
+			t.Fatalf("automatic inspector line contains a newline: %q", line)
+		}
+	}
+}
+
 func TestRefreshMessageUpdatesSnapshotAndWatchFeed(t *testing.T) {
 	m := newModel(Options{
 		Goal: "ship roundtable",
@@ -174,14 +284,49 @@ func TestCommandTerminalAcceptsInputAndShowsCommandResult(t *testing.T) {
 	if got := m.commandInput; got != "" {
 		t.Fatalf("command input after submit = %q, want empty", got)
 	}
-	updated, _ = m.Update(command())
-	m = updated.(model)
+	batch, ok := command().(tea.BatchMsg)
+	if !ok {
+		t.Fatalf("expected command and spinner batch, got %T", command())
+	}
+	for _, run := range batch {
+		updated, _ = m.Update(run())
+		m = updated.(model)
+	}
 	if executed != "claims list" {
 		t.Fatalf("executed command = %q", executed)
 	}
 	view := m.View()
 	if !strings.Contains(view, "$ claims list") || !strings.Contains(view, "claim C-1 active") || strings.Contains(view, "working...") {
 		t.Fatalf("command result not reflected in terminal:\n%s", view)
+	}
+}
+
+func TestCommandTerminalUsesSpinnerWhileCommandIsRunning(t *testing.T) {
+	m := newModel(Options{ExecuteCommand: func(context.Context, string) (string, error) {
+		return "done", nil
+	}})
+	idleFrame := m.spinner.View()
+	updated, idleTick := m.Update(spinner.TickMsg{ID: m.spinner.ID()})
+	m = updated.(model)
+	if idleTick != nil || m.spinner.View() != idleFrame {
+		t.Fatal("idle spinner tick should not update or schedule another frame")
+	}
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("table")})
+	m = updated.(model)
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = updated.(model)
+	if !m.commandBusy {
+		t.Fatal("command should be running")
+	}
+	lines := strings.Join(m.commandLines(), "\n")
+	if !strings.Contains(lines, "working") || !strings.Contains(lines, m.spinner.View()) {
+		t.Fatalf("running command indicator does not include the spinner component: %q", lines)
+	}
+	before := m.spinner.View()
+	updated, tick := m.Update(spinner.TickMsg{ID: m.spinner.ID()})
+	m = updated.(model)
+	if tick == nil || m.spinner.View() == before {
+		t.Fatalf("spinner tick did not advance the running indicator: before=%q after=%q", before, m.spinner.View())
 	}
 }
 

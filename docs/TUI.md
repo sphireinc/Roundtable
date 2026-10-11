@@ -4,7 +4,7 @@
 
 ## Layout and displayed data
 
-The view draws four bordered panes: Live Table (run status/goal, task and claim counts, enabled agent count, blocked-task detail, pending proposals, requested approvals, latest proposal ballot tally, latest transaction), Watch Feed (in-process event subscription with periodic database reconciliation), Command/Human Terminal (input, bounded command output, and errors), and Inspector (latest proposal, transaction, approval summary). The inspector does not track keyboard-selected entities.
+The view draws four bordered panes: Live Table (run status/goal, task and claim counts, enabled agent count, blocked-task detail, pending proposals, requested approvals, latest proposal ballot tally, latest transaction), Watch Feed (in-process event subscription with periodic database reconciliation), Command/Human Terminal (input, bounded command output, and errors), and Inspector (selected task, proposal, claim, agent, memory, test run, or security review). With no selection, the Inspector shows the latest proposal, transaction, and approval summary.
 
 Pane widths/heights derive from terminal size and have a minimum width/height. At narrow sizes content is clipped by rune count rather than adaptively reflowed, so the current view is not guaranteed to be usable at all terminal sizes.
 
@@ -12,7 +12,9 @@ Pane widths/heights derive from terminal size and have a minimum width/height. A
 
 The run command supplies a callback that reloads a database snapshot and recent event feed. The TUI schedules refreshes every two seconds by default and also subscribes to the in-process event bus for immediate Watch Feed updates. Successful refreshes replace the displayed snapshot/feed when their event cursor is current; refresh errors are discarded and the last successful view remains visible without a dedicated stale/error indicator.
 
-Type a command and press `Enter` to run it. The terminal accepts `table`, `watch`, `claims`, `sessions`, and `mcp call` command families through Roundtable's existing CLI/runtime services. The active project root is forced; callers cannot redirect the command to another root. Input is tokenized with single/double quotes and backslash escapes, but no shell, variable expansion, pipelines, or command chaining is used. `Backspace` edits the input, `Ctrl+U` clears it, and `q` (on an empty prompt) or `Ctrl+C` quits. A command runs asynchronously; the pane keeps a bounded recent output history and displays failures. The terminal does not itself bypass proposal governance or transaction validation: `mcp call` dispatches through the existing MCP handlers.
+Type a command and press `Enter` to run it. The terminal accepts `table`, `watch`, `claims`, `sessions`, and `mcp call` command families through Roundtable's existing CLI/runtime services. The active project root is forced; callers cannot redirect the command to another root. Input is tokenized with single/double quotes and backslash escapes, but no shell, variable expansion, pipelines, or command chaining is used. `Backspace` edits the input, `Ctrl+U` clears it, and `q` (on an empty prompt) or `Ctrl+C` quits. A command runs asynchronously; the Bubbles spinner indicates active execution, the pane keeps a bounded recent output history, and failures are displayed. The terminal does not itself bypass proposal governance or transaction validation: `mcp call` dispatches through the existing MCP handlers.
+
+Press `Tab` to cycle forward through snapshot items and `Shift+Tab` to cycle backward. Selection order is tasks, proposals, claims, agents, memories, test runs, and security reviews, preserving each collection's snapshot order. The selected kind and ID survive refreshes; if a selected record disappears, the Inspector returns to its automatic summary. Selection is display-only and does not perform governance or repository mutations.
 
 ### Interactive run shutdown
 
@@ -45,7 +47,7 @@ The run command supplies the latest six events for its run, displayed in chronol
 
 The refresh interval is an internal `Options` field; this TUI does not expose an interactive interval control. A nonpositive interval falls back to two seconds. A new timer is scheduled after the previous refresh response, so callback execution time adds to the effective polling period. With no refresh callback, the initial snapshot stays static. The callback receives `context.Background()`, not the program's cancellation context; quitting the UI does not propagate cancellation through that callback context.
 
-Each pane clips excess body rows and pads or truncates each line without wrapping, scrolling, or an ellipsis. Text width is measured in Unicode runes, not terminal display columns, so wide glyphs and combining sequences can misalign borders. Minimum pane width is 20; minimum nominal pane height is six. Those minima can make the layout exceed a small terminal's dimensions.
+Each pane clips excess body rows and pads or truncates each line without wrapping, scrolling, or an ellipsis. Pane text has terminal control characters removed and whitespace normalized before drawing. Text width is measured in Unicode runes, not terminal display columns, so wide glyphs and combining sequences can misalign borders. Minimum pane width is 20; minimum nominal pane height is six. Those minima can make the layout exceed a small terminal's dimensions.
 
 ### Watch CLI polling contract
 

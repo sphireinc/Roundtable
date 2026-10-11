@@ -7,7 +7,9 @@ import (
 	"sort"
 	"strings"
 	"time"
+	"unicode"
 
+	"github.com/charmbracelet/bubbles/spinner"
 	tea "github.com/charmbracelet/bubbletea"
 
 	"roundtable/internal/db"
@@ -39,6 +41,9 @@ type model struct {
 	width         int
 	height        int
 	opts          Options
+	spinner       spinner.Model
+	selection     inspectorSelection
+	hasSelection  bool
 	commandInput  string
 	commandOutput []string
 	commandBusy   bool
@@ -61,8 +66,18 @@ type commandResultMsg struct {
 	err    error
 }
 
+type inspectorSelection struct {
+	kind string
+	id   string
+}
+
+type inspectorItem struct {
+	selection inspectorSelection
+	lines     []string
+}
+
 func newModel(opts Options) model {
-	return model{opts: opts}
+	return model{opts: opts, spinner: spinner.New()}
 }
 
 func (m model) Init() tea.Cmd {
@@ -78,6 +93,13 @@ func (m model) Init() tea.Cmd {
 
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
+	case spinner.TickMsg:
+		if !m.commandBusy {
+			return m, nil
+		}
+		var command tea.Cmd
+		m.spinner, command = m.spinner.Update(msg)
+		return m, command
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = msg.Height
@@ -85,6 +107,12 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		switch msg.String() {
 		case "ctrl+c":
 			return m, tea.Quit
+		case "tab":
+			m.cycleInspector(1)
+			return m, nil
+		case "shift+tab":
+			m.cycleInspector(-1)
+			return m, nil
 		}
 		switch msg.Type {
 		case tea.KeyEnter:
@@ -102,7 +130,10 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, nil
 			}
 			m.commandBusy = true
-			return m, executeCommand(m.opts.ctx, m.opts.ExecuteCommand, command)
+			return m, tea.Batch(
+				executeCommand(m.opts.ctx, m.opts.ExecuteCommand, command),
+				func() tea.Msg { return m.spinner.Tick() },
+			)
 		case tea.KeyBackspace, tea.KeyDelete:
 			runes := []rune(m.commandInput)
 			if len(runes) > 0 {
@@ -121,6 +152,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case refreshMsg:
 		if msg.err == nil {
 			m.opts.Snapshot = msg.snapshot
+			m.clearMissingInspectorSelection()
 			if msg.latestEventID >= m.opts.LatestEventID {
 				m.opts.WatchFeed = msg.watchFeed
 				m.opts.LatestEventID = msg.latestEventID
@@ -289,7 +321,7 @@ func (m model) commandLines() []string {
 	contentHeight := max(1, max(6, m.height-max(6, m.height/2-1)-3)-2)
 	lines := []string{}
 	if m.commandBusy {
-		lines = append(lines, "working...")
+		lines = append(lines, "working... "+m.spinner.View())
 	}
 	if len(m.commandOutput) == 0 {
 		lines = append(lines, "Roundtable commands; no shell", "Try: mcp call --tool proposal.list")
@@ -307,26 +339,132 @@ func (m model) commandLines() []string {
 }
 
 func (m model) inspectorLines() []string {
+	if m.hasSelection {
+		for _, item := range inspectorItems(m.opts.Snapshot) {
+			if item.selection == m.selection {
+				return item.lines
+			}
+		}
+	}
 	lines := []string{"Selected item: auto"}
 	if proposal := latestProposal(m.opts.Snapshot.Proposals); proposal != nil {
 		lines = append(lines,
-			fmt.Sprintf("Proposal: %s [%s]", proposal.ID, proposal.Status),
-			fmt.Sprintf("Summary: %s", proposal.Title),
+			fmt.Sprintf("Proposal: %s [%s]", detailValue(proposal.ID), detailValue(proposal.Status)),
+			fmt.Sprintf("Summary: %s", detailValue(proposal.Title)),
 		)
 	}
 	if tx := latestTransaction(m.opts.Snapshot.Transactions); tx != nil {
 		lines = append(lines,
-			fmt.Sprintf("Transaction: %s [%s]", tx.ID, tx.Status),
-			fmt.Sprintf("Applied by: %s", blankIfUnset(tx.AppliedBy, "unknown")),
+			fmt.Sprintf("Transaction: %s [%s]", detailValue(tx.ID), detailValue(tx.Status)),
+			fmt.Sprintf("Applied by: %s", detailValue(blankIfUnset(tx.AppliedBy, "unknown"))),
 		)
 	}
 	if approval := latestApproval(m.opts.Snapshot.HumanApprovals); approval != nil {
-		lines = append(lines, fmt.Sprintf("Approval: %s [%s]", approval.ID, approval.Status))
+		lines = append(lines, fmt.Sprintf("Approval: %s [%s]", detailValue(approval.ID), detailValue(approval.Status)))
 	}
 	if len(lines) == 1 {
 		lines = append(lines, "No proposals, transactions, or approvals yet.")
 	}
 	return lines
+}
+
+func (m *model) cycleInspector(direction int) {
+	items := inspectorItems(m.opts.Snapshot)
+	if len(items) == 0 {
+		m.selection = inspectorSelection{}
+		m.hasSelection = false
+		return
+	}
+	index := -1
+	if m.hasSelection {
+		for i, item := range items {
+			if item.selection == m.selection {
+				index = i
+				break
+			}
+		}
+	}
+	if direction < 0 {
+		if index < 0 {
+			index = 0
+		}
+		index = (index - 1 + len(items)) % len(items)
+	} else {
+		index = (index + 1) % len(items)
+	}
+	m.selection = items[index].selection
+	m.hasSelection = true
+}
+
+func (m *model) clearMissingInspectorSelection() {
+	if !m.hasSelection {
+		return
+	}
+	for _, item := range inspectorItems(m.opts.Snapshot) {
+		if item.selection == m.selection {
+			return
+		}
+	}
+	m.selection = inspectorSelection{}
+	m.hasSelection = false
+}
+
+func inspectorItems(snapshot state.Snapshot) []inspectorItem {
+	items := make([]inspectorItem, 0, len(snapshot.Tasks)+len(snapshot.Proposals)+len(snapshot.Claims)+len(snapshot.Agents)+len(snapshot.Memories)+len(snapshot.TestRuns)+len(snapshot.SecurityReviews))
+	add := func(kind, id string, lines ...string) {
+		if id != "" {
+			items = append(items, inspectorItem{selection: inspectorSelection{kind: kind, id: id}, lines: append([]string{"Selected item: " + kind + " " + detailValue(id)}, lines...)})
+		}
+	}
+	for _, task := range snapshot.Tasks {
+		add("Task", task.ID, "Title: "+detailValue(task.Title), "Status: "+detailValue(task.Status), "Assigned agent: "+detailValue(blankIfUnset(task.AssignedAgentID, "none")))
+	}
+	for _, proposal := range snapshot.Proposals {
+		add("Proposal", proposal.ID, "Title: "+detailValue(proposal.Title), "Status: "+detailValue(proposal.Status), "Task: "+detailValue(blankIfUnset(proposal.TaskID, "none")), "Risk: "+detailValue(blankIfUnset(proposal.Risk, "normal")))
+	}
+	for _, claim := range snapshot.Claims {
+		add("Claim", claim.ID, "Resource: "+detailValue(blankIfUnset(claim.ResourceID, "unknown")), "Type/status: "+detailValue(claim.ClaimType)+"/"+detailValue(claim.Status), "Task/agent: "+detailValue(blankIfUnset(claim.TaskID, "none"))+"/"+detailValue(blankIfUnset(claim.AgentID, "none")))
+	}
+	for _, agent := range snapshot.Agents {
+		stateText := detailValue(agent.Status)
+		if agent.IsEnabled {
+			stateText += ", enabled"
+		} else {
+			stateText += ", disabled"
+		}
+		add("Agent", agent.ID, "Name: "+detailValue(agent.Name), "Role/adapter: "+detailValue(agent.Role)+"/"+detailValue(agent.Adapter), "Status: "+stateText)
+	}
+	for _, memory := range snapshot.Memories {
+		add("Memory", memory.ID, "Title: "+detailValue(memory.Title), "Kind/scope: "+detailValue(memory.Kind)+"/"+detailValue(memory.Scope), "Status: "+detailValue(memory.Status), "Summary: "+detailValue(memory.BodyMD))
+	}
+	for _, testRun := range snapshot.TestRuns {
+		add("Test", testRun.ID, "Status/outcome: "+detailValue(testRun.Status)+"/"+detailValue(blankIfUnset(testRun.ReportedOutcome, "unknown")), "Command: "+detailValue(testRun.Command), "Evidence: "+detailValue(blankIfUnset(testRun.EvidenceSource, "unknown")), "Summary: "+detailValue(testRun.SummaryMD))
+	}
+	for _, review := range snapshot.SecurityReviews {
+		add("Security", review.ID, "Status: "+detailValue(review.Status), "Proposal/resource: "+detailValue(blankIfUnset(review.ProposalID, "none"))+"/"+detailValue(blankIfUnset(review.ResourceID, "none")), "Summary: "+detailValue(review.SummaryMD))
+	}
+	return items
+}
+
+func detailValue(value string) string {
+	value = safeTerminalText(value)
+	if runes := []rune(value); len(runes) > 160 {
+		return string(runes[:160]) + "..."
+	}
+	return value
+}
+
+func safeTerminalText(value string) string {
+	value = strings.Map(func(r rune) rune {
+		if unicode.IsControl(r) {
+			if unicode.IsSpace(r) {
+				return ' '
+			}
+			return -1
+		}
+		return r
+	}, value)
+	return strings.Join(strings.Fields(value), " ")
 }
 
 func pane(title string, width, height int, body []string) string {
@@ -371,6 +509,7 @@ func pad(s string, width int) string {
 	if width <= 0 {
 		return ""
 	}
+	s = safeTerminalText(s)
 	runes := []rune(s)
 	if len(runes) > width {
 		return string(runes[:width])
