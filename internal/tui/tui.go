@@ -248,10 +248,27 @@ func (m model) liveTableLines() []string {
 		fmt.Sprintf("Tasks: %d active, %d blocked", countTasks(m.opts.Snapshot.Tasks, "open", "in_progress"), blockedTasks),
 		fmt.Sprintf("Agents: %d enabled", countEnabledAgents(m.opts.Snapshot.Agents)),
 		fmt.Sprintf("Claims: %d active, %d suspended", activeClaims, suspendedClaims),
-		fmt.Sprintf("Proposals: %d pending", pendingProposals),
-		fmt.Sprintf("Human approvals: %d requested", countApprovals(m.opts.Snapshot.HumanApprovals, "requested")),
+		fmt.Sprintf("Proposals: %d pending; approvals: %d requested", pendingProposals, countApprovals(m.opts.Snapshot.HumanApprovals, "requested")),
 	}
-	for _, tx := range latestTransactions(m.opts.Snapshot.Transactions, 2) {
+	for _, task := range m.opts.Snapshot.Tasks {
+		if task.Status == "blocked" {
+			more := blockedTasks - 1
+			suffix := ""
+			if more > 0 {
+				suffix = fmt.Sprintf(" (+%d more)", more)
+			}
+			lines = append(lines, fmt.Sprintf("BLOCKED %s %s%s", task.ID, task.Title, suffix))
+			break
+		}
+	}
+	for _, proposal := range latestProposals(m.opts.Snapshot.Proposals, 1) {
+		if proposal.ID != m.opts.Snapshot.VoteTallyProposalID {
+			continue
+		}
+		tally := m.opts.Snapshot.VoteTally
+		lines = append(lines, fmt.Sprintf("VOTES %s [%s]: A%d B%d V%d O%d", proposal.ID, proposal.Status, tally.Approvals, tally.Blockers, tally.Vetoes, tally.Other))
+	}
+	for _, tx := range latestTransactions(m.opts.Snapshot.Transactions, 1) {
 		lines = append(lines, fmt.Sprintf("TX %s [%s]", tx.ID, tx.Status))
 	}
 	return lines
@@ -482,6 +499,23 @@ func latestProposal(proposals []db.Proposal) *db.Proposal {
 		return copied[i].CreatedAt > copied[j].CreatedAt
 	})
 	return &copied[0]
+}
+
+func latestProposals(proposals []db.Proposal, limit int) []db.Proposal {
+	if len(proposals) == 0 {
+		return nil
+	}
+	copied := append([]db.Proposal(nil), proposals...)
+	sort.Slice(copied, func(i, j int) bool {
+		if copied[i].CreatedAt == copied[j].CreatedAt {
+			return copied[i].ID > copied[j].ID
+		}
+		return copied[i].CreatedAt > copied[j].CreatedAt
+	})
+	if limit > 0 && len(copied) > limit {
+		copied = copied[:limit]
+	}
+	return copied
 }
 
 func latestApproval(approvals []db.HumanApproval) *db.HumanApproval {

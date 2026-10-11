@@ -1017,6 +1017,22 @@ func (s *Store) ListVotes(ctx context.Context, proposalID string) ([]Vote, error
 	return out, rows.Err()
 }
 
+func (s *Store) GetVoteTally(ctx context.Context, proposalID string) (VoteTally, error) {
+	var tally VoteTally
+	err := s.db.QueryRowContext(ctx, `
+		SELECT
+			COALESCE(SUM(CASE WHEN vote IN ('approve', 'approve_with_notes') THEN 1 ELSE 0 END), 0),
+			COALESCE(SUM(CASE WHEN vote IN ('revise', 'reject') THEN 1 ELSE 0 END), 0),
+			COALESCE(SUM(CASE WHEN vote = 'veto' THEN 1 ELSE 0 END), 0),
+			COALESCE(SUM(CASE WHEN vote NOT IN ('approve', 'approve_with_notes', 'revise', 'reject', 'veto') THEN 1 ELSE 0 END), 0)
+		FROM votes WHERE proposal_id = ?
+	`, proposalID).Scan(&tally.Approvals, &tally.Blockers, &tally.Vetoes, &tally.Other)
+	if err != nil {
+		return VoteTally{}, fmt.Errorf("get vote tally for proposal %s: %w", proposalID, err)
+	}
+	return tally, nil
+}
+
 func (s *Store) UpsertDecision(ctx context.Context, decision Decision) error {
 	_, err := s.db.ExecContext(ctx, `
 		INSERT INTO decisions (id, proposal_id, task_id, decision, rationale_md, decided_by)

@@ -32,7 +32,7 @@ func TestStatusReportsComponentsWithoutSecretsOrPaths(t *testing.T) {
 	if bytes.Contains(response.Body.Bytes(), []byte("/configured/root")) {
 		t.Fatal("status exposed configured filesystem path")
 	}
-	if !bytes.Contains(response.Body.Bytes(), []byte(`"migration_version":5`)) {
+	if !bytes.Contains(response.Body.Bytes(), []byte(`"migration_version":6`)) {
 		t.Fatalf("status missing migration version: %s", response.Body.String())
 	}
 }

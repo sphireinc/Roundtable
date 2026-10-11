@@ -4,13 +4,13 @@
 
 ## Layout and displayed data
 
-The view draws four bordered panes: Live Table (run status/goal, task and claim counts, enabled agent count, pending proposals, requested approvals, latest transactions), Watch Feed (in-process event subscription with periodic database reconciliation), Command/Human Terminal (input, bounded command output, and errors), and Inspector (latest proposal, transaction, approval summary). The inspector does not track keyboard-selected entities.
+The view draws four bordered panes: Live Table (run status/goal, task and claim counts, enabled agent count, blocked-task detail, pending proposals, requested approvals, latest proposal ballot tally, latest transaction), Watch Feed (in-process event subscription with periodic database reconciliation), Command/Human Terminal (input, bounded command output, and errors), and Inspector (latest proposal, transaction, approval summary). The inspector does not track keyboard-selected entities.
 
 Pane widths/heights derive from terminal size and have a minimum width/height. At narrow sizes content is clipped by rune count rather than adaptively reflowed, so the current view is not guaranteed to be usable at all terminal sizes.
 
 ## Refresh and keys
 
-The run command supplies a callback that reloads a database snapshot and recent event feed. The TUI schedules refreshes every two seconds by default. Successful refreshes replace the displayed snapshot/feed; refresh errors are currently discarded and the last successful view remains visible without a dedicated stale/error indicator. This is periodic polling, not an event subscription.
+The run command supplies a callback that reloads a database snapshot and recent event feed. The TUI schedules refreshes every two seconds by default and also subscribes to the in-process event bus for immediate Watch Feed updates. Successful refreshes replace the displayed snapshot/feed when their event cursor is current; refresh errors are discarded and the last successful view remains visible without a dedicated stale/error indicator.
 
 Type a command and press `Enter` to run it. The terminal accepts `table`, `watch`, `claims`, `sessions`, and `mcp call` command families through Roundtable's existing CLI/runtime services. The active project root is forced; callers cannot redirect the command to another root. Input is tokenized with single/double quotes and backslash escapes, but no shell, variable expansion, pipelines, or command chaining is used. `Backspace` edits the input, `Ctrl+U` clears it, and `q` (on an empty prompt) or `Ctrl+C` quits. A command runs asynchronously; the pane keeps a bounded recent output history and displays failures. The terminal does not itself bypass proposal governance or transaction validation: `mcp call` dispatches through the existing MCP handlers.
 
@@ -37,7 +37,7 @@ Counts use exact status strings across the supplied snapshot, not an additional 
 | Pending proposals | Proposals with `pending` or `in_review` status |
 | Requested approvals | Human approvals with `requested` status |
 
-The live table shows up to two transactions ordered by descending `AppliedAt`. The inspector independently chooses the newest-created proposal, latest-applied transaction, and latest-updated human approval. It does not restrict these choices to pending or successful records. Equal timestamp ordering is unspecified. A header for one run does not imply every pane contains only that run's records.
+The live table shows one latest transaction and one recent proposal's raw ballot counts (`A` approve/approve-with-notes, `B` blocking revise/reject, `V` veto, `O` other). These counts are not a policy decision or consensus verdict; policy profiles, required roles, tests, security review, and human approval may still prevent a proposal from being approvable. The first blocked task is shown with a count of any additional blocked tasks. The inspector independently chooses the newest-created proposal, latest-applied transaction, and latest-updated human approval. It does not restrict these choices to pending or successful records. Equal timestamp ordering is unspecified. A header for one run does not imply every pane contains only that run's records.
 
 The run command supplies the latest six events for its run, displayed in chronological order as event type, actor (or `system`), and task ID (or `-`). The in-process store event bus appends new events immediately; a two-second database refresh reconciles the display if buffered notifications are dropped. Writes from another process do not publish to this process-local bus and appear on the next refresh. The feed is capped at eight lines and does not include event payloads, timestamps, or clickable records. The `MCP server listening` fallback is placeholder text, not an independently measured socket-health check.
 
@@ -45,7 +45,7 @@ The run command supplies the latest six events for its run, displayed in chronol
 
 The refresh interval is an internal `Options` field; this TUI does not expose an interactive interval control. A nonpositive interval falls back to two seconds. A new timer is scheduled after the previous refresh response, so callback execution time adds to the effective polling period. With no refresh callback, the initial snapshot stays static. The callback receives `context.Background()`, not the program's cancellation context; quitting the UI does not propagate cancellation through that callback context.
 
-Each pane clips excess body rows and pads or truncates each line without wrapping, scrolling, or an ellipsis. Text width is measured in Unicode runes, not terminal display columns, so wide glyphs and combining sequences can misalign borders. Minimum pane width is 20; minimum nominal pane height is six. Those minima can make the layout exceed a small terminal's dimensions. The example approval/rejection commands in the command pane are illustrative, not a supported input syntax or confirmation that those actions are available in this view.
+Each pane clips excess body rows and pads or truncates each line without wrapping, scrolling, or an ellipsis. Text width is measured in Unicode runes, not terminal display columns, so wide glyphs and combining sequences can misalign borders. Minimum pane width is 20; minimum nominal pane height is six. Those minima can make the layout exceed a small terminal's dimensions.
 
 ### Watch CLI polling contract
 

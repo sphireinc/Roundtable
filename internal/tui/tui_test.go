@@ -37,6 +37,8 @@ func TestViewRendersSnapshotDrivenPanes(t *testing.T) {
 			Proposals: []db.Proposal{
 				{ID: "P-1", Title: "Pending patch", Status: "pending", CreatedAt: "2026-01-01T00:00:00Z"},
 			},
+			VoteTallyProposalID: "P-1",
+			VoteTally:           db.VoteTally{Approvals: 1, Vetoes: 1, Other: 1},
 			Transactions: []db.Transaction{
 				{ID: "TX-1", Status: "applied", AppliedBy: "chair", AppliedAt: "2026-01-01T00:00:00Z"},
 			},
@@ -60,6 +62,8 @@ func TestViewRendersSnapshotDrivenPanes(t *testing.T) {
 		"Tasks: 1 active, 1 blocked",
 		"Claims: 1 active, 1 suspended",
 		"Proposals: 1 pending",
+		"VOTES P-1 [pending]: A1 B0 V1 O1",
+		"BLOCKED T-2 Review",
 		"TX TX-1 [applied]",
 		"WATCH FEED",
 		"proposal.created implementer-1 T-1",

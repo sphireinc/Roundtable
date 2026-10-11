@@ -168,6 +168,13 @@ type Vote struct {
 	CreatedAt     string
 }
 
+type VoteTally struct {
+	Approvals int
+	Blockers  int
+	Vetoes    int
+	Other     int
+}
+
 type Decision struct {
 	ID          string
 	ProposalID  string

@@ -22,4 +22,4 @@ Deliver immediate in-process event updates to the TUI Watch Feed and recover fro
 
 ## Parent task status
 
-This completes only the Watch Feed live-update criterion from `0005-tui.md`. Live Table consensus/blocker detail and selection-driven Inspector views remain open.
+This completes only the Watch Feed live-update criterion from `0005-tui.md`. Selection-driven Inspector views remain open; Live Table consensus/blocker detail is tracked in task 0016.

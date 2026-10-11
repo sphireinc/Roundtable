@@ -282,6 +282,12 @@ func migrate(db *sql.DB) error {
 	if err := addColumnIfMissing(db, "tasks", "readable_paths_json TEXT NOT NULL DEFAULT '[]'"); err != nil {
 		return err
 	}
+	if _, err := db.Exec("CREATE INDEX IF NOT EXISTS idx_votes_proposal_id ON votes(proposal_id)"); err != nil {
+		return fmt.Errorf("create proposal vote index: %w", err)
+	}
+	if _, err := db.Exec("INSERT OR IGNORE INTO schema_migrations(version) VALUES (6)"); err != nil {
+		return fmt.Errorf("record proposal vote index migration: %w", err)
+	}
 	return nil
 }
 

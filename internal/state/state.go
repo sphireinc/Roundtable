@@ -7,15 +7,17 @@ import (
 )
 
 type Snapshot struct {
-	Runs            []db.Run
-	Agents          []db.Agent
-	Tasks           []db.Task
-	Claims          []db.Claim
-	Proposals       []db.Proposal
-	Transactions    []db.Transaction
-	HumanApprovals  []db.HumanApproval
-	SecurityReviews []db.SecurityReview
-	Memories        []db.MemoryEntry
+	Runs                []db.Run
+	Agents              []db.Agent
+	Tasks               []db.Task
+	Claims              []db.Claim
+	Proposals           []db.Proposal
+	VoteTallyProposalID string
+	VoteTally           db.VoteTally
+	Transactions        []db.Transaction
+	HumanApprovals      []db.HumanApproval
+	SecurityReviews     []db.SecurityReview
+	Memories            []db.MemoryEntry
 }
 
 func LoadSnapshot(ctx context.Context, store *db.Store) (Snapshot, error) {
@@ -39,6 +41,21 @@ func LoadSnapshot(ctx context.Context, store *db.Store) (Snapshot, error) {
 	if err != nil {
 		return Snapshot{}, err
 	}
+	var voteTallyProposalID, newestProposalCreatedAt string
+	for _, proposal := range proposals {
+		if proposal.CreatedAt > newestProposalCreatedAt ||
+			(proposal.CreatedAt == newestProposalCreatedAt && proposal.ID > voteTallyProposalID) {
+			newestProposalCreatedAt = proposal.CreatedAt
+			voteTallyProposalID = proposal.ID
+		}
+	}
+	var voteTally db.VoteTally
+	if voteTallyProposalID != "" {
+		voteTally, err = store.GetVoteTally(ctx, voteTallyProposalID)
+		if err != nil {
+			return Snapshot{}, err
+		}
+	}
 	transactions, err := store.ListTransactions(ctx)
 	if err != nil {
 		return Snapshot{}, err
@@ -57,14 +74,16 @@ func LoadSnapshot(ctx context.Context, store *db.Store) (Snapshot, error) {
 	}
 
 	return Snapshot{
-		Runs:            runs,
-		Agents:          agents,
-		Tasks:           tasks,
-		Claims:          claims,
-		Proposals:       proposals,
-		Transactions:    transactions,
-		HumanApprovals:  approvals,
-		SecurityReviews: securityReviews,
-		Memories:        memories,
+		Runs:                runs,
+		Agents:              agents,
+		Tasks:               tasks,
+		Claims:              claims,
+		Proposals:           proposals,
+		VoteTallyProposalID: voteTallyProposalID,
+		VoteTally:           voteTally,
+		Transactions:        transactions,
+		HumanApprovals:      approvals,
+		SecurityReviews:     securityReviews,
+		Memories:            memories,
 	}, nil
 }

@@ -75,6 +75,30 @@ func TestAppendEventPublishesToSubscribers(t *testing.T) {
 	}
 }
 
+func TestGetVoteTallyAggregatesOnlyRequestedProposal(t *testing.T) {
+	store := newTestStore(t)
+	ctx := context.Background()
+	for _, vote := range []Vote{
+		{ID: "V-1", ProposalID: "P-1", AgentID: "A-1", Vote: "approve", ReasonMD: "private rationale"},
+		{ID: "V-2", ProposalID: "P-1", AgentID: "A-2", Vote: "approve_with_notes"},
+		{ID: "V-3", ProposalID: "P-1", AgentID: "A-3", Vote: "revise"},
+		{ID: "V-4", ProposalID: "P-1", AgentID: "A-4", Vote: "veto"},
+		{ID: "V-5", ProposalID: "P-1", AgentID: "A-5", Vote: "abstain"},
+		{ID: "V-6", ProposalID: "P-2", AgentID: "A-1", Vote: "approve"},
+	} {
+		if err := store.UpsertVote(ctx, vote); err != nil {
+			t.Fatal(err)
+		}
+	}
+	tally, err := store.GetVoteTally(ctx, "P-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if tally != (VoteTally{Approvals: 2, Blockers: 1, Vetoes: 1, Other: 1}) {
+		t.Fatalf("unexpected tally: %+v", tally)
+	}
+}
+
 func TestListEventsAfterUsesBoundedIndexedRunPage(t *testing.T) {
 	store := newTestStore(t)
 	ctx := context.Background()

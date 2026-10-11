@@ -3,6 +3,7 @@ package db
 import (
 	"database/sql"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -39,8 +40,8 @@ func TestOpenBootstrapsControlPlaneSchema(t *testing.T) {
 	if err := sqlDB.QueryRow("SELECT MAX(version) FROM schema_migrations").Scan(&version); err != nil {
 		t.Fatalf("migration version: %v", err)
 	}
-	if version != 5 {
-		t.Fatalf("migration version = %d, want 5", version)
+	if version != 6 {
+		t.Fatalf("migration version = %d, want 6", version)
 	}
 	for _, column := range []string{"revision"} {
 		var count int
@@ -50,6 +51,35 @@ func TestOpenBootstrapsControlPlaneSchema(t *testing.T) {
 		if count != 1 {
 			t.Fatalf("workspace column %s missing", column)
 		}
+	}
+}
+
+func TestVoteTallyQueryUsesProposalIndex(t *testing.T) {
+	db, err := Open(filepath.Join(t.TempDir(), "roundtable.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+
+	rows, err := db.Query(`EXPLAIN QUERY PLAN SELECT COUNT(*) FROM votes WHERE proposal_id = ?`, "P-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+	var plan strings.Builder
+	for rows.Next() {
+		var id, parent, notUsed int
+		var detail string
+		if err := rows.Scan(&id, &parent, &notUsed, &detail); err != nil {
+			t.Fatal(err)
+		}
+		plan.WriteString(detail)
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(plan.String(), "idx_votes_proposal_id") {
+		t.Fatalf("vote tally query does not use proposal index: %s", plan.String())
 	}
 }
 
