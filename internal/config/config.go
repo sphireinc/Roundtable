@@ -5,8 +5,11 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
+
+	"roundtable/internal/egress"
 )
 
 const DefaultConfigPath = ".roundtable/config.yaml"
@@ -56,13 +59,18 @@ type MultiAgentConfig struct {
 }
 
 type AdapterConfig struct {
+	Image                     string
 	Command                   string
 	SupportsResume            bool
 	ResumePattern             string
 	SupportsMCP               bool
 	SupportsReadOnlyWorkspace bool
 	CapturesSessionID         bool
+	ProviderHosts             []string
+	CredentialEnv             []string
 }
+
+var credentialEnvName = regexp.MustCompile(`^[A-Z][A-Z0-9_]{0,126}_API_KEY$`)
 
 func Default() Config {
 	return Config{
@@ -94,6 +102,8 @@ func Default() Config {
 				SupportsMCP:               true,
 				SupportsReadOnlyWorkspace: true,
 				CapturesSessionID:         true,
+				ProviderHosts:             []string{"api.openai.com"},
+				CredentialEnv:             []string{"OPENAI_API_KEY"},
 			},
 			"claude": {
 				Command:                   "claude",
@@ -102,6 +112,8 @@ func Default() Config {
 				SupportsMCP:               true,
 				SupportsReadOnlyWorkspace: true,
 				CapturesSessionID:         true,
+				ProviderHosts:             []string{"api.anthropic.com"},
+				CredentialEnv:             []string{"ANTHROPIC_API_KEY"},
 			},
 			"gemini": {
 				Command:                   "gemini",
@@ -110,6 +122,8 @@ func Default() Config {
 				SupportsMCP:               true,
 				SupportsReadOnlyWorkspace: true,
 				CapturesSessionID:         true,
+				ProviderHosts:             []string{"generativelanguage.googleapis.com"},
+				CredentialEnv:             []string{"GEMINI_API_KEY", "GOOGLE_API_KEY"},
 			},
 			"opencode": {
 				Command:                   "opencode",
@@ -173,6 +187,29 @@ func (cfg Config) Validate() error {
 		}
 		if strings.TrimSpace(adapter.Command) == "" {
 			return fmt.Errorf("adapters.%s.command must not be empty (referenced by %s)", role.adapter, role.name)
+		}
+	}
+	for name, adapter := range cfg.Adapters {
+		seenHosts := map[string]bool{}
+		for _, host := range adapter.ProviderHosts {
+			if err := egress.ValidateHostname(host); err != nil {
+				return fmt.Errorf("adapters.%s.provider_hosts contains an invalid exact hostname: %w", name, err)
+			}
+			host = strings.ToLower(strings.TrimSuffix(host, "."))
+			if seenHosts[host] {
+				return fmt.Errorf("adapters.%s.provider_hosts contains duplicate hostname %q", name, host)
+			}
+			seenHosts[host] = true
+		}
+		seenCredentials := map[string]bool{}
+		if len(adapter.CredentialEnv) > 8 {
+			return fmt.Errorf("adapters.%s.credential_env may contain at most 8 explicitly allowlisted API key variables", name)
+		}
+		for _, variable := range adapter.CredentialEnv {
+			if !credentialEnvName.MatchString(variable) || strings.HasPrefix(variable, "ROUNDTABLE_") || seenCredentials[variable] {
+				return fmt.Errorf("adapters.%s.credential_env contains an invalid or duplicate API key variable %q", name, variable)
+			}
+			seenCredentials[variable] = true
 		}
 	}
 	return nil
@@ -296,6 +333,8 @@ func setAdapterValue(cfg *Config, section []string, value string) error {
 	name := section[1]
 	adapter := cfg.Adapters[name]
 	switch section[2] {
+	case "image":
+		adapter.Image = value
 	case "command":
 		adapter.Command = value
 	case "supports_resume":
@@ -324,11 +363,26 @@ func setAdapterValue(cfg *Config, section []string, value string) error {
 			return err
 		}
 		adapter.CapturesSessionID = v
+	case "provider_hosts":
+		adapter.ProviderHosts = commaSeparated(value)
+	case "credential_env":
+		adapter.CredentialEnv = commaSeparated(value)
 	default:
 		return fmt.Errorf("unsupported adapter key: %s", section[2])
 	}
 	cfg.Adapters[name] = adapter
 	return nil
+}
+
+func commaSeparated(value string) []string {
+	parts := strings.Split(value, ",")
+	values := make([]string, 0, len(parts))
+	for _, part := range parts {
+		if part = strings.TrimSpace(part); part != "" {
+			values = append(values, part)
+		}
+	}
+	return values
 }
 
 func splitKV(line string) (key string, value string, hasValue bool, err error) {

@@ -92,3 +92,20 @@ func TestAcquireRejectsSymlinkLockFile(t *testing.T) {
 		t.Fatalf("external lock target changed: data=%q err=%v", contents, err)
 	}
 }
+
+func TestAcquireNamedSerializesRepositoryTransactions(t *testing.T) {
+	root := t.TempDir()
+	first, err := AcquireNamed(root, "transaction.lock")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer first.Close()
+	if _, err := AcquireNamed(root, "transaction.lock"); !errors.Is(err, ErrAlreadyLocked) {
+		t.Fatalf("second transaction lock error = %v, want ErrAlreadyLocked", err)
+	}
+	other, err := AcquireNamed(root, "other.lock")
+	if err != nil {
+		t.Fatalf("distinct lock name was unexpectedly serialized: %v", err)
+	}
+	_ = other.Close()
+}

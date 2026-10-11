@@ -74,6 +74,24 @@ func TestAppendEventPublishesToSubscribers(t *testing.T) {
 	}
 }
 
+func TestUpsertVoteKeepsOneBallotPerReviewerAndProposal(t *testing.T) {
+	store := newTestStore(t)
+	ctx := context.Background()
+	if err := store.UpsertVote(ctx, Vote{ID: "V-first", ProposalID: "P-one", AgentID: "A-reviewer", Vote: "approve"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.UpsertVote(ctx, Vote{ID: "V-second", ProposalID: "P-one", AgentID: "A-reviewer", Vote: "reject"}); err != nil {
+		t.Fatal(err)
+	}
+	votes, err := store.ListVotes(ctx, "P-one")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(votes) != 1 || votes[0].ID != "V-second" || votes[0].Vote != "reject" {
+		t.Fatalf("reviewer should have one effective latest ballot: %+v", votes)
+	}
+}
+
 func TestStoreRepositories(t *testing.T) {
 	store := newTestStore(t)
 	ctx := context.Background()

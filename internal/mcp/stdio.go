@@ -5,13 +5,19 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
+	"os"
+	"path/filepath"
 
 	sdkmcp "github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
-type HTTPAuth struct{ Token string }
+type HTTPAuth struct {
+	Token      string
+	UnixSocket string
+}
 
 type writerCloser struct{ io.Writer }
 
@@ -45,7 +51,25 @@ func RunStdioBridge(ctx context.Context, stdin io.Reader, stdout, stderr io.Writ
 	if auth.Token != "" && parsed.Scheme != "https" && !isLoopbackHost(parsed.Hostname()) {
 		return fmt.Errorf("bearer authentication requires HTTPS except for loopback endpoints")
 	}
-	transport := http.DefaultTransport
+	var transport http.RoundTripper = http.DefaultTransport
+	if auth.UnixSocket != "" {
+		if auth.Token == "" || parsed.Scheme != "http" || !isLoopbackHost(parsed.Hostname()) || parsed.Path != "/agent/mcp" || parsed.RawPath != "" {
+			return fmt.Errorf("Unix MCP transport requires a scoped bearer and the loopback /agent/mcp endpoint")
+		}
+		if !filepath.IsAbs(auth.UnixSocket) || filepath.Clean(auth.UnixSocket) != auth.UnixSocket {
+			return fmt.Errorf("Unix MCP socket path must be absolute and clean")
+		}
+		info, err := os.Lstat(auth.UnixSocket)
+		if err != nil || info.Mode()&os.ModeSocket == 0 {
+			return fmt.Errorf("Unix MCP socket is unavailable")
+		}
+		dialer := &net.Dialer{}
+		unixTransport := http.DefaultTransport.(*http.Transport).Clone()
+		unixTransport.DialContext = func(ctx context.Context, _, _ string) (net.Conn, error) {
+			return dialer.DialContext(ctx, "unix", auth.UnixSocket)
+		}
+		transport = unixTransport
+	}
 	httpClient := &http.Client{Transport: bearerTransport{base: transport, token: auth.Token}, CheckRedirect: func(*http.Request, []*http.Request) error {
 		return http.ErrUseLastResponse
 	}}

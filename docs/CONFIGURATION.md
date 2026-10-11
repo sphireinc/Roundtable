@@ -38,16 +38,19 @@ Each adapter entry accepts only the following fields:
 
 | Key | Type | Meaning |
 | --- | --- | --- |
-| `command` | string | Executable name used when producing the adapter's command plan. |
+| `image` | string | Trusted Docker/Podman image containing the adapter CLI. Required for container execution; use an immutable digest reference in production. |
+| `command` | string | Executable name used by the adapter inside its configured container image. |
 | `supports_resume` | boolean | Capability metadata indicating whether a resume command is configured. |
 | `resume_pattern` | string | Resume command template; `{{external_session_id}}` is the session-ID placeholder. |
 | `supports_mcp` | boolean | Capability metadata for MCP support. |
 | `supports_readonly_workspace` | boolean | Capability metadata for restricted workspace access. |
 | `captures_session_id` | boolean | Capability metadata indicating external session ID capture. |
+| `provider_hosts` | comma-separated exact DNS names | HTTPS provider destinations permitted through the session CONNECT gateway. No wildcard or IP literal is accepted. An empty list fails closed for execution. |
+| `credential_env` | comma-separated environment variable names | Explicit API-key variables eligible for injection into this adapter's container. Values are read by exact name; arbitrary host environment variables are never forwarded. |
 
 Built-in defaults are `codex` (`codex resume {{external_session_id}}`), `claude` (`claude --resume {{external_session_id}}`), `gemini` (`gemini resume {{external_session_id}}`), `opencode` (resume/session capture disabled), and `generic` (`sh`, MCP/resume/session capture disabled). The executable must be installed and on `PATH` to be useful. These capability flags describe adapter support; they do not mean process launch, output streaming, or session-ID discovery is already implemented.
 
-Adapter names are map keys and can be extended in configuration using the same six supported scalar fields. A role's `adapter` field refers to one of those names. Adding a custom name changes the persisted capability metadata/command plan only; it does not install an adapter implementation or connect an external provider.
+Adapter names are map keys and can be extended in configuration using the supported scalar fields. A role's `adapter` field refers to one of those names. Adding a custom name does not install the CLI or provision its image. External execution fails closed unless the selected adapter has a trusted `image` and a usable Docker or Podman runtime; there is no host-process fallback.
 
 ## Example
 
@@ -70,17 +73,22 @@ agents:
     model: default
 adapters:
   codex:
+    image: registry.example/roundtable-codex@sha256:<immutable-digest>
     command: codex
     supports_resume: true
     resume_pattern: "codex resume {{external_session_id}}"
     supports_mcp: true
     supports_readonly_workspace: true
     captures_session_id: true
+    provider_hosts: api.openai.com
+    credential_env: OPENAI_API_KEY
 ```
 
 Unspecified values retain defaults. Boolean values must parse using Go's `strconv.ParseBool` forms. Integer values must parse as base-10 integers. The current parser trims surrounding double-quote characters from scalar values, does not interpret escape sequences, and treats `#` as a comment only when it begins the trimmed line; inline comments are not stripped. Keep literal values simple.
 
-Run `roundtable start --root DIR` to serve the standard HTTP endpoint and the legacy socket from one runtime. A harness may launch `roundtable mcp stdio --root DIR`; the bridge connects to the already-running owner and does not start a coordinator. Never place bearer tokens in this configuration file or command-line arguments; supply `ROUNDTABLE_MCP_TOKEN` in the process environment.
+Run `roundtable start --root DIR` to serve coordinator/admin MCP at `/mcp`, capability-scoped agent MCP at `/agent/mcp`, and the legacy socket from one runtime. A harness may launch `roundtable mcp stdio --root DIR`; the bridge connects to the already-running owner and does not start a coordinator. Never place bearer tokens in this configuration file or command-line arguments; supply `ROUNDTABLE_MCP_TOKEN` in the process environment. The agent endpoint requires a short-lived capability issued by Roundtable and does not accept the coordinator token as an agent identity.
+
+Containers run as UID/GID 1000 with all capabilities dropped, no-new-privileges, the runtime's default seccomp profile, read-only root, bounded memory/CPU/process count, no host networking, and scoped source plus tmpfs-backed workspace (up to 1 GiB) and temp (up to 512 MiB) volumes and per-session MCP/egress sockets. Source snapshots contain only operator-assigned `readable_paths`; empty scopes fail closed and sensitive descendants are excluded. Include required build/test manifests and support directories explicitly in the task's path scope. Provider access is fail-closed unless `provider_hosts` is configured. The HTTPS CONNECT gateway permits only exact configured hostnames on port 443, pins validated public DNS results, and rejects local/private/special-use destinations. `credential_env` is an explicit list of API-key variable names; tokens are never stored in this file, and the host environment is not forwarded wholesale. An allowlisted provider can receive task data sent by the agent, so this is controlled provider connectivity, not an anti-exfiltration guarantee. Runtime/kernel vulnerabilities remain possible.
 
 ## Validation and limitations
 

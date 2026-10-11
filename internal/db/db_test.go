@@ -39,8 +39,8 @@ func TestOpenBootstrapsControlPlaneSchema(t *testing.T) {
 	if err := sqlDB.QueryRow("SELECT MAX(version) FROM schema_migrations").Scan(&version); err != nil {
 		t.Fatalf("migration version: %v", err)
 	}
-	if version != 4 {
-		t.Fatalf("migration version = %d, want 4", version)
+	if version != 5 {
+		t.Fatalf("migration version = %d, want 5", version)
 	}
 	for _, column := range []string{"revision"} {
 		var count int
@@ -67,5 +67,33 @@ func TestMigrateIsIdempotent(t *testing.T) {
 	}
 	if err := migrate(sqlDB); err != nil {
 		t.Fatalf("second migration: %v", err)
+	}
+}
+
+func TestMigrationAddsTestEvidenceProvenanceToLegacyTestRuns(t *testing.T) {
+	sqlDB, err := sql.Open("sqlite3", filepath.Join(t.TempDir(), "legacy.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer sqlDB.Close()
+	if _, err := sqlDB.Exec(`CREATE TABLE test_runs (
+		id TEXT PRIMARY KEY, proposal_id TEXT, task_id TEXT, command TEXT NOT NULL,
+		status TEXT NOT NULL, summary_md TEXT, log_path TEXT, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+	)`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := sqlDB.Exec(`INSERT INTO test_runs(id, command, status) VALUES ('TR-legacy', 'go test', 'passed')`); err != nil {
+		t.Fatal(err)
+	}
+	if err := migrate(sqlDB); err != nil {
+		t.Fatalf("migrate legacy test runs: %v", err)
+	}
+	var source string
+	var outcome, submitter, session sql.NullString
+	if err := sqlDB.QueryRow(`SELECT evidence_source, reported_outcome, submitted_by, session_id FROM test_runs WHERE id='TR-legacy'`).Scan(&source, &outcome, &submitter, &session); err != nil {
+		t.Fatal(err)
+	}
+	if source != "host" || outcome.Valid || submitter.Valid || session.Valid {
+		t.Fatalf("legacy host test record did not retain safe provenance defaults: source=%q outcome=%+v submitter=%+v session=%+v", source, outcome, submitter, session)
 	}
 }

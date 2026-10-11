@@ -1,6 +1,8 @@
 # Test Execution and Evidence
 
-The local runtime exposes `test.suggest`, `test.run`, and `test.get_result`. Suggestions are heuristics; execution stores a result and log; proposal patch application evaluates its other gates separately. The runtime does not automatically execute a proposal's `expected_tests` or enforce the parsed `tests_required` policy field during apply.
+The local runtime exposes `test.suggest`, `test.run`, `test.get_result`, and the agent-scoped `test.evidence.submit`. Suggestions are heuristics; host execution stores a result and log; agent evidence is explicitly reported rather than verified; proposal patch application evaluates its other gates separately. The runtime does not automatically execute a proposal's `expected_tests` or enforce the parsed `tests_required` policy field during apply.
+
+External tester agents use `test.evidence.submit`, not the host-side `test.run`. Submission requires the tester's authenticated capability to be bound to the proposal and task. The record stores the command, bounded summary, submitted outcome, agent ID, session ID, and `agent_report` source; its status is always `reported`. An agent's claim that tests passed is not host-verified execution and must not be treated as a trusted pass or by itself satisfy transaction governance. The tool rejects evidence for another proposal, terminal proposals, unsupported outcomes, and oversized reports.
 
 ## Suggestions
 

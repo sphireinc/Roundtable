@@ -45,6 +45,24 @@ func TestInitCreatesExpectedScaffold(t *testing.T) {
 	}
 }
 
+func TestAgentStdioCommandRequiresScopedCapability(t *testing.T) {
+	t.Setenv("ROUNDTABLE_AGENT_CAPABILITY", "")
+	err := Run(context.Background(), []string{"mcp", "stdio", "--unix-socket", "/tmp/roundtable-agent-mcp.sock"}, &strings.Builder{}, &strings.Builder{})
+	if err == nil || !strings.Contains(err.Error(), "ROUNDTABLE_AGENT_CAPABILITY") {
+		t.Fatalf("agent bridge without scoped capability should fail clearly, got %v", err)
+	}
+}
+
+func TestAgentExecRequiresSessionEgressSocketAndCommand(t *testing.T) {
+	if err := Run(context.Background(), []string{"agent", "exec", "--"}, &strings.Builder{}, &strings.Builder{}); err == nil || !strings.Contains(err.Error(), "provider command") {
+		t.Fatalf("agent exec accepted an empty command: %v", err)
+	}
+	err := Run(context.Background(), []string{"agent", "exec", "--egress-socket", "/run/roundtable-agent-egress.sock", "--", "echo", "task"}, &strings.Builder{}, &strings.Builder{})
+	if err == nil || !strings.Contains(err.Error(), "Unix socket") {
+		t.Fatalf("agent exec did not fail closed without a mounted broker socket: %v", err)
+	}
+}
+
 func TestInitRefusesOverwriteWithoutForce(t *testing.T) {
 	root := t.TempDir()
 	if err := os.WriteFile(filepath.Join(root, "AGENTS.ROUNDTABLE.md"), []byte("existing"), 0o644); err != nil {

@@ -4,6 +4,8 @@ The local agent tool surface is declared in `internal/mcp/registry.go` and dispa
 
 `roundtable start` serves standard MCP Streamable HTTP at `http://127.0.0.1:7117/mcp` by default and the legacy Unix socket against the same runtime. Harnesses that launch stdio processes use `roundtable mcp stdio --root DIR`; this bridge requires the HTTP owner to already be running. The Unix socket remains a Roundtable-specific newline-delimited JSON protocol, not MCP JSON-RPC. It has no cryptographic agent identity; actor fields are caller-supplied. Protect the project account and do not treat tool names or capability flags as an OS sandbox.
 
+External CLI agents do not use the legacy coordinator socket or unrestricted `/mcp` endpoint. The supervisor creates a private per-session MCP Unix socket and injects a short-lived bearer capability through the container environment. The server resolves that token on every tool call and checks the persisted enabled agent, role, active session/run, task assignment, and allowed operation. Review/test/security executions are additionally bound to one proposal; repository reads require a claim within the task's operator-authored `readable_paths`. Reviewers may claim only `read`/`review`, testers only `read`, and neither role receives implementation-write or approval-policy administration. Capability expiry/revocation is enforced server-side, not from client-supplied role headers or arguments.
+
 For Codex CLI, configure the stdio process in project-local `.codex/config.toml` or add it with the Codex MCP CLI; do not edit global configuration as part of project setup:
 
 ```toml
@@ -100,7 +102,7 @@ Most string helpers accept only actual JSON strings and default only for missing
 
 | Tool | Required arguments | Optional arguments / behavior |
 | --- | --- | --- |
-| `task.create` | `title`, `body_md` | `priority`, `risk`, `assigned_agent_id`. Stores shared local task state; see [Tasks and Assignments](TASKS.md) for defaults and handler-only fields. |
+| `task.create` | `title`, `body_md` | `priority`, `risk`, `assigned_agent_id`, `readable_paths`. The task creator defines the assigned agent's repository path scope; it defaults to no readable paths and rejects credential/config locations. See [Tasks and Assignments](TASKS.md). |
 | `task.get` | `task_id` | Fetch one task. |
 | `task.list` | none | Lists all local tasks ordered by priority, creation time, and ID; no run/workspace filter. |
 | `task.update_status` | `task_id` | Nonempty `status`/`assigned_agent_id` update those fields; empty values preserve them. See [Tasks and Assignments](TASKS.md). |
@@ -142,7 +144,7 @@ The response is `{matches: [...]}` with each match containing a slash-normalized
 
 | Tool | Required arguments | Optional arguments / behavior |
 | --- | --- | --- |
-| `resource.claim` | `resource_type`, `resource_id`, `claim_type`, `task_id` | `ttl_seconds`, `rationale`. Valid claim modes: read/write/review/exclusive. |
+| `resource.claim` | `resource_type`, `resource_id`, `claim_type`, `task_id` | `ttl_seconds`, `rationale`. Valid claim modes: read/write/review/exclusive. Claims do not grant reads outside the task's operator-authored `readable_paths`. Agent capability calls ignore caller-provided claim IDs. |
 | `resource.claim_status` | none | Filter by `resource_id` and/or `agent_id`; inspect active/suspended/expired state. |
 | `resource.get` | `resource_id` | Fetch resource metadata. |
 | `resource.release` | `claim_id` | Release a previously granted claim. |
@@ -187,6 +189,7 @@ See [Test Execution and Evidence](TEST_EXECUTION.md) for suggestions, execution 
 | Tool | Required arguments | Optional arguments / behavior |
 | --- | --- | --- |
 | `test.suggest` | none | Optional `proposal_id`, `task_id`; suggests test commands. |
+| `test.evidence.submit` | `proposal_id`, `command`, `outcome`, `summary_md` | Tester-only. Submits a bounded, proposal/session-attributed agent report with outcome `passed`, `failed`, or `inconclusive`. Stored with status `reported`; it is not host-verified test execution and cannot be represented as a trusted pass. |
 | `test.run` | `command` | Optional `proposal_id`, `task_id`; executes `/bin/sh -lc` in the repository root and persists output to `.roundtable/testlogs/`. The current guard checks the executable name against `cargo`, `git`, `go`, `make`, `node`, `npm`, `pnpm`, `printf`, `pytest`, `ruby`, `swift`, `vitest`, and `yarn`, and rejects selected shell-control characters (`; | & > < backtick $ newline carriage-return`). It does not fully inspect executable arguments or sandbox filesystem/network effects; an allowlisted command can still be misused. Only invoke reviewed, known read-only/test commands; this tool is not a security sandbox. |
 | `test.get_result` | `test_run_id` | Fetches a stored test run/result. A previous result is not proof the current patch has been tested. |
 

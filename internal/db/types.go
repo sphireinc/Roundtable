@@ -97,6 +97,7 @@ type Task struct {
 	ID              string
 	Title           string
 	BodyMD          string
+	ReadablePaths   []string
 	Status          string
 	Priority        int
 	Risk            string
@@ -118,31 +119,35 @@ type Resource struct {
 }
 
 type Claim struct {
-	ID           string
-	ResourceID   string
-	AgentID      string
-	TaskID       string
-	ClaimType    string
-	BaseHash     string
-	Status       string
-	ExpiresAt    string
-	HeartbeatAt  string
-	Renewable    bool
-	ResumePolicy string
-	RationaleMD  string
-	CreatedAt    string
+	ID                 string
+	ExecutionSessionID string
+	ResourceID         string
+	AgentID            string
+	TaskID             string
+	ClaimType          string
+	BaseHash           string
+	Status             string
+	ExpiresAt          string
+	HeartbeatAt        string
+	Renewable          bool
+	ResumePolicy       string
+	RationaleMD        string
+	CreatedAt          string
 }
 
 type Proposal struct {
-	ID        string
-	TaskID    string
-	AgentID   string
-	Title     string
-	SummaryMD string
-	PatchPath string
-	Status    string
-	Risk      string
-	CreatedAt string
+	ID                string
+	TaskID            string
+	AgentID           string
+	Title             string
+	SummaryMD         string
+	PatchPath         string
+	Status            string
+	Risk              string
+	BaseRevision      string
+	BaseStateHash     string
+	ProposerSessionID string
+	CreatedAt         string
 }
 
 type ProposalResource struct {
@@ -215,14 +220,18 @@ type SecurityReview struct {
 }
 
 type TestRun struct {
-	ID         string
-	ProposalID string
-	TaskID     string
-	Command    string
-	Status     string
-	SummaryMD  string
-	LogPath    string
-	CreatedAt  string
+	ID              string
+	ProposalID      string
+	TaskID          string
+	Command         string
+	Status          string
+	ReportedOutcome string
+	EvidenceSource  string
+	SubmittedBy     string
+	SessionID       string
+	SummaryMD       string
+	LogPath         string
+	CreatedAt       string
 }
 
 type MemoryEntry struct {

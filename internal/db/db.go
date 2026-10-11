@@ -120,6 +120,7 @@ func migrate(db *sql.DB) error {
 			priority INTEGER NOT NULL DEFAULT 100,
 			risk TEXT NOT NULL DEFAULT 'normal',
 			assigned_agent_id TEXT,
+			readable_paths_json TEXT NOT NULL DEFAULT '[]',
 			created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
 			updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 		);`,
@@ -227,6 +228,10 @@ func migrate(db *sql.DB) error {
 			task_id TEXT,
 			command TEXT NOT NULL,
 			status TEXT NOT NULL,
+			reported_outcome TEXT,
+			evidence_source TEXT NOT NULL DEFAULT 'host',
+			submitted_by TEXT,
+			session_id TEXT,
 			summary_md TEXT,
 			log_path TEXT,
 			created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
@@ -258,6 +263,22 @@ func migrate(db *sql.DB) error {
 		return err
 	}
 	if err := ensureWorkspaceHardening(db); err != nil {
+		return err
+	}
+	for _, column := range []string{
+		"reported_outcome TEXT",
+		"evidence_source TEXT NOT NULL DEFAULT 'host'",
+		"submitted_by TEXT",
+		"session_id TEXT",
+	} {
+		if err := addColumnIfMissing(db, "test_runs", column); err != nil {
+			return fmt.Errorf("add test evidence provenance column: %w", err)
+		}
+	}
+	if _, err := db.Exec("INSERT OR IGNORE INTO schema_migrations(version) VALUES (5)"); err != nil {
+		return fmt.Errorf("record test evidence provenance migration: %w", err)
+	}
+	if err := addColumnIfMissing(db, "tasks", "readable_paths_json TEXT NOT NULL DEFAULT '[]'"); err != nil {
 		return err
 	}
 	return nil
@@ -305,6 +326,9 @@ func ensureMemoryColumns(db *sql.DB) error {
 }
 
 func ensureWorkspaceHardening(db *sql.DB) error {
+	if err := addColumnIfMissing(db, "claims", "execution_session_id TEXT"); err != nil {
+		return err
+	}
 	if err := addColumnIfMissing(db, "workspaces", "revision INTEGER NOT NULL DEFAULT 1"); err != nil {
 		return err
 	}
@@ -318,7 +342,7 @@ func ensureWorkspaceHardening(db *sql.DB) error {
 			return err
 		}
 	}
-	for _, column := range []string{"deliberation_id TEXT", "proposer_session_id TEXT", "base_revision TEXT", "vote_state TEXT NOT NULL DEFAULT 'pending'", "policy_state TEXT NOT NULL DEFAULT 'pending'", "approval_state TEXT NOT NULL DEFAULT 'pending'", "transaction_state TEXT NOT NULL DEFAULT 'not_started'", "updated_at TEXT"} {
+	for _, column := range []string{"deliberation_id TEXT", "proposer_session_id TEXT", "base_revision TEXT", "base_state_hash TEXT", "vote_state TEXT NOT NULL DEFAULT 'pending'", "policy_state TEXT NOT NULL DEFAULT 'pending'", "approval_state TEXT NOT NULL DEFAULT 'pending'", "transaction_state TEXT NOT NULL DEFAULT 'not_started'", "updated_at TEXT"} {
 		if err := addColumnIfMissing(db, "proposals", column); err != nil {
 			return err
 		}

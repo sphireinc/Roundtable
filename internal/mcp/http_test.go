@@ -59,3 +59,29 @@ func TestHTTPMiddlewareRejectsHostOriginAndMissingBearer(t *testing.T) {
 		t.Fatalf("authenticated remote status = %d, want 204", response.Code)
 	}
 }
+
+func TestAgentHTTPMiddlewareRequiresScopedBearerOnLoopback(t *testing.T) {
+	next := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusNoContent) })
+	handler := protectMCPHTTP(next, HTTPOptions{Address: "127.0.0.1:7117", AgentToken: "scoped-secret"})
+	for _, test := range []struct {
+		name, authorization string
+		want                int
+	}{
+		{name: "missing", want: http.StatusUnauthorized},
+		{name: "wrong token", authorization: "Bearer other", want: http.StatusUnauthorized},
+		{name: "valid", authorization: "Bearer scoped-secret", want: http.StatusNoContent},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			request := httptest.NewRequest(http.MethodPost, "http://127.0.0.1:7117/mcp", nil)
+			request.Header.Set("Host", "127.0.0.1:7117")
+			if test.authorization != "" {
+				request.Header.Set("Authorization", test.authorization)
+			}
+			response := httptest.NewRecorder()
+			handler.ServeHTTP(response, request)
+			if response.Code != test.want {
+				t.Fatalf("status=%d want=%d", response.Code, test.want)
+			}
+		})
+	}
+}

@@ -630,9 +630,13 @@ func (s *Store) ListRunSnapshots(ctx context.Context, runID string) ([]RunSnapsh
 }
 
 func (s *Store) UpsertTask(ctx context.Context, task Task) error {
-	_, err := s.db.ExecContext(ctx, `
-		INSERT INTO tasks (id, title, body_md, status, priority, risk, assigned_agent_id)
-		VALUES (?, ?, ?, ?, ?, ?, ?)
+	readablePaths, err := json.Marshal(task.ReadablePaths)
+	if err != nil {
+		return fmt.Errorf("encode task readable paths: %w", err)
+	}
+	_, err = s.db.ExecContext(ctx, `
+		INSERT INTO tasks (id, title, body_md, status, priority, risk, assigned_agent_id, readable_paths_json)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(id) DO UPDATE SET
 			title = excluded.title,
 			body_md = excluded.body_md,
@@ -640,26 +644,31 @@ func (s *Store) UpsertTask(ctx context.Context, task Task) error {
 			priority = excluded.priority,
 			risk = excluded.risk,
 			assigned_agent_id = excluded.assigned_agent_id,
+			readable_paths_json = excluded.readable_paths_json,
 			updated_at = CURRENT_TIMESTAMP
-	`, task.ID, task.Title, task.BodyMD, defaultIfEmpty(task.Status, "open"), defaultIfZero(task.Priority, 100), defaultIfEmpty(task.Risk, "normal"), nullIfEmpty(task.AssignedAgentID))
+	`, task.ID, task.Title, task.BodyMD, defaultIfEmpty(task.Status, "open"), defaultIfZero(task.Priority, 100), defaultIfEmpty(task.Risk, "normal"), nullIfEmpty(task.AssignedAgentID), string(readablePaths))
 	return wrapErr("upsert task", err)
 }
 
 func (s *Store) GetTask(ctx context.Context, id string) (Task, error) {
 	row := s.db.QueryRowContext(ctx, `
-		SELECT id, title, body_md, status, priority, risk, COALESCE(assigned_agent_id, ''), created_at, updated_at
+		SELECT id, title, body_md, status, priority, risk, COALESCE(assigned_agent_id, ''), readable_paths_json, created_at, updated_at
 		FROM tasks WHERE id = ?
 	`, id)
 	var v Task
-	if err := row.Scan(&v.ID, &v.Title, &v.BodyMD, &v.Status, &v.Priority, &v.Risk, &v.AssignedAgentID, &v.CreatedAt, &v.UpdatedAt); err != nil {
+	var readablePaths string
+	if err := row.Scan(&v.ID, &v.Title, &v.BodyMD, &v.Status, &v.Priority, &v.Risk, &v.AssignedAgentID, &readablePaths, &v.CreatedAt, &v.UpdatedAt); err != nil {
 		return Task{}, fmt.Errorf("get task %s: %w", id, err)
+	}
+	if err := json.Unmarshal([]byte(readablePaths), &v.ReadablePaths); err != nil {
+		return Task{}, fmt.Errorf("decode task %s readable paths: %w", id, err)
 	}
 	return v, nil
 }
 
 func (s *Store) ListTasks(ctx context.Context) ([]Task, error) {
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT id, title, body_md, status, priority, risk, COALESCE(assigned_agent_id, ''), created_at, updated_at
+		SELECT id, title, body_md, status, priority, risk, COALESCE(assigned_agent_id, ''), readable_paths_json, created_at, updated_at
 		FROM tasks ORDER BY priority, created_at, id
 	`)
 	if err != nil {
@@ -669,8 +678,12 @@ func (s *Store) ListTasks(ctx context.Context) ([]Task, error) {
 	var out []Task
 	for rows.Next() {
 		var v Task
-		if err := rows.Scan(&v.ID, &v.Title, &v.BodyMD, &v.Status, &v.Priority, &v.Risk, &v.AssignedAgentID, &v.CreatedAt, &v.UpdatedAt); err != nil {
+		var readablePaths string
+		if err := rows.Scan(&v.ID, &v.Title, &v.BodyMD, &v.Status, &v.Priority, &v.Risk, &v.AssignedAgentID, &readablePaths, &v.CreatedAt, &v.UpdatedAt); err != nil {
 			return nil, fmt.Errorf("scan task: %w", err)
+		}
+		if err := json.Unmarshal([]byte(readablePaths), &v.ReadablePaths); err != nil {
+			return nil, fmt.Errorf("decode task %s readable paths: %w", v.ID, err)
 		}
 		out = append(out, v)
 	}
@@ -730,8 +743,8 @@ func (s *Store) ListResources(ctx context.Context) ([]Resource, error) {
 
 func (s *Store) UpsertClaim(ctx context.Context, claim Claim) error {
 	_, err := s.db.ExecContext(ctx, `
-		INSERT INTO claims (id, resource_id, agent_id, task_id, claim_type, base_hash, status, expires_at, heartbeat_at, renewable, resume_policy, rationale_md)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		INSERT INTO claims (id, resource_id, agent_id, task_id, claim_type, base_hash, status, expires_at, heartbeat_at, renewable, resume_policy, rationale_md, execution_session_id)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(id) DO UPDATE SET
 			resource_id = excluded.resource_id,
 			agent_id = excluded.agent_id,
@@ -743,20 +756,21 @@ func (s *Store) UpsertClaim(ctx context.Context, claim Claim) error {
 			heartbeat_at = excluded.heartbeat_at,
 			renewable = excluded.renewable,
 			resume_policy = excluded.resume_policy,
-			rationale_md = excluded.rationale_md
-	`, claim.ID, claim.ResourceID, claim.AgentID, claim.TaskID, claim.ClaimType, nullIfEmpty(claim.BaseHash), defaultIfEmpty(claim.Status, "active"), claim.ExpiresAt, nullIfEmpty(claim.HeartbeatAt), boolToInt(claim.Renewable), defaultIfEmpty(claim.ResumePolicy, "hold"), nullIfEmpty(claim.RationaleMD))
+			rationale_md = excluded.rationale_md,
+			execution_session_id = COALESCE(excluded.execution_session_id, claims.execution_session_id)
+	`, claim.ID, claim.ResourceID, claim.AgentID, claim.TaskID, claim.ClaimType, nullIfEmpty(claim.BaseHash), defaultIfEmpty(claim.Status, "active"), claim.ExpiresAt, nullIfEmpty(claim.HeartbeatAt), boolToInt(claim.Renewable), defaultIfEmpty(claim.ResumePolicy, "hold"), nullIfEmpty(claim.RationaleMD), nullIfEmpty(claim.ExecutionSessionID))
 	return wrapErr("upsert claim", err)
 }
 
 func (s *Store) GetClaim(ctx context.Context, id string) (Claim, error) {
 	row := s.db.QueryRowContext(ctx, `
-		SELECT id, resource_id, agent_id, task_id, claim_type, COALESCE(base_hash, ''), status, expires_at,
+		SELECT id, COALESCE(execution_session_id, ''), resource_id, agent_id, task_id, claim_type, COALESCE(base_hash, ''), status, expires_at,
 		       COALESCE(heartbeat_at, ''), renewable, resume_policy, COALESCE(rationale_md, ''), created_at
 		FROM claims WHERE id = ?
 	`, id)
 	var v Claim
 	var renewable int
-	if err := row.Scan(&v.ID, &v.ResourceID, &v.AgentID, &v.TaskID, &v.ClaimType, &v.BaseHash, &v.Status, &v.ExpiresAt, &v.HeartbeatAt, &renewable, &v.ResumePolicy, &v.RationaleMD, &v.CreatedAt); err != nil {
+	if err := row.Scan(&v.ID, &v.ExecutionSessionID, &v.ResourceID, &v.AgentID, &v.TaskID, &v.ClaimType, &v.BaseHash, &v.Status, &v.ExpiresAt, &v.HeartbeatAt, &renewable, &v.ResumePolicy, &v.RationaleMD, &v.CreatedAt); err != nil {
 		return Claim{}, fmt.Errorf("get claim %s: %w", id, err)
 	}
 	v.Renewable = renewable != 0
@@ -765,7 +779,7 @@ func (s *Store) GetClaim(ctx context.Context, id string) (Claim, error) {
 
 func (s *Store) ListClaims(ctx context.Context) ([]Claim, error) {
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT id, resource_id, agent_id, task_id, claim_type, COALESCE(base_hash, ''), status, expires_at,
+		SELECT id, COALESCE(execution_session_id, ''), resource_id, agent_id, task_id, claim_type, COALESCE(base_hash, ''), status, expires_at,
 		       COALESCE(heartbeat_at, ''), renewable, resume_policy, COALESCE(rationale_md, ''), created_at
 		FROM claims ORDER BY created_at, id
 	`)
@@ -777,7 +791,7 @@ func (s *Store) ListClaims(ctx context.Context) ([]Claim, error) {
 	for rows.Next() {
 		var v Claim
 		var renewable int
-		if err := rows.Scan(&v.ID, &v.ResourceID, &v.AgentID, &v.TaskID, &v.ClaimType, &v.BaseHash, &v.Status, &v.ExpiresAt, &v.HeartbeatAt, &renewable, &v.ResumePolicy, &v.RationaleMD, &v.CreatedAt); err != nil {
+		if err := rows.Scan(&v.ID, &v.ExecutionSessionID, &v.ResourceID, &v.AgentID, &v.TaskID, &v.ClaimType, &v.BaseHash, &v.Status, &v.ExpiresAt, &v.HeartbeatAt, &renewable, &v.ResumePolicy, &v.RationaleMD, &v.CreatedAt); err != nil {
 			return nil, fmt.Errorf("scan claim: %w", err)
 		}
 		v.Renewable = renewable != 0
@@ -788,8 +802,8 @@ func (s *Store) ListClaims(ctx context.Context) ([]Claim, error) {
 
 func (s *Store) UpsertProposal(ctx context.Context, proposal Proposal) error {
 	_, err := s.db.ExecContext(ctx, `
-		INSERT INTO proposals (id, task_id, agent_id, title, summary_md, patch_path, status, risk)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+		INSERT INTO proposals (id, task_id, agent_id, title, summary_md, patch_path, status, risk, base_revision, base_state_hash, proposer_session_id)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(id) DO UPDATE SET
 			task_id = excluded.task_id,
 			agent_id = excluded.agent_id,
@@ -797,18 +811,30 @@ func (s *Store) UpsertProposal(ctx context.Context, proposal Proposal) error {
 			summary_md = excluded.summary_md,
 			patch_path = excluded.patch_path,
 			status = excluded.status,
-			risk = excluded.risk
-	`, proposal.ID, proposal.TaskID, proposal.AgentID, proposal.Title, proposal.SummaryMD, proposal.PatchPath, defaultIfEmpty(proposal.Status, "pending"), defaultIfEmpty(proposal.Risk, "normal"))
+			risk = excluded.risk,
+			base_revision = excluded.base_revision,
+			base_state_hash = excluded.base_state_hash,
+			proposer_session_id = COALESCE(excluded.proposer_session_id, proposals.proposer_session_id)
+	`, proposal.ID, proposal.TaskID, proposal.AgentID, proposal.Title, proposal.SummaryMD, proposal.PatchPath, defaultIfEmpty(proposal.Status, "pending"), defaultIfEmpty(proposal.Risk, "normal"), nullIfEmpty(proposal.BaseRevision), nullIfEmpty(proposal.BaseStateHash), nullIfEmpty(proposal.ProposerSessionID))
 	return wrapErr("upsert proposal", err)
+}
+
+// InsertProposal creates a new proposal without allowing an existing ID to be replaced.
+func (s *Store) InsertProposal(ctx context.Context, proposal Proposal) error {
+	_, err := s.db.ExecContext(ctx, `
+		INSERT INTO proposals (id, task_id, agent_id, title, summary_md, patch_path, status, risk, base_revision, base_state_hash, proposer_session_id)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+	`, proposal.ID, proposal.TaskID, proposal.AgentID, proposal.Title, proposal.SummaryMD, proposal.PatchPath, defaultIfEmpty(proposal.Status, "pending"), defaultIfEmpty(proposal.Risk, "normal"), nullIfEmpty(proposal.BaseRevision), nullIfEmpty(proposal.BaseStateHash), nullIfEmpty(proposal.ProposerSessionID))
+	return wrapErr("insert proposal", err)
 }
 
 func (s *Store) GetProposal(ctx context.Context, id string) (Proposal, error) {
 	row := s.db.QueryRowContext(ctx, `
-		SELECT id, task_id, agent_id, title, summary_md, patch_path, status, risk, created_at
+		SELECT id, task_id, agent_id, title, summary_md, patch_path, status, risk, COALESCE(base_revision, ''), COALESCE(base_state_hash, ''), COALESCE(proposer_session_id, ''), created_at
 		FROM proposals WHERE id = ?
 	`, id)
 	var v Proposal
-	if err := row.Scan(&v.ID, &v.TaskID, &v.AgentID, &v.Title, &v.SummaryMD, &v.PatchPath, &v.Status, &v.Risk, &v.CreatedAt); err != nil {
+	if err := row.Scan(&v.ID, &v.TaskID, &v.AgentID, &v.Title, &v.SummaryMD, &v.PatchPath, &v.Status, &v.Risk, &v.BaseRevision, &v.BaseStateHash, &v.ProposerSessionID, &v.CreatedAt); err != nil {
 		return Proposal{}, fmt.Errorf("get proposal %s: %w", id, err)
 	}
 	return v, nil
@@ -816,7 +842,7 @@ func (s *Store) GetProposal(ctx context.Context, id string) (Proposal, error) {
 
 func (s *Store) ListProposals(ctx context.Context) ([]Proposal, error) {
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT id, task_id, agent_id, title, summary_md, patch_path, status, risk, created_at
+		SELECT id, task_id, agent_id, title, summary_md, patch_path, status, risk, COALESCE(base_revision, ''), COALESCE(base_state_hash, ''), COALESCE(proposer_session_id, ''), created_at
 		FROM proposals ORDER BY created_at, id
 	`)
 	if err != nil {
@@ -826,7 +852,7 @@ func (s *Store) ListProposals(ctx context.Context) ([]Proposal, error) {
 	var out []Proposal
 	for rows.Next() {
 		var v Proposal
-		if err := rows.Scan(&v.ID, &v.TaskID, &v.AgentID, &v.Title, &v.SummaryMD, &v.PatchPath, &v.Status, &v.Risk, &v.CreatedAt); err != nil {
+		if err := rows.Scan(&v.ID, &v.TaskID, &v.AgentID, &v.Title, &v.SummaryMD, &v.PatchPath, &v.Status, &v.Risk, &v.BaseRevision, &v.BaseStateHash, &v.ProposerSessionID, &v.CreatedAt); err != nil {
 			return nil, fmt.Errorf("scan proposal: %w", err)
 		}
 		out = append(out, v)
@@ -877,20 +903,42 @@ func (s *Store) UpsertVote(ctx context.Context, vote Vote) error {
 	if vote.PolicyWeight <= 0 {
 		vote.PolicyWeight = 1
 	}
-	_, err := s.db.ExecContext(ctx, `
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin vote upsert: %w", err)
+	}
+	defer tx.Rollback()
+	if _, err := tx.ExecContext(ctx, `DELETE FROM votes WHERE proposal_id = ? AND agent_id = ?`, vote.ProposalID, vote.AgentID); err != nil {
+		return wrapErr("replace reviewer vote", err)
+	}
+	if _, err := tx.ExecContext(ctx, `
 		INSERT INTO votes (id, proposal_id, agent_id, session_id, vote, confidence, reason_md, policy_weight, policy_version)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-		ON CONFLICT(id) DO UPDATE SET
-			proposal_id = excluded.proposal_id,
-			agent_id = excluded.agent_id,
-			session_id = excluded.session_id,
-			vote = excluded.vote,
-			confidence = excluded.confidence,
-			reason_md = excluded.reason_md,
-			policy_weight = excluded.policy_weight,
-			policy_version = excluded.policy_version
-	`, vote.ID, vote.ProposalID, vote.AgentID, nullIfEmpty(vote.SessionID), vote.Vote, zeroFloatToNull(vote.Confidence), nullIfEmpty(vote.ReasonMD), vote.PolicyWeight, nullIfEmpty(vote.PolicyVersion))
-	return wrapErr("upsert vote", err)
+	`, vote.ID, vote.ProposalID, vote.AgentID, nullIfEmpty(vote.SessionID), vote.Vote, zeroFloatToNull(vote.Confidence), nullIfEmpty(vote.ReasonMD), vote.PolicyWeight, nullIfEmpty(vote.PolicyVersion)); err != nil {
+		return wrapErr("upsert vote", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return wrapErr("commit vote upsert", err)
+	}
+	return nil
+}
+
+// InvalidateProposalEvidence removes all approvals tied to a patch being replaced.
+func (s *Store) InvalidateProposalEvidence(ctx context.Context, proposalID string) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin proposal evidence invalidation: %w", err)
+	}
+	defer tx.Rollback()
+	for _, table := range []string{"votes", "human_approvals", "security_reviews", "test_runs"} {
+		if _, err := tx.ExecContext(ctx, "DELETE FROM "+table+" WHERE proposal_id = ?", proposalID); err != nil {
+			return fmt.Errorf("invalidate proposal %s evidence in %s: %w", proposalID, table, err)
+		}
+	}
+	if _, err := tx.ExecContext(ctx, "UPDATE proposals SET status = 'pending' WHERE id = ?", proposalID); err != nil {
+		return fmt.Errorf("reset proposal status after patch replacement: %w", err)
+	}
+	return tx.Commit()
 }
 
 func (s *Store) GetVote(ctx context.Context, id string) (Vote, error) {
@@ -1145,26 +1193,30 @@ func (s *Store) ListSecurityReviews(ctx context.Context, proposalID string) ([]S
 
 func (s *Store) UpsertTestRun(ctx context.Context, testRun TestRun) error {
 	_, err := s.db.ExecContext(ctx, `
-		INSERT INTO test_runs (id, proposal_id, task_id, command, status, summary_md, log_path)
-		VALUES (?, ?, ?, ?, ?, ?, ?)
+		INSERT INTO test_runs (id, proposal_id, task_id, command, status, reported_outcome, evidence_source, submitted_by, session_id, summary_md, log_path)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(id) DO UPDATE SET
 			proposal_id = excluded.proposal_id,
 			task_id = excluded.task_id,
 			command = excluded.command,
 			status = excluded.status,
+			reported_outcome = excluded.reported_outcome,
+			evidence_source = excluded.evidence_source,
+			submitted_by = excluded.submitted_by,
+			session_id = excluded.session_id,
 			summary_md = excluded.summary_md,
 			log_path = excluded.log_path
-	`, testRun.ID, nullIfEmpty(testRun.ProposalID), nullIfEmpty(testRun.TaskID), testRun.Command, testRun.Status, nullIfEmpty(testRun.SummaryMD), nullIfEmpty(testRun.LogPath))
+	`, testRun.ID, nullIfEmpty(testRun.ProposalID), nullIfEmpty(testRun.TaskID), testRun.Command, testRun.Status, nullIfEmpty(testRun.ReportedOutcome), defaultIfEmpty(testRun.EvidenceSource, "host"), nullIfEmpty(testRun.SubmittedBy), nullIfEmpty(testRun.SessionID), nullIfEmpty(testRun.SummaryMD), nullIfEmpty(testRun.LogPath))
 	return wrapErr("upsert test run", err)
 }
 
 func (s *Store) GetTestRun(ctx context.Context, id string) (TestRun, error) {
 	row := s.db.QueryRowContext(ctx, `
-		SELECT id, COALESCE(proposal_id, ''), COALESCE(task_id, ''), command, status, COALESCE(summary_md, ''), COALESCE(log_path, ''), created_at
+		SELECT id, COALESCE(proposal_id, ''), COALESCE(task_id, ''), command, status, COALESCE(reported_outcome, ''), COALESCE(evidence_source, 'host'), COALESCE(submitted_by, ''), COALESCE(session_id, ''), COALESCE(summary_md, ''), COALESCE(log_path, ''), created_at
 		FROM test_runs WHERE id = ?
 	`, id)
 	var v TestRun
-	if err := row.Scan(&v.ID, &v.ProposalID, &v.TaskID, &v.Command, &v.Status, &v.SummaryMD, &v.LogPath, &v.CreatedAt); err != nil {
+	if err := row.Scan(&v.ID, &v.ProposalID, &v.TaskID, &v.Command, &v.Status, &v.ReportedOutcome, &v.EvidenceSource, &v.SubmittedBy, &v.SessionID, &v.SummaryMD, &v.LogPath, &v.CreatedAt); err != nil {
 		return TestRun{}, fmt.Errorf("get test run %s: %w", id, err)
 	}
 	return v, nil
@@ -1172,7 +1224,7 @@ func (s *Store) GetTestRun(ctx context.Context, id string) (TestRun, error) {
 
 func (s *Store) ListTestRuns(ctx context.Context) ([]TestRun, error) {
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT id, COALESCE(proposal_id, ''), COALESCE(task_id, ''), command, status, COALESCE(summary_md, ''), COALESCE(log_path, ''), created_at
+		SELECT id, COALESCE(proposal_id, ''), COALESCE(task_id, ''), command, status, COALESCE(reported_outcome, ''), COALESCE(evidence_source, 'host'), COALESCE(submitted_by, ''), COALESCE(session_id, ''), COALESCE(summary_md, ''), COALESCE(log_path, ''), created_at
 		FROM test_runs ORDER BY created_at, id
 	`)
 	if err != nil {
@@ -1182,7 +1234,7 @@ func (s *Store) ListTestRuns(ctx context.Context) ([]TestRun, error) {
 	var out []TestRun
 	for rows.Next() {
 		var v TestRun
-		if err := rows.Scan(&v.ID, &v.ProposalID, &v.TaskID, &v.Command, &v.Status, &v.SummaryMD, &v.LogPath, &v.CreatedAt); err != nil {
+		if err := rows.Scan(&v.ID, &v.ProposalID, &v.TaskID, &v.Command, &v.Status, &v.ReportedOutcome, &v.EvidenceSource, &v.SubmittedBy, &v.SessionID, &v.SummaryMD, &v.LogPath, &v.CreatedAt); err != nil {
 			return nil, fmt.Errorf("scan test run: %w", err)
 		}
 		out = append(out, v)

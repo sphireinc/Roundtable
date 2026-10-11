@@ -7,7 +7,9 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
+	"roundtable/internal/agentauth"
 	"roundtable/internal/db"
 	"roundtable/internal/policy"
 	"roundtable/internal/security"
@@ -48,6 +50,807 @@ func TestRuntimeResourceClaimAndStatus(t *testing.T) {
 	}
 	if claims[0].BaseHash == "" {
 		t.Fatalf("expected runtime to auto-populate base hash, got %+v", claims[0])
+	}
+}
+
+func TestAgentCallEnforcesCapabilityAndBindsIdentityArguments(t *testing.T) {
+	root := newRuntimeRoot(t)
+	rt, cleanup, err := OpenRuntime(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer cleanup()
+	authority := agentauth.New(nil)
+	rt.SetAgentAuthority(authority)
+	token := issueRuntimeTestCapability(t, rt, authority, agentauth.Identity{SessionID: "S-1", AgentID: "A-1", TaskID: "T-1", RunID: "RUN-1", Role: "implementer", BaseRevision: "rev-1", BaseStateHash: "tree-1"})
+	if _, err := rt.CallAgent(context.Background(), token, "task.create", map[string]any{"title": "forbidden", "body_md": ""}); err == nil {
+		t.Fatal("implementer invoked administrative task creation")
+	}
+	if _, err := rt.CallAgent(context.Background(), token, "patch.apply", map[string]any{"proposal_id": "P-1"}); err == nil {
+		t.Fatal("implementer invoked direct patch application")
+	}
+	if _, err := rt.CallAgent(context.Background(), token, "test.run", map[string]any{"command": "go test ./..."}); err == nil {
+		t.Fatal("agent invoked host-side tests against the authoritative checkout")
+	}
+	if _, err := rt.CallAgent(context.Background(), token, "repo.read_file", map[string]any{"path": "README.md"}); err == nil {
+		t.Fatal("agent read a repository path without an assigned resource claim")
+	}
+	if _, err := rt.CallAgent(context.Background(), token, "resource.claim_status", map[string]any{"agent_id": "A-2"}); err == nil {
+		t.Fatal("implementer inspected another agent by spoofing agent_id")
+	}
+	if _, err := rt.CallAgent(context.Background(), "forged", "repo.read_file", map[string]any{"path": "README.md"}); err == nil {
+		t.Fatal("forged capability was accepted")
+	}
+}
+
+func TestProposalBoundReviewerCanReadAndVoteWithoutOwningImplementationTask(t *testing.T) {
+	root := newRuntimeRoot(t)
+	rt, cleanup, err := OpenRuntime(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer cleanup()
+	ctx := context.Background()
+	identity := agentauth.Identity{SessionID: "S-review-bound", AgentID: "A-review", TaskID: "T-review-bound", ProposalID: "P-review-bound", RunID: "R-review-bound", Role: "reviewer", BaseRevision: "rev", BaseStateHash: "tree", SnapshotRoot: testAgentSnapshotRoot(t, root, "S-review-bound")}
+	if err := os.WriteFile(filepath.Join(identity.SnapshotRoot, "README.md"), []byte("source snapshot\n"), 0o444); err != nil {
+		t.Fatal(err)
+	}
+	if err := rt.store.UpsertTask(ctx, db.Task{ID: identity.TaskID, Title: "Review", Status: "in_progress", AssignedAgentID: "A-implementer", ReadablePaths: []string{"README.md"}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := rt.store.UpsertProposal(ctx, db.Proposal{ID: identity.ProposalID, TaskID: identity.TaskID, AgentID: "A-implementer", Title: "Review me", PatchPath: ".roundtable/patches/P-review-bound.diff", Status: "in_review"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(root, ".roundtable", "patches"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, ".roundtable", "patches", "P-review-bound.diff"), []byte("proposal patch"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	authority := agentauth.New(nil)
+	rt.SetAgentAuthority(authority)
+	token := issueRuntimeTestCapability(t, rt, authority, identity)
+	task, err := rt.store.GetTask(ctx, identity.TaskID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	task.AssignedAgentID = "A-implementer"
+	if err := rt.store.UpsertTask(ctx, task); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := rt.CallAgent(ctx, token, "proposal.get", map[string]any{"proposal_id": identity.ProposalID}); err != nil {
+		t.Fatalf("proposal-bound reviewer could not inspect the assigned proposal: %v", err)
+	}
+	if _, err := rt.CallAgent(ctx, token, "proposal.get", map[string]any{"proposal_id": "P-other"}); err == nil {
+		t.Fatal("review capability accessed a different proposal")
+	}
+	if _, err := rt.CallAgent(ctx, token, "resource.claim", map[string]any{"path": "README.md", "resource_type": "file", "claim_type": "review"}); err != nil {
+		t.Fatalf("reviewer could not acquire a scoped review claim: %v", err)
+	}
+	claims, err := rt.store.ListClaims(ctx)
+	if err != nil || len(claims) != 1 || claims[0].ExecutionSessionID != identity.SessionID {
+		t.Fatalf("review claim did not retain its authenticated execution identity: %+v err=%v", claims, err)
+	}
+	if _, err := rt.CallAgent(ctx, token, "repo.read_file", map[string]any{"path": "README.md"}); err != nil {
+		t.Fatalf("reviewer could not inspect claimed snapshot file: %v", err)
+	}
+	if _, err := rt.CallAgent(ctx, token, "resource.claim", map[string]any{"path": "README.md", "resource_type": "file", "claim_type": "write"}); err == nil {
+		t.Fatal("reviewer acquired an implementation write claim")
+	}
+	if _, err := rt.CallAgent(ctx, token, "vote.cast", map[string]any{"proposal_id": identity.ProposalID, "vote": "approve", "reason_md": "Reviewed"}); err != nil {
+		t.Fatalf("reviewer could not vote on its assigned proposal: %v", err)
+	}
+}
+
+func TestProposalBoundTesterCanSubmitUntrustedTestEvidence(t *testing.T) {
+	root := newRuntimeRoot(t)
+	rt, cleanup, err := OpenRuntime(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer cleanup()
+	ctx := context.Background()
+	identity := agentauth.Identity{SessionID: "S-test-evidence", AgentID: "A-tester", TaskID: "T-test-evidence", ProposalID: "P-test-evidence", RunID: "R-test-evidence", Role: "tester", BaseRevision: "rev", BaseStateHash: "tree"}
+	if err := rt.store.UpsertProposal(ctx, db.Proposal{ID: identity.ProposalID, TaskID: identity.TaskID, AgentID: "A-implementer", Title: "Change", Status: "in_review"}); err != nil {
+		t.Fatal(err)
+	}
+	authority := agentauth.New(nil)
+	rt.SetAgentAuthority(authority)
+	token := issueRuntimeTestCapability(t, rt, authority, identity)
+	result, err := rt.CallAgent(ctx, token, "test.evidence.submit", map[string]any{
+		"proposal_id": identity.ProposalID, "command": "go test ./internal/example", "outcome": "passed", "summary_md": "All package tests passed.",
+	})
+	if err != nil {
+		t.Fatalf("tester could not submit proposal-bound evidence: %v", err)
+	}
+	testRun, ok := result["test_run"].(db.TestRun)
+	if !ok || testRun.ID == "" || testRun.ProposalID != identity.ProposalID || testRun.TaskID != identity.TaskID || testRun.Status != "reported" || testRun.EvidenceSource != "agent_report" || testRun.SessionID != identity.SessionID || testRun.SubmittedBy != identity.AgentID || testRun.ReportedOutcome != "passed" {
+		t.Fatalf("agent evidence was not persisted with untrusted provenance: %+v", result)
+	}
+	if _, err := rt.CallAgent(ctx, token, "test.evidence.submit", map[string]any{
+		"proposal_id": "P-other", "command": "go test ./...", "outcome": "passed", "summary_md": "forged",
+	}); err == nil {
+		t.Fatal("tester submitted evidence against another proposal")
+	}
+	if _, err := rt.CallAgent(ctx, token, "test.run", map[string]any{"proposal_id": identity.ProposalID, "command": "go test ./..."}); err == nil {
+		t.Fatal("tester used the host-side test runner")
+	}
+}
+
+func TestImplementerCanRequestReviewOnlyForOwnSessionProposal(t *testing.T) {
+	root := newRuntimeRoot(t)
+	rt, cleanup, err := OpenRuntime(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer cleanup()
+	ctx := context.Background()
+	identity := agentauth.Identity{SessionID: "S-request-review", AgentID: "A-implementer", TaskID: "T-request-review", RunID: "R-request-review", Role: "implementer", BaseRevision: "rev", BaseStateHash: "tree"}
+	if err := rt.store.UpsertTask(ctx, db.Task{ID: identity.TaskID, Title: "Review request", Status: "in_progress", ReadablePaths: []string{"README.md"}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := rt.store.UpsertResource(ctx, db.Resource{ID: "file:README.md", Type: "file", Path: "README.md"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := rt.store.UpsertClaim(ctx, db.Claim{ID: "C-request-review", ResourceID: "file:README.md", AgentID: identity.AgentID, TaskID: identity.TaskID, ClaimType: "write", Status: "active", ExecutionSessionID: identity.SessionID}); err != nil {
+		t.Fatal(err)
+	}
+	patchPath := filepath.Join(root, ".roundtable", "patches", "P-own-session.diff")
+	if err := os.MkdirAll(filepath.Dir(patchPath), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(patchPath, []byte(testReadmePatch("hello", "change")), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := rt.store.UpsertProposal(ctx, db.Proposal{ID: "P-own-session", TaskID: identity.TaskID, AgentID: identity.AgentID, ProposerSessionID: identity.SessionID, PatchPath: ".roundtable/patches/P-own-session.diff", Title: "Change", Status: "pending"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := rt.store.UpsertProposal(ctx, db.Proposal{ID: "P-other-session", TaskID: identity.TaskID, AgentID: identity.AgentID, ProposerSessionID: "S-other", Title: "Other change", Status: "pending"}); err != nil {
+		t.Fatal(err)
+	}
+	authority := agentauth.New(nil)
+	rt.SetAgentAuthority(authority)
+	token := issueRuntimeTestCapability(t, rt, authority, identity)
+	if _, err := rt.CallAgent(ctx, token, "proposal.request_review", map[string]any{"proposal_id": "P-own-session"}); err != nil {
+		t.Fatalf("implementer could not request review of its proposal: %v", err)
+	}
+	if _, err := rt.CallAgent(ctx, token, "proposal.attach_patch", map[string]any{"proposal_id": "P-own-session", "patch": testReadmePatch("hello", "revised")}); err != nil {
+		t.Fatalf("implementer could not revise its own session proposal: %v", err)
+	}
+	if _, err := rt.CallAgent(ctx, token, "proposal.request_review", map[string]any{"proposal_id": "P-other-session"}); err == nil {
+		t.Fatal("implementer requested review for another session's proposal")
+	}
+	if _, err := rt.CallAgent(ctx, token, "proposal.attach_patch", map[string]any{"proposal_id": "P-other-session", "patch": testReadmePatch("hello", "forged")}); err == nil {
+		t.Fatal("implementer revised another session's proposal")
+	}
+}
+
+func issueRuntimeTestCapability(t *testing.T, rt *Runtime, authority *agentauth.Authority, identity agentauth.Identity) string {
+	t.Helper()
+	ctx := context.Background()
+	if err := rt.store.UpsertAgent(ctx, db.Agent{ID: identity.AgentID, Role: identity.Role, Name: identity.AgentID, Adapter: "test", Status: "running", IsEnabled: true}); err != nil {
+		t.Fatal(err)
+	}
+	task, err := rt.store.GetTask(ctx, identity.TaskID)
+	if err != nil {
+		task = db.Task{ID: identity.TaskID, Title: identity.TaskID}
+	}
+	task.AssignedAgentID = identity.AgentID
+	task.Status = "in_progress"
+	if err := rt.store.UpsertTask(ctx, task); err != nil {
+		t.Fatal(err)
+	}
+	if err := rt.store.UpsertAgentSession(ctx, db.AgentSession{ID: identity.SessionID, AgentID: identity.AgentID, RunID: identity.RunID, Status: "running"}); err != nil {
+		t.Fatal(err)
+	}
+	token, err := authority.Issue(identity, time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return token
+}
+
+func TestAgentCapabilityIsRevokedByPersistedAuthorityChanges(t *testing.T) {
+	for _, change := range []string{"agent_disabled", "role_changed", "task_reassigned", "task_cancelled", "session_terminated"} {
+		t.Run(change, func(t *testing.T) {
+			root := newRuntimeRoot(t)
+			rt, cleanup, err := OpenRuntime(root)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer cleanup()
+			authority := agentauth.New(nil)
+			rt.SetAgentAuthority(authority)
+			identity := agentauth.Identity{SessionID: "S-live", AgentID: "A-live", TaskID: "T-live", RunID: "R-live", Role: "implementer", BaseRevision: "rev", BaseStateHash: "tree"}
+			token := issueRuntimeTestCapability(t, rt, authority, identity)
+			ctx := context.Background()
+			switch change {
+			case "agent_disabled":
+				err = rt.store.UpsertAgent(ctx, db.Agent{ID: identity.AgentID, Role: identity.Role, Name: identity.AgentID, Adapter: "test", IsEnabled: false})
+			case "role_changed":
+				err = rt.store.UpsertAgent(ctx, db.Agent{ID: identity.AgentID, Role: "reviewer", Name: identity.AgentID, Adapter: "test", IsEnabled: true})
+			case "task_reassigned", "task_cancelled":
+				task, getErr := rt.store.GetTask(ctx, identity.TaskID)
+				if getErr != nil {
+					t.Fatal(getErr)
+				}
+				if change == "task_reassigned" {
+					task.AssignedAgentID = "A-other"
+				} else {
+					task.Status = "cancelled"
+				}
+				err = rt.store.UpsertTask(ctx, task)
+			case "session_terminated":
+				err = rt.store.UpsertAgentSession(ctx, db.AgentSession{ID: identity.SessionID, AgentID: identity.AgentID, RunID: identity.RunID, Status: "completed"})
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := rt.CallAgent(ctx, token, "task.get", map[string]any{}); err == nil {
+				t.Fatal("stale capability remained usable after persisted authority changed")
+			}
+		})
+	}
+}
+
+func TestAgentTurnWatchReturnsOnlyItsScopedLifecycleEvents(t *testing.T) {
+	root := newRuntimeRoot(t)
+	rt, cleanup, err := OpenRuntime(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer cleanup()
+	authority := agentauth.New(nil)
+	rt.SetAgentAuthority(authority)
+	identity := agentauth.Identity{SessionID: "S-watch", AgentID: "A-watch", TaskID: "T-watch", RunID: "R-watch", Role: "implementer", BaseRevision: "rev", BaseStateHash: "tree"}
+	token := issueRuntimeTestCapability(t, rt, authority, identity)
+	if err := rt.store.UpsertRun(context.Background(), db.Run{ID: identity.RunID, Status: "active"}); err != nil {
+		t.Fatal(err)
+	}
+	request, err := rt.CallAgent(context.Background(), token, "agent.turn_request", map[string]any{"reason_md": "urgent review"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	requestID := int64(request["request_event_id"].(int64))
+	if _, err := rt.store.AppendEvent(context.Background(), db.Event{RunID: identity.RunID, Type: "agent.turn_scheduled", ActorID: "chair-1", PayloadJSON: fmt.Sprintf(`{"agent_id":"%s","request_event_id":%d}`, identity.AgentID, requestID)}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := rt.store.AppendEvent(context.Background(), db.Event{RunID: identity.RunID, Type: "agent.turn_scheduled", ActorID: "chair-1", PayloadJSON: `{"agent_id":"A-other","request_event_id":999}`}); err != nil {
+		t.Fatal(err)
+	}
+	result, err := rt.CallAgent(context.Background(), token, "table.watch", map[string]any{"after_event_id": 0})
+	if err != nil {
+		t.Fatalf("agent could not poll its scheduled turn: %v", err)
+	}
+	events, ok := result["events"].([]db.Event)
+	if !ok || len(events) != 2 || events[0].Type != "agent.turn_requested" || events[1].Type != "agent.turn_scheduled" {
+		t.Fatalf("turn watch returned unrelated or missing events: %#v", result)
+	}
+	if _, exists := result["transactions"]; exists || events[1].PayloadJSON == `{"agent_id":"A-other","request_event_id":999}` {
+		t.Fatalf("agent turn watch exposed unrelated coordinator state: %#v", result)
+	}
+}
+
+func TestAgentProposalCannotChoosePrivilegedInitialStatus(t *testing.T) {
+	root := newRuntimeRoot(t)
+	rt, cleanup, err := OpenRuntime(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer cleanup()
+	authority := agentauth.New(nil)
+	rt.SetAgentAuthority(authority)
+	token := issueRuntimeTestCapability(t, rt, authority, agentauth.Identity{SessionID: "S-status", AgentID: "A-status", TaskID: "T-status", RunID: "R-status", Role: "implementer", BaseRevision: "pinned-revision", BaseStateHash: "pinned-tree", SnapshotRoot: testAgentSnapshotRoot(t, root, "S-status")})
+	ctx := context.Background()
+	if err := rt.store.UpsertTask(ctx, db.Task{ID: "T-status", Title: "Status boundary", BodyMD: "test", Status: "in_progress", AssignedAgentID: "A-status", ReadablePaths: []string{"README.md"}}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := rt.CallAgent(ctx, token, "resource.claim", map[string]any{"resource_type": "file", "path": "README.md", "claim_type": "write"}); err != nil {
+		t.Fatal(err)
+	}
+	result, err := rt.CallAgent(ctx, token, "proposal.create", map[string]any{
+		"title": "Status boundary", "summary_md": "Test", "risk": "low", "patch": testReadmePatch("hello", "changed"), "status": "applied",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	proposal := result["proposal"].(db.Proposal)
+	if proposal.Status != "pending" || proposal.Risk != "normal" || !safeAgentProposalID(proposal.ID) {
+		t.Fatalf("agent selected privileged proposal state or generated an invalid id: id=%q status=%q risk=%q", proposal.ID, proposal.Status, proposal.Risk)
+	}
+}
+
+func safeAgentProposalID(value string) bool {
+	for _, r := range value {
+		if !(r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' || r == '_' || r == '-') {
+			return false
+		}
+	}
+	return value != ""
+}
+
+func TestAgentCannotMutateAnotherAgentsProposalOrClaim(t *testing.T) {
+	root := newRuntimeRoot(t)
+	rt, cleanup, err := OpenRuntime(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer cleanup()
+	authority := agentauth.New(nil)
+	rt.SetAgentAuthority(authority)
+	token := issueRuntimeTestCapability(t, rt, authority, agentauth.Identity{SessionID: "S-1", AgentID: "A-1", TaskID: "T-1", RunID: "RUN-1", Role: "implementer", BaseRevision: "rev-1", BaseStateHash: "tree-1"})
+	ctx := context.Background()
+	if err := rt.store.UpsertProposal(ctx, db.Proposal{ID: "P-OTHER", TaskID: "T-1", AgentID: "A-2", Title: "other", SummaryMD: "other agent proposal", PatchPath: ".roundtable/patches/P-OTHER.diff", Status: "pending"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := rt.CallAgent(ctx, token, "proposal.attach_patch", map[string]any{"proposal_id": "P-OTHER", "patch": "diff --git a/README.md b/README.md\n--- a/README.md\n+++ b/README.md\n"}); err == nil {
+		t.Fatal("implementer attached a patch to another agent's proposal")
+	}
+	if err := rt.store.UpsertClaim(ctx, db.Claim{ID: "C-OTHER", AgentID: "A-2", TaskID: "T-1", Status: "active"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := rt.CallAgent(ctx, token, "resource.release", map[string]any{"claim_id": "C-OTHER", "actor_id": "A-1"}); err == nil {
+		t.Fatal("implementer released another agent's claim")
+	}
+}
+
+func TestAgentCannotOverwriteExistingSecurityReviewByChoosingReviewID(t *testing.T) {
+	root := newRuntimeRoot(t)
+	rt, cleanup, err := OpenRuntime(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer cleanup()
+	authority := agentauth.New(nil)
+	rt.SetAgentAuthority(authority)
+	token := issueRuntimeTestCapability(t, rt, authority, agentauth.Identity{SessionID: "S-review-id", AgentID: "A-security", TaskID: "T-review-id", ProposalID: "P-review-id", RunID: "R-review-id", Role: "security", BaseRevision: "rev", BaseStateHash: "tree"})
+	ctx := context.Background()
+	if err := rt.store.UpsertProposal(ctx, db.Proposal{ID: "P-review-id", TaskID: "T-review-id", AgentID: "A-implementer", Title: "Change", PatchPath: ".roundtable/patches/P-review-id.diff", Status: "pending", Risk: "high"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := rt.store.UpsertSecurityReview(ctx, db.SecurityReview{ID: "SR-veto", ProposalID: "P-review-id", TaskID: "T-review-id", ReviewerID: "security-reviewer", Status: "veto", SummaryMD: "Block this proposal"}); err != nil {
+		t.Fatal(err)
+	}
+	result, err := rt.CallAgent(ctx, token, "security.review", map[string]any{"proposal_id": "P-review-id", "review_id": "SR-veto", "status": "approved", "summary_md": "override"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	existing, err := rt.store.GetSecurityReview(ctx, "SR-veto")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if existing.Status != "veto" || existing.ReviewerID != "security-reviewer" || result["review"].(db.SecurityReview).ID == existing.ID {
+		t.Fatalf("agent overwrote a prior security review by choosing its ID: existing=%+v result=%+v", existing, result)
+	}
+}
+
+func TestOneReviewerCannotSatisfyConsensusWithRepeatedVotes(t *testing.T) {
+	root := newRuntimeRoot(t)
+	rt, cleanup, err := OpenRuntime(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer cleanup()
+	authority := agentauth.New(nil)
+	rt.SetAgentAuthority(authority)
+	ctx := context.Background()
+	if err := rt.store.UpsertTask(ctx, db.Task{ID: "T-repeat-vote", Title: "Consensus", Status: "in_progress"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := rt.store.UpsertProposal(ctx, db.Proposal{ID: "P-repeat-vote", TaskID: "T-repeat-vote", AgentID: "A-implementer", Title: "Change", Status: "pending", Risk: "normal"}); err != nil {
+		t.Fatal(err)
+	}
+	token := issueRuntimeTestCapability(t, rt, authority, agentauth.Identity{SessionID: "S-repeat-vote", AgentID: "A-reviewer", TaskID: "T-repeat-vote", ProposalID: "P-repeat-vote", RunID: "R-repeat-vote", Role: "reviewer", BaseRevision: "rev", BaseStateHash: "tree"})
+	for index := 0; index < 2; index++ {
+		if _, err := rt.CallAgent(ctx, token, "vote.cast", map[string]any{"proposal_id": "P-repeat-vote", "vote_id": fmt.Sprintf("chosen-%d", index), "vote": "approve", "reason_md": "reviewed"}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	votes, err := rt.store.ListVotes(ctx, "P-repeat-vote")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(votes) != 1 || votes[0].AgentID != "A-reviewer" {
+		t.Fatalf("repeat reviewer votes counted as independent consensus: %+v", votes)
+	}
+	result := policy.DefaultEngine().EvaluateProposal("normal", []string{"README.md"}, votes)
+	if result.Approvals != 1 || result.Approvable {
+		t.Fatalf("one reviewer satisfied independent approval policy: %+v", result)
+	}
+}
+
+func TestAgentCannotProposePathClaimedForAnotherTask(t *testing.T) {
+	root := newRuntimeRoot(t)
+	rt, cleanup, err := OpenRuntime(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer cleanup()
+	ctx := context.Background()
+	if err := rt.store.UpsertTask(ctx, db.Task{ID: "T-assigned", Title: "Assigned", ReadablePaths: []string{"assigned.txt"}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := rt.store.UpsertClaim(ctx, db.Claim{ID: "C-other-task", ResourceID: "file:other.txt", AgentID: "A-agent", TaskID: "T-other", ClaimType: "write", Status: "active"}); err != nil {
+		t.Fatal(err)
+	}
+	authority := agentauth.New(nil)
+	token := issueRuntimeTestCapability(t, rt, authority, agentauth.Identity{SessionID: "S-scope", AgentID: "A-agent", TaskID: "T-assigned", RunID: "R-scope", Role: "implementer", BaseRevision: "rev", BaseStateHash: "tree"})
+	rt.SetAgentAuthority(authority)
+	patch := "diff --git a/other.txt b/other.txt\n--- a/other.txt\n+++ b/other.txt\n@@ -1 +1 @@\n-before\n+after\n"
+	if _, err := rt.CallAgent(ctx, token, "proposal.create", map[string]any{"title": "Cross-task", "summary_md": "scope test", "patch": patch, "base_revision": "rev", "base_state_hash": "tree"}); err == nil {
+		t.Fatal("agent submitted a path claimed only under another task")
+	}
+}
+
+func TestAgentCannotTakeOverExistingClaimID(t *testing.T) {
+	root := newRuntimeRoot(t)
+	rt, cleanup, err := OpenRuntime(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer cleanup()
+	authority := agentauth.New(nil)
+	rt.SetAgentAuthority(authority)
+	token := issueRuntimeTestCapability(t, rt, authority, agentauth.Identity{SessionID: "S-claim-id", AgentID: "A-claim-id", TaskID: "T-claim-id", RunID: "R-claim-id", Role: "implementer", BaseRevision: "rev", BaseStateHash: "tree", SnapshotRoot: testAgentSnapshotRoot(t, root, "S-claim-id")})
+	ctx := context.Background()
+	if err := rt.store.UpsertTask(ctx, db.Task{ID: "T-claim-id", Title: "Claim ID test", ReadablePaths: []string{"README.md"}, Status: "in_progress", AssignedAgentID: "A-claim-id"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := rt.store.UpsertResource(ctx, db.Resource{ID: "file:other.txt", Type: "file", Path: "other.txt"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := rt.store.UpsertClaim(ctx, db.Claim{ID: "C-owned-by-other", ResourceID: "file:other.txt", AgentID: "A-other", TaskID: "T-other", ClaimType: "write", Status: "active"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := rt.CallAgent(ctx, token, "resource.claim", map[string]any{
+		"claim_id": "C-owned-by-other", "resource_type": "file", "path": "README.md", "claim_type": "write",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	claim, err := rt.store.GetClaim(ctx, "C-owned-by-other")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if claim.AgentID != "A-other" || claim.TaskID != "T-other" || claim.ResourceID != "file:other.txt" {
+		t.Fatalf("agent replaced another claim by choosing its ID: %+v", claim)
+	}
+}
+
+func TestAgentCannotOverwriteResourceByChoosingResourceID(t *testing.T) {
+	root := newRuntimeRoot(t)
+	rt, cleanup, err := OpenRuntime(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer cleanup()
+	authority := agentauth.New(nil)
+	rt.SetAgentAuthority(authority)
+	token := issueRuntimeTestCapability(t, rt, authority, agentauth.Identity{SessionID: "S-resource-id", AgentID: "A-resource-id", TaskID: "T-resource-id", RunID: "R-resource-id", Role: "implementer", BaseRevision: "rev", BaseStateHash: "tree", SnapshotRoot: testAgentSnapshotRoot(t, root, "S-resource-id")})
+	ctx := context.Background()
+	if err := rt.store.UpsertTask(ctx, db.Task{ID: "T-resource-id", Title: "Resource ID test", ReadablePaths: []string{"README.md"}, Status: "in_progress", AssignedAgentID: "A-resource-id"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := rt.store.UpsertResource(ctx, db.Resource{ID: "directory:src", Type: "directory", Path: "src", Language: "go"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := rt.CallAgent(ctx, token, "resource.claim", map[string]any{
+		"resource_id": "directory:src", "resource_type": "file", "path": "README.md", "claim_type": "read",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	resource, err := rt.store.GetResource(ctx, "directory:src")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resource.Path != "src" || resource.Type != "directory" || resource.Language != "go" {
+		t.Fatalf("agent overwrote another resource using a chosen ID: %+v", resource)
+	}
+}
+
+func TestAgentClaimOfNewFileKeepsSecureEmptyHash(t *testing.T) {
+	root := newRuntimeRoot(t)
+	rt, cleanup, err := OpenRuntime(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer cleanup()
+	authority := agentauth.New(nil)
+	rt.SetAgentAuthority(authority)
+	token := issueRuntimeTestCapability(t, rt, authority, agentauth.Identity{SessionID: "S-new-file", AgentID: "A-new-file", TaskID: "T-new-file", RunID: "R-new-file", Role: "implementer", BaseRevision: "rev", BaseStateHash: "tree", SnapshotRoot: testAgentSnapshotRoot(t, root, "S-new-file")})
+	ctx := context.Background()
+	if err := rt.store.UpsertTask(ctx, db.Task{ID: "T-new-file", Title: "New file", ReadablePaths: []string{"new-file.txt"}, Status: "in_progress", AssignedAgentID: "A-new-file"}); err != nil {
+		t.Fatal(err)
+	}
+	result, err := rt.CallAgent(ctx, token, "resource.claim", map[string]any{"resource_type": "file", "path": "new-file.txt", "claim_type": "write", "base_hash": "forged"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	claim := result["claim"].(db.Claim)
+	if claim.BaseHash != "" {
+		t.Fatalf("agent-supplied or fallback hash replaced secure empty result: %+v", claim)
+	}
+	if _, err := os.Lstat(filepath.Join(root, "new-file.txt")); !os.IsNotExist(err) {
+		t.Fatalf("claim unexpectedly created its target: %v", err)
+	}
+}
+
+func TestReviewerCannotReplaceAnotherVoteID(t *testing.T) {
+	root := newRuntimeRoot(t)
+	rt, cleanup, err := OpenRuntime(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer cleanup()
+	authority := agentauth.New(nil)
+	rt.SetAgentAuthority(authority)
+	token := issueRuntimeTestCapability(t, rt, authority, agentauth.Identity{SessionID: "S-vote-id", AgentID: "A-reviewer", TaskID: "T-vote-id", ProposalID: "P-vote-id", RunID: "R-vote-id", Role: "reviewer", BaseRevision: "rev", BaseStateHash: "tree"})
+	ctx := context.Background()
+	if err := rt.store.UpsertProposal(ctx, db.Proposal{ID: "P-vote-id", TaskID: "T-vote-id", AgentID: "A-implementer", Status: "pending"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := rt.store.UpsertVote(ctx, db.Vote{ID: "V-owned-by-other", ProposalID: "P-vote-id", AgentID: "A-other", Vote: "approve", ReasonMD: "original review"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := rt.CallAgent(ctx, token, "vote.cast", map[string]any{
+		"proposal_id": "P-vote-id", "vote_id": "V-owned-by-other", "vote": "reject", "reason_md": "replacement",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	vote, err := rt.store.GetVote(ctx, "V-owned-by-other")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if vote.AgentID != "A-other" || vote.Vote != "approve" || vote.ReasonMD != "original review" {
+		t.Fatalf("reviewer replaced another agent's vote by choosing its ID: %+v", vote)
+	}
+}
+
+func TestAgentClaimStatusIsScopedToCapabilityTask(t *testing.T) {
+	root := newRuntimeRoot(t)
+	rt, cleanup, err := OpenRuntime(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer cleanup()
+	authority := agentauth.New(nil)
+	rt.SetAgentAuthority(authority)
+	token := issueRuntimeTestCapability(t, rt, authority, agentauth.Identity{SessionID: "S-claims", AgentID: "A-claims", TaskID: "T-assigned", RunID: "R-claims", Role: "implementer", BaseRevision: "rev", BaseStateHash: "tree"})
+	ctx := context.Background()
+	for _, claim := range []db.Claim{
+		{ID: "C-assigned", AgentID: "A-claims", TaskID: "T-assigned", Status: "active"},
+		{ID: "C-other-task", AgentID: "A-claims", TaskID: "T-other", Status: "active"},
+		{ID: "C-other-agent", AgentID: "A-other", TaskID: "T-assigned", Status: "active"},
+	} {
+		if err := rt.store.UpsertClaim(ctx, claim); err != nil {
+			t.Fatal(err)
+		}
+	}
+	result, err := rt.CallAgent(ctx, token, "resource.claim_status", map[string]any{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := result["claims"].([]db.Claim)
+	if len(got) != 1 || got[0].ID != "C-assigned" {
+		t.Fatalf("claim status crossed agent/task boundaries: %+v", got)
+	}
+}
+
+func TestAgentRepositoryReadsRequireAnActiveClaimForAssignedTask(t *testing.T) {
+	root := newRuntimeRoot(t)
+	snapshotRoot := testAgentSnapshotRoot(t, root, "S-read")
+	if err := os.WriteFile(filepath.Join(snapshotRoot, "README.md"), []byte("pinned snapshot\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "README.md"), []byte("new live checkout\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	rt, cleanup, err := OpenRuntime(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer cleanup()
+	authority := agentauth.New(nil)
+	rt.SetAgentAuthority(authority)
+	token := issueRuntimeTestCapability(t, rt, authority, agentauth.Identity{SessionID: "S-read", AgentID: "A-read", TaskID: "T-read", RunID: "R-read", Role: "implementer", BaseRevision: "rev", BaseStateHash: "tree", SnapshotRoot: snapshotRoot})
+	ctx := context.Background()
+	if err := rt.store.UpsertTask(ctx, db.Task{ID: "T-read", Title: "Read test", BodyMD: "", ReadablePaths: []string{"README.md"}, Status: "in_progress", AssignedAgentID: "A-read"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := rt.store.UpsertResource(ctx, db.Resource{ID: "file:README.md", Type: "file", Path: "README.md"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := rt.store.UpsertClaim(ctx, db.Claim{ID: "C-read", ResourceID: "file:README.md", AgentID: "A-read", TaskID: "T-other", Status: "active"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := rt.CallAgent(ctx, token, "repo.read_file", map[string]any{"path": "README.md"}); err == nil {
+		t.Fatal("agent read a resource claimed for another task")
+	}
+	claim, err := rt.store.GetClaim(ctx, "C-read")
+	if err != nil {
+		t.Fatal(err)
+	}
+	claim.TaskID = "T-read"
+	if err := rt.store.UpsertClaim(ctx, claim); err != nil {
+		t.Fatal(err)
+	}
+	readResult, err := rt.CallAgent(ctx, token, "repo.read_file", map[string]any{"path": "README.md"})
+	if err != nil {
+		t.Fatalf("agent could not read its assigned file: %v", err)
+	}
+	if got := readResult["content"]; got != "pinned snapshot\n" {
+		t.Fatalf("agent read from live authoritative checkout instead of pinned snapshot: %q", got)
+	}
+}
+
+func TestAgentRepositoryReadRejectsSnapshotOutsideAssignedSession(t *testing.T) {
+	root := newRuntimeRoot(t)
+	outside := t.TempDir()
+	if err := os.WriteFile(filepath.Join(outside, "README.md"), []byte("outside\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	rt, cleanup, err := OpenRuntime(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer cleanup()
+	authority := agentauth.New(nil)
+	rt.SetAgentAuthority(authority)
+	token := issueRuntimeTestCapability(t, rt, authority, agentauth.Identity{SessionID: "S-outside", AgentID: "A-outside", TaskID: "T-outside", RunID: "R-outside", Role: "implementer", BaseRevision: "rev", BaseStateHash: "tree", SnapshotRoot: outside})
+	ctx := context.Background()
+	if err := rt.store.UpsertTask(ctx, db.Task{ID: "T-outside", Title: "Read test", ReadablePaths: []string{"README.md"}, Status: "in_progress", AssignedAgentID: "A-outside"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := rt.store.UpsertResource(ctx, db.Resource{ID: "file:README.md", Type: "file", Path: "README.md"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := rt.store.UpsertClaim(ctx, db.Claim{ID: "C-outside", ResourceID: "file:README.md", AgentID: "A-outside", TaskID: "T-outside", Status: "active"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := rt.CallAgent(ctx, token, "repo.read_file", map[string]any{"path": "README.md"}); err == nil {
+		t.Fatal("agent read from a snapshot outside its assigned execution session")
+	}
+}
+
+func TestAgentCannotSelfGrantReadablePathWithResourceClaim(t *testing.T) {
+	root := newRuntimeRoot(t)
+	if err := os.WriteFile(filepath.Join(root, ".env"), []byte("secret=host-only\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	rt, cleanup, err := OpenRuntime(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer cleanup()
+	authority := agentauth.New(nil)
+	rt.SetAgentAuthority(authority)
+	token := issueRuntimeTestCapability(t, rt, authority, agentauth.Identity{SessionID: "S-no-scope", AgentID: "A-no-scope", TaskID: "T-no-scope", RunID: "R-no-scope", Role: "implementer", BaseRevision: "rev", BaseStateHash: "tree"})
+	ctx := context.Background()
+	if err := rt.store.UpsertTask(ctx, db.Task{ID: "T-no-scope", Title: "No read scope", Status: "in_progress", AssignedAgentID: "A-no-scope"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := rt.CallAgent(ctx, token, "resource.claim", map[string]any{"resource_type": "file", "path": ".env", "claim_type": "read"}); err == nil {
+		t.Fatal("agent claimed a path outside the task's readable scope")
+	}
+	if _, err := rt.CallAgent(ctx, token, "repo.read_file", map[string]any{"path": ".env"}); err == nil {
+		t.Fatal("agent self-granted access to a secret path by claiming it")
+	}
+}
+
+func TestTaskReadablePathScopeRejectsTraversalAndCredentialFiles(t *testing.T) {
+	for _, path := range []string{"../README.md", ".env", ".docker/config.json", "config/credentials", "keys/credentials.json", "keys/id_ecdsa", "keys/id_dsa", "keys/private.key", "keys/service.pem"} {
+		if _, err := parseTaskResourcePaths([]string{path}); err == nil {
+			t.Errorf("accepted unsafe task readable path %q", path)
+		}
+	}
+	paths, err := parseTaskResourcePaths([]any{"src", "README.md", "src"})
+	if err != nil || len(paths) != 2 || paths[0] != "src" || paths[1] != "README.md" {
+		t.Fatalf("valid task readable paths did not normalize safely: %v err=%v", paths, err)
+	}
+}
+
+func TestAgentCannotClaimResourceThroughSymlink(t *testing.T) {
+	root := newRuntimeRoot(t)
+	outside := t.TempDir()
+	if err := os.WriteFile(filepath.Join(outside, "secret.txt"), []byte("sensitive data"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(filepath.Join(root, "assigned"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outside, filepath.Join(root, "assigned", "redirect")); err != nil {
+		t.Fatal(err)
+	}
+	rt, cleanup, err := OpenRuntime(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer cleanup()
+	authority := agentauth.New(nil)
+	rt.SetAgentAuthority(authority)
+	token := issueRuntimeTestCapability(t, rt, authority, agentauth.Identity{SessionID: "S-claim-symlink", AgentID: "A-claim-symlink", TaskID: "T-claim-symlink", RunID: "R-claim-symlink", Role: "implementer", BaseRevision: "rev", BaseStateHash: "tree"})
+	ctx := context.Background()
+	if err := rt.store.UpsertTask(ctx, db.Task{ID: "T-claim-symlink", Title: "Symlink claim", ReadablePaths: []string{"assigned"}, Status: "in_progress", AssignedAgentID: "A-claim-symlink"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := rt.CallAgent(ctx, token, "resource.claim", map[string]any{"resource_type": "file", "path": "assigned/redirect/secret.txt", "claim_type": "read"}); err == nil {
+		t.Fatal("agent claimed a file reached through a symlink")
+	}
+	if _, err := rt.CallAgent(ctx, token, "resource.claim", map[string]any{"resource_type": "directory", "path": "assigned", "claim_type": "read"}); err == nil {
+		t.Fatal("agent claimed a directory containing a symlink to unauthorized data")
+	}
+}
+
+func TestAgentCannotClaimOrReadCredentialFilesUnderAuthorizedDirectory(t *testing.T) {
+	root := newRuntimeRoot(t)
+	credentialPaths := []string{"keys/id_ecdsa", "keys/private.key", "keys/credentials.json", ".docker/config.json"}
+	if err := os.Mkdir(filepath.Join(root, "keys"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(filepath.Join(root, ".docker"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	for _, path := range credentialPaths {
+		if err := os.WriteFile(filepath.Join(root, filepath.FromSlash(path)), []byte("secret"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	rt, cleanup, err := OpenRuntime(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer cleanup()
+	authority := agentauth.New(nil)
+	rt.SetAgentAuthority(authority)
+	token := issueRuntimeTestCapability(t, rt, authority, agentauth.Identity{SessionID: "S-key-deny", AgentID: "A-key-deny", TaskID: "T-key-deny", RunID: "R-key-deny", Role: "implementer", BaseRevision: "rev", BaseStateHash: "tree"})
+	ctx := context.Background()
+	if err := rt.store.UpsertTask(ctx, db.Task{ID: "T-key-deny", Title: "Key denial", ReadablePaths: []string{"keys", ".docker"}, Status: "in_progress", AssignedAgentID: "A-key-deny"}); err != nil {
+		t.Fatal(err)
+	}
+	for index, path := range credentialPaths {
+		if _, err := rt.CallAgent(ctx, token, "resource.claim", map[string]any{"resource_type": "file", "path": path, "claim_type": "read"}); err == nil {
+			t.Errorf("agent claimed credential path %q", path)
+		}
+		resourceID := "file:" + path
+		if err := rt.store.UpsertResource(ctx, db.Resource{ID: resourceID, Type: "file", Path: path}); err != nil {
+			t.Fatal(err)
+		}
+		if err := rt.store.UpsertClaim(ctx, db.Claim{ID: fmt.Sprintf("C-key-%d", index), ResourceID: resourceID, AgentID: "A-key-deny", TaskID: "T-key-deny", ClaimType: "read", Status: "active"}); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := rt.CallAgent(ctx, token, "repo.read_file", map[string]any{"path": path}); err == nil {
+			t.Errorf("agent read credential path %q despite a seeded claim", path)
+		}
+	}
+}
+
+func TestAgentCannotReadThroughSymlinkInsideClaimedDirectory(t *testing.T) {
+	root := newRuntimeRoot(t)
+	if err := os.Mkdir(filepath.Join(root, "assigned"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(root, filepath.Join(root, "assigned", "redirect")); err != nil {
+		t.Fatal(err)
+	}
+	rt, cleanup, err := OpenRuntime(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer cleanup()
+	authority := agentauth.New(nil)
+	rt.SetAgentAuthority(authority)
+	token := issueRuntimeTestCapability(t, rt, authority, agentauth.Identity{SessionID: "S-symlink", AgentID: "A-symlink", TaskID: "T-symlink", RunID: "R-symlink", Role: "implementer", BaseRevision: "rev", BaseStateHash: "tree"})
+	ctx := context.Background()
+	if err := rt.store.UpsertTask(ctx, db.Task{ID: "T-symlink", Title: "Symlink test", ReadablePaths: []string{"assigned"}, Status: "in_progress", AssignedAgentID: "A-symlink"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := rt.store.UpsertResource(ctx, db.Resource{ID: "directory:assigned", Type: "directory", Path: "assigned"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := rt.store.UpsertClaim(ctx, db.Claim{ID: "C-symlink", ResourceID: "directory:assigned", AgentID: "A-symlink", TaskID: "T-symlink", Status: "active"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := rt.CallAgent(ctx, token, "repo.read_file", map[string]any{"path": "assigned/redirect/README.md"}); err == nil {
+		t.Fatal("agent read outside its directory claim through an in-repository symlink")
 	}
 }
 
@@ -931,6 +1734,47 @@ func TestRuntimeProposalRejectsUnclaimedResources(t *testing.T) {
 	}
 }
 
+func TestProposalPatchIsRejectedWhenItsBaseStateHasChanged(t *testing.T) {
+	root := newRuntimeRoot(t)
+	rt, cleanup, err := OpenRuntime(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer cleanup()
+	mustCall(t, rt, "task.create", map[string]any{"task_id": "T-base", "title": "Base revision", "body_md": "test"})
+	mustCall(t, rt, "resource.claim", map[string]any{
+		"run_id": "RUN-1", "claim_id": "C-base", "agent_id": "A-1", "task_id": "T-base",
+		"resource_type": "file", "resource_id": "file:README.md", "path": "README.md", "claim_type": "write",
+	})
+	if _, err := rt.Call(context.Background(), "proposal.create", map[string]any{
+		"proposal_id": "../../outside", "task_id": "T-base", "agent_id": "A-1", "title": "Escaping artifact", "summary_md": "must reject",
+		"affected_resources": []any{"file:README.md"}, "risk": "normal", "patch": testReadmePatch("hello\n", "changed\n"),
+	}); err == nil {
+		t.Fatal("accepted proposal id containing path traversal")
+	}
+	created := mustCall(t, rt, "proposal.create", map[string]any{
+		"proposal_id": "P-base", "task_id": "T-base", "agent_id": "A-1", "title": "Based patch", "summary_md": "test base enforcement",
+		"affected_resources": []any{"file:README.md"}, "risk": "normal", "patch": testReadmePatch("hello\n", "changed\n"),
+	})
+	proposal := created["proposal"].(db.Proposal)
+	if proposal.BaseStateHash == "" {
+		t.Fatalf("proposal did not capture its repository base: %+v", proposal)
+	}
+	if err := os.WriteFile(filepath.Join(root, "README.md"), []byte("concurrent authoritative edit\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	validation, err := rt.Call(context.Background(), "patch.validate", map[string]any{"proposal_id": "P-base"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if validation["valid"].(bool) || validation["base_state_matches"].(bool) {
+		t.Fatalf("stale proposal base passed validation: %+v", validation)
+	}
+	if _, err := rt.Call(context.Background(), "patch.apply", map[string]any{"proposal_id": "P-base"}); err == nil {
+		t.Fatal("stale proposal applied to the changed repository")
+	}
+}
+
 func TestRuntimePatchValidateRejectAndApply(t *testing.T) {
 	root := newRuntimeRoot(t)
 	rt, cleanup, err := OpenRuntime(root)
@@ -1790,6 +2634,15 @@ func newRuntimeRoot(t *testing.T) string {
 	}
 	_ = sqlDB.Close()
 	return root
+}
+
+func testAgentSnapshotRoot(t *testing.T, root, sessionID string) string {
+	t.Helper()
+	snapshotRoot := filepath.Join(root, ".roundtable", "sessions", "agent-executions", sessionID, "source")
+	if err := os.MkdirAll(snapshotRoot, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	return snapshotRoot
 }
 
 func testReadmePatch(before, after string) string {

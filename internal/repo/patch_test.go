@@ -26,6 +26,71 @@ func TestParseTouchedFiles(t *testing.T) {
 	}
 }
 
+func TestParseTouchedFilesDoesNotTreatHunkContentAsApplyHeaders(t *testing.T) {
+	patch := "diff --git a/README.md b/README.md\n--- a/README.md\n+++ b/README.md\n@@ -1,2 +1,2 @@\n--- old comment\n+++ marker\n"
+	info, err := ParseTouchedFiles(patch)
+	if err != nil {
+		t.Fatalf("hunk content was parsed as file headers: %v", err)
+	}
+	if len(info.Files) != 1 || info.Files[0] != "README.md" {
+		t.Fatalf("unexpected touched files: %+v", info.Files)
+	}
+}
+
+func TestParseTouchedFilesRejectsEscapingPaths(t *testing.T) {
+	for name, path := range map[string]string{
+		"parent traversal": "../outside.txt",
+		"absolute":         "/outside.txt",
+		"nested traversal": "pkg/../../outside.txt",
+		"windows escape":   `..\\outside.txt`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			patch := strings.Join([]string{
+				"diff --git a/" + path + " b/" + path,
+				"--- a/" + path,
+				"+++ b/" + path,
+				"@@ -1 +1 @@",
+				"-before",
+				"+after",
+			}, "\n")
+			if _, err := ParseTouchedFiles(patch); err == nil {
+				t.Fatalf("accepted patch path outside repository: %q", path)
+			}
+		})
+	}
+}
+
+func TestParseTouchedFilesRejectsHeaderPathMismatch(t *testing.T) {
+	patch := "diff --git a/README.md b/README.md\n--- a/../outside\n+++ b/README.md\n@@ -1 +1 @@\n-old\n+new\n"
+	if _, err := ParseTouchedFiles(patch); err == nil {
+		t.Fatal("expected mismatched apply header paths to be rejected")
+	}
+}
+
+func TestParseTouchedFilesRejectsAmbiguousDiffHeaderFilenames(t *testing.T) {
+	patch := "diff --git a/name with spaces b/name with spaces\n--- a/name with spaces\n+++ b/name with spaces\n"
+	if _, err := ParseTouchedFiles(patch); err == nil {
+		t.Fatal("expected unsupported ambiguous filename encoding to be rejected")
+	}
+}
+
+func TestValidatePatchPathsRejectsSymlinkEscapes(t *testing.T) {
+	root := t.TempDir()
+	outside := filepath.Join(t.TempDir(), "outside.txt")
+	if err := os.WriteFile(outside, []byte("secret"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outside, filepath.Join(root, "linked.txt")); err != nil {
+		t.Fatal(err)
+	}
+	if err := ValidatePatchPaths(root, []string{"linked.txt"}); err == nil {
+		t.Fatal("accepted a patch targeting a symlink outside the repository")
+	}
+	if err := ValidatePatchPaths(root, []string{"nested/new.txt"}); err != nil {
+		t.Fatalf("rejected a safe new file below the root: %v", err)
+	}
+}
+
 func TestApplyPatchAndWorkspaceHash(t *testing.T) {
 	root := t.TempDir()
 	path := filepath.Join(root, "README.md")

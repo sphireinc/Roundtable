@@ -6,7 +6,9 @@ The HTTP repository-entity inventory is also not a task catalog: it walks filesy
 
 ## Creation and ordering
 
-`task.create` requires nonempty string `title` and `body_md`. Its advertised optional fields are integer `priority`, string `risk`, and string `assigned_agent_id`. The handler also recognizes string `task_id` and `status`, although those fields are not advertised in the tool schema.
+`task.create` requires nonempty string `title` and `body_md`. Its advertised optional fields are integer `priority`, string `risk`, string `assigned_agent_id`, and an array of repository-relative `readable_paths`. The handler also recognizes string `task_id` and `status`, although those fields are not advertised in the tool schema.
+
+`readable_paths` is the operator-authored filesystem scope for external agents assigned to the task. It accepts up to 256 exact file or directory paths; a directory entry authorizes descendants. The default is empty, so assigning a task without paths does not grant repository reads or resource claims. Paths are persisted with the task and preserved by status/assignment updates. Absolute paths, traversal, and sensitive locations such as `.env`, `.git`, `.roundtable`, `.ssh`, `.aws`, `.docker`, `.config`, credential files, private-key files, and symlink-containing resources are always rejected. Claims reserve resources but do not independently grant read access.
 
 | Field | Stored behavior |
 | --- | --- |
@@ -17,7 +19,7 @@ The HTTP repository-entity inventory is also not a task catalog: it walks filesy
 | `assigned_agent_id` | Empty means unassigned. The create handler does not check that the agent exists, is enabled, or has the intended role. |
 
 ```json
-{"title":"Add pagination","body_md":"Implement and validate cursor pagination.","priority":20,"risk":"normal","assigned_agent_id":"implementer-1"}
+{"title":"Add pagination","body_md":"Implement and validate cursor pagination.","priority":20,"risk":"normal","assigned_agent_id":"implementer-1","readable_paths":["api/internal/httpapi","api/openapi.yaml"]}
 ```
 
 The response is `{"task": ...}`. `task.get` requires `task_id` and fails for a missing row. `task.list` returns `{"tasks": ...}` for all local tasks, ordered by ascending priority, creation timestamp, then ID. It has no pagination or status/agent/run filters; an empty result can serialize as `null` rather than `[]`.

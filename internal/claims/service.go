@@ -22,24 +22,26 @@ type Service struct {
 }
 
 type CreateRequest struct {
-	ID           string
-	RunID        string
-	AgentID      string
-	TaskID       string
-	ResourceID   string
-	ResourceType string
-	ResourcePath string
-	SymbolName   string
-	ClaimType    string
-	BaseHash     string
-	TTL          time.Duration
-	Renewable    bool
-	ResumePolicy string
-	RationaleMD  string
+	ID                 string
+	ExecutionSessionID string
+	RunID              string
+	AgentID            string
+	TaskID             string
+	ResourceID         string
+	ResourceType       string
+	ResourcePath       string
+	SymbolName         string
+	ClaimType          string
+	BaseHash           string
+	TTL                time.Duration
+	Renewable          bool
+	ResumePolicy       string
+	RationaleMD        string
 }
 
 type StatusFilter struct {
 	AgentID    string
+	TaskID     string
 	ResourceID string
 	Status     string
 }
@@ -99,17 +101,18 @@ func (s *Service) Create(ctx context.Context, req CreateRequest) (db.Claim, erro
 
 	expiresAt := time.Now().UTC().Add(effectiveTTL(req.TTL))
 	claim := db.Claim{
-		ID:           defaultClaimID(req.ID),
-		ResourceID:   resource.ID,
-		AgentID:      req.AgentID,
-		TaskID:       req.TaskID,
-		ClaimType:    req.ClaimType,
-		BaseHash:     req.BaseHash,
-		Status:       "active",
-		ExpiresAt:    expiresAt.Format(time.RFC3339),
-		Renewable:    req.Renewable,
-		ResumePolicy: defaultResumePolicy(req.ResumePolicy),
-		RationaleMD:  req.RationaleMD,
+		ID:                 defaultClaimID(req.ID),
+		ExecutionSessionID: req.ExecutionSessionID,
+		ResourceID:         resource.ID,
+		AgentID:            req.AgentID,
+		TaskID:             req.TaskID,
+		ClaimType:          req.ClaimType,
+		BaseHash:           req.BaseHash,
+		Status:             "active",
+		ExpiresAt:          expiresAt.Format(time.RFC3339),
+		Renewable:          req.Renewable,
+		ResumePolicy:       defaultResumePolicy(req.ResumePolicy),
+		RationaleMD:        req.RationaleMD,
 	}
 	if err := s.store.UpsertClaim(ctx, claim); err != nil {
 		return db.Claim{}, err
@@ -223,6 +226,9 @@ func (s *Service) List(ctx context.Context, filter StatusFilter) ([]db.Claim, er
 	out := make([]db.Claim, 0, len(claims))
 	for _, claim := range claims {
 		if filter.AgentID != "" && claim.AgentID != filter.AgentID {
+			continue
+		}
+		if filter.TaskID != "" && claim.TaskID != filter.TaskID {
 			continue
 		}
 		if filter.ResourceID != "" && claim.ResourceID != filter.ResourceID {

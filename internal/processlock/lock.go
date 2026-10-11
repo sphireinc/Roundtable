@@ -16,6 +16,14 @@ type Lock struct {
 }
 
 func Acquire(root string) (*Lock, error) {
+	return AcquireNamed(root, "owner.lock")
+}
+
+// AcquireNamed creates an exclusive project-scoped lock for a single state transition.
+func AcquireNamed(root, name string) (*Lock, error) {
+	if filepath.Base(name) != name || name == "." || name == ".." {
+		return nil, fmt.Errorf("invalid project lock name %q", name)
+	}
 	abs, err := filepath.Abs(root)
 	if err != nil {
 		return nil, fmt.Errorf("resolve project root: %w", err)
@@ -29,7 +37,7 @@ func Acquire(root string) (*Lock, error) {
 	if err := os.MkdirAll(stateDir, 0o700); err != nil {
 		return nil, fmt.Errorf("create runtime state directory: %w", err)
 	}
-	path := filepath.Join(stateDir, "owner.lock")
+	path := filepath.Join(stateDir, name)
 	if existing, err := os.Lstat(path); err == nil && !existing.Mode().IsRegular() {
 		return nil, fmt.Errorf("refusing non-regular project lock path %q", path)
 	} else if err != nil && !errors.Is(err, os.ErrNotExist) {

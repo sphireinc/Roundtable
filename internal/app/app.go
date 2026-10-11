@@ -18,6 +18,7 @@ import (
 	"roundtable/internal/claims"
 	"roundtable/internal/config"
 	"roundtable/internal/db"
+	"roundtable/internal/egress"
 	"roundtable/internal/mcp"
 	"roundtable/internal/orchestrator"
 	"roundtable/internal/processlock"
@@ -55,13 +56,15 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 		return runSymbols(args[1:], stdout)
 	case "mcp":
 		return runMCP(ctx, args[1:], stdout, stderr)
+	case "agent":
+		return runAgent(ctx, args[1:], stdout, stderr)
 	default:
 		return usage(stderr)
 	}
 }
 
 func usage(w io.Writer) error {
-	_, _ = fmt.Fprintln(w, "usage: roundtable <init|run|start|resume|sessions|table|watch|claims|symbols|mcp>")
+	_, _ = fmt.Fprintln(w, "usage: roundtable <init|run|start|resume|sessions|table|watch|claims|symbols|mcp|agent>")
 	return errors.New("unknown command")
 }
 
@@ -246,13 +249,46 @@ func runMCP(ctx context.Context, args []string, stdout, stderr io.Writer) error 
 	}
 }
 
+func runAgent(ctx context.Context, args []string, stdout, stderr io.Writer) error {
+	if len(args) == 0 || args[0] != "exec" {
+		return errors.New("usage: roundtable agent exec --egress-socket PATH -- COMMAND [ARG ...]")
+	}
+	fs := flag.NewFlagSet("agent exec", flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	socket := fs.String("egress-socket", "", "session-scoped provider egress Unix socket")
+	if err := fs.Parse(args[1:]); err != nil {
+		return err
+	}
+	command := fs.Args()
+	if len(command) == 0 || command[0] == "--" {
+		return errors.New("agent exec requires a provider command after --")
+	}
+	return egress.RunAgent(ctx, *socket, command, stdout, stderr)
+}
+
 func runMCPStdio(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	fs := flag.NewFlagSet("mcp stdio", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
 	root := fs.String("root", ".", "project root")
 	endpoint := fs.String("url", "", "Streamable HTTP MCP endpoint")
+	unixSocket := fs.String("unix-socket", "", "agent-only Streamable HTTP Unix socket")
 	if err := fs.Parse(args); err != nil {
 		return err
+	}
+	socket := *unixSocket
+	if socket == "" {
+		socket = os.Getenv("ROUNDTABLE_AGENT_MCP_SOCKET")
+	}
+	if socket != "" {
+		token := os.Getenv("ROUNDTABLE_AGENT_CAPABILITY")
+		if token == "" {
+			return errors.New("agent stdio bridge requires ROUNDTABLE_AGENT_CAPABILITY")
+		}
+		agentURL := *endpoint
+		if agentURL == "" {
+			agentURL = "http://127.0.0.1:7117/agent/mcp"
+		}
+		return mcp.RunStdioBridge(ctx, os.Stdin, stdout, stderr, agentURL, mcp.HTTPAuth{Token: token, UnixSocket: socket})
 	}
 	cfg, err := config.Load(*root)
 	if err != nil {

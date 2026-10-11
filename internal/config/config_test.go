@@ -75,11 +75,55 @@ func TestLoadAcceptsZeroPoolsAndConfiguredCustomRoleAdapter(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(root, ".roundtable"), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	contents := "agents:\n  implementers:\n    count: 0\n  chair:\n    adapter: custom\nadapters:\n  custom:\n    command: custom-agent\n"
+	contents := "agents:\n  implementers:\n    count: 0\n  chair:\n    adapter: custom\nadapters:\n  custom:\n    image: registry.example/agent@sha256:abcdef\n    command: custom-agent\n"
 	if err := os.WriteFile(filepath.Join(root, DefaultConfigPath), []byte(contents), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := Load(root); err != nil {
+	loaded, err := Load(root)
+	if err != nil {
 		t.Fatalf("Load rejected a valid zero-sized pool or custom adapter: %v", err)
+	}
+	if loaded.Adapters["custom"].Image != "registry.example/agent@sha256:abcdef" {
+		t.Fatalf("adapter image was not parsed: %+v", loaded.Adapters["custom"])
+	}
+}
+
+func TestAdapterProviderHostAndCredentialAllowListsParse(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, ".roundtable"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	contents := "adapters:\n  codex:\n    provider_hosts: api.openai.com, auth.openai.com\n    credential_env: OPENAI_API_KEY\n"
+	if err := os.WriteFile(filepath.Join(root, DefaultConfigPath), []byte(contents), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	loaded, err := Load(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	adapter := loaded.Adapters["codex"]
+	if len(adapter.ProviderHosts) != 2 || adapter.ProviderHosts[0] != "api.openai.com" || adapter.ProviderHosts[1] != "auth.openai.com" {
+		t.Fatalf("provider host allowlist did not parse: %+v", adapter.ProviderHosts)
+	}
+	if len(adapter.CredentialEnv) != 1 || adapter.CredentialEnv[0] != "OPENAI_API_KEY" {
+		t.Fatalf("credential allowlist did not parse: %+v", adapter.CredentialEnv)
+	}
+}
+
+func TestConfigRejectsWildcardProviderHostsAndRuntimeCredentialVariables(t *testing.T) {
+	for _, contents := range []string{
+		"adapters:\n  codex:\n    provider_hosts: '*.openai.com'\n",
+		"adapters:\n  codex:\n    credential_env: DOCKER_HOST\n",
+	} {
+		root := t.TempDir()
+		if err := os.MkdirAll(filepath.Join(root, ".roundtable"), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(root, DefaultConfigPath), []byte(contents), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := Load(root); err == nil {
+			t.Fatalf("config accepted unsafe provider egress or credential policy: %q", contents)
+		}
 	}
 }

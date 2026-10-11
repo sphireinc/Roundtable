@@ -13,6 +13,7 @@ import (
 
 	"roundtable/internal/db"
 	"roundtable/internal/policy"
+	"roundtable/internal/processlock"
 	"roundtable/internal/repo"
 )
 
@@ -38,6 +39,13 @@ func NewService(root string, store *db.Store, evaluator *policy.Engine) *Service
 
 func (s *Service) Review(ctx context.Context, args map[string]any) (map[string]any, error) {
 	proposalID := stringArg(args, "proposal_id")
+	if proposalID != "" {
+		lock, err := processlock.AcquireNamed(s.root, "transaction.lock")
+		if err != nil {
+			return nil, fmt.Errorf("proposal patch or transaction update is in progress: %w", err)
+		}
+		defer lock.Close()
+	}
 	resourceID := stringArg(args, "resource_id")
 	if proposalID == "" && resourceID == "" {
 		return nil, errors.New("proposal_id or resource_id is required")

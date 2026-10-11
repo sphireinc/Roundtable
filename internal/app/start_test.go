@@ -13,8 +13,11 @@ import (
 	"testing"
 	"time"
 
+	"roundtable/internal/agentauth"
+	"roundtable/internal/config"
 	"roundtable/internal/db"
 	"roundtable/internal/processlock"
+	"roundtable/internal/sandbox"
 )
 
 func TestStartRemainsHealthyAndIdleWithoutCreatingRun(t *testing.T) {
@@ -93,6 +96,35 @@ func TestStartRemainsHealthyAndIdleWithoutCreatingRun(t *testing.T) {
 	}
 }
 
+func TestCanonicalProjectRootResolvesRelativeAndSymlinkPaths(t *testing.T) {
+	root := t.TempDir()
+	link := filepath.Join(t.TempDir(), "project-link")
+	if err := os.Symlink(root, link); err != nil {
+		t.Fatal(err)
+	}
+	workingDirectory, err := filepath.Abs(".")
+	if err != nil {
+		t.Fatal(err)
+	}
+	relative, err := filepath.Rel(workingDirectory, root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, input := range []string{link, relative} {
+		got, err := canonicalProjectRoot(input)
+		if err != nil {
+			t.Fatalf("canonicalize project root %q: %v", input, err)
+		}
+		want, err := filepath.EvalSymlinks(root)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got != want {
+			t.Errorf("canonical project root = %q, want %q", got, want)
+		}
+	}
+}
+
 func TestStartRejectsExistingProjectOwner(t *testing.T) {
 	for _, args := range [][]string{{"start"}, {"run"}, {"mcp", "serve"}} {
 		t.Run(strings.Join(args, "-"), func(t *testing.T) {
@@ -111,6 +143,63 @@ func TestStartRejectsExistingProjectOwner(t *testing.T) {
 	}
 }
 
+func TestStartupReconcilesOnlyPersistedContainerExecutions(t *testing.T) {
+	root := t.TempDir()
+	sqlDB, err := db.Open(filepath.Join(root, ".roundtable", "roundtable.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer sqlDB.Close()
+	store := db.NewStore(sqlDB, nil)
+	managed, err := sandbox.ManagedExecutionRoot(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sessionRoot := filepath.Join(managed, "S-startup")
+	for _, dir := range []string{"source", "workspace", "temp"} {
+		if err := os.MkdirAll(filepath.Join(sessionRoot, dir), 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := store.UpsertAgentSession(context.Background(), db.AgentSession{ID: "S-startup", AgentID: "A-1", RunID: "R-1", Adapter: "codex", WorkingDirectory: filepath.Join(sessionRoot, "workspace"), Status: "running", MetadataJSON: `{"mode":"container"}`}); err != nil {
+		t.Fatal(err)
+	}
+	fake := &startupFakeRuntime{}
+	detected := 0
+	reconciled, err := reconcileContainerExecutions(context.Background(), root, store, agentauth.New(nil), config.Default(), func(string) (sandbox.Runtime, error) {
+		detected++
+		return fake, nil
+	})
+	if err != nil || reconciled != 1 || detected != 1 || fake.stopped == "" {
+		t.Fatalf("startup recovery count=%d detect=%d stopped=%q err=%v", reconciled, detected, fake.stopped, err)
+	}
+	session, err := store.GetAgentSession(context.Background(), "S-startup")
+	if err != nil || session.Status != "interrupted" {
+		t.Fatalf("startup did not persist interrupted state: status=%q err=%v", session.Status, err)
+	}
+}
+
+func TestStartupDoesNotDetectRuntimeForLegacySessions(t *testing.T) {
+	root := t.TempDir()
+	sqlDB, err := db.Open(filepath.Join(root, "roundtable.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer sqlDB.Close()
+	store := db.NewStore(sqlDB, nil)
+	if err := store.UpsertAgentSession(context.Background(), db.AgentSession{ID: "legacy", AgentID: "A-1", RunID: "R-1", Adapter: "codex", WorkingDirectory: root, Status: "running", MetadataJSON: `{"mode":"legacy"}`}); err != nil {
+		t.Fatal(err)
+	}
+	detected := 0
+	reconciled, err := reconcileContainerExecutions(context.Background(), root, store, agentauth.New(nil), config.Default(), func(string) (sandbox.Runtime, error) {
+		detected++
+		return nil, errors.New("must not be called")
+	})
+	if err != nil || reconciled != 0 || detected != 0 {
+		t.Fatalf("legacy session triggered container recovery: count=%d detect=%d err=%v", reconciled, detected, err)
+	}
+}
+
 func TestStartHTTPServeErrorStillDrainsCoordinator(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	httpDone := make(chan error, 1)
@@ -122,7 +211,7 @@ func TestStartHTTPServeErrorStillDrainsCoordinator(t *testing.T) {
 	}()
 	var output lockedBuffer
 	server := &http.Server{}
-	err := stopCoordinator(ctx, cancel, httpDone, coordinatorDone, server, &output, &output)
+	err := stopCoordinator(ctx, cancel, httpDone, coordinatorDone, server, nil, &output, &output)
 	if err == nil || !strings.Contains(err.Error(), "injected serve failure") {
 		t.Fatalf("expected serving error after shutdown, got %v", err)
 	}
@@ -138,6 +227,15 @@ type lockedBuffer struct {
 	mu sync.Mutex
 	b  strings.Builder
 }
+
+type startupFakeRuntime struct{ stopped string }
+
+func (*startupFakeRuntime) Name() string { return "test-runtime" }
+func (*startupFakeRuntime) Run(context.Context, sandbox.Spec) (sandbox.ExecutionResult, error) {
+	return sandbox.ExecutionResult{}, errors.New("unexpected execution")
+}
+func (r *startupFakeRuntime) Stop(_ context.Context, name string) error { r.stopped = name; return nil }
+func (*startupFakeRuntime) RemoveExecutionVolumes(string) error         { return nil }
 
 func (b *lockedBuffer) Write(p []byte) (int, error) {
 	b.mu.Lock()

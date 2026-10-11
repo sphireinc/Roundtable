@@ -2,17 +2,23 @@ package proposals
 
 import (
 	"context"
+	"crypto/rand"
+	"database/sql"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"roundtable/internal/db"
 	"roundtable/internal/policy"
+	"roundtable/internal/processlock"
 	"roundtable/internal/repo"
 	"roundtable/internal/security"
 	"roundtable/internal/symbols"
@@ -23,6 +29,9 @@ type Service struct {
 	store  *db.Store
 	policy *policy.Engine
 }
+
+var safeProposalID = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$`)
+var generatedIDFallback atomic.Uint64
 
 func NewService(root string, store *db.Store, evaluator *policy.Engine) *Service {
 	if evaluator == nil {
@@ -62,13 +71,27 @@ func (s *Service) PatchValidate(ctx context.Context, args map[string]any) (map[s
 			patchText = string(data)
 		}
 	}
+	currentStateHash, baseStateErr := repo.RepoStateHash(s.root)
+	currentRevision, baseRevisionErr := repo.GitHeadRevision(s.root)
+	worktreeClean := true
+	if proposal.BaseRevision != "" {
+		currentStateHash, baseStateErr = repo.GitTreeHash(s.root)
+		clean, cleanErr := repo.GitWorkingTreeClean(s.root)
+		worktreeClean = clean
+		baseStateErr = errors.Join(baseStateErr, cleanErr)
+	}
+	baseStateMatches := baseStateErr == nil && worktreeClean && (proposal.BaseStateHash == "" || proposal.BaseStateHash == currentStateHash)
+	baseRevisionMatches := baseRevisionErr == nil && (proposal.BaseRevision == "" || proposal.BaseRevision == currentRevision)
 	patchInfo, patchParseErr := repo.PatchInfo{}, error(nil)
 	resourceCoverageErr := error(nil)
 	tempApplyErr := error(nil)
 	if patchExists {
 		patchInfo, patchParseErr = repo.ParseTouchedFiles(patchText)
 		if patchParseErr == nil {
-			resourceCoverageErr = s.validatePatchResources(ctx, proposalResources, patchInfo)
+			resourceCoverageErr = repo.ValidatePatchPaths(s.root, patchInfo.Files)
+			if resourceCoverageErr == nil {
+				resourceCoverageErr = s.validatePatchResources(ctx, proposalResources, patchInfo)
+			}
 			if resourceCoverageErr == nil {
 				tempRoot, err := os.MkdirTemp("", "roundtable-patch-*")
 				if err == nil {
@@ -105,7 +128,7 @@ func (s *Service) PatchValidate(ctx context.Context, args map[string]any) (map[s
 		securitySatisfied = security.ReviewSatisfied(latestSecurityReview, humanSatisfied && approvedHuman.OverridePolicy)
 	}
 
-	valid := claimError == nil && patchExists && patchParseErr == nil && resourceCoverageErr == nil && tempApplyErr == nil
+	valid := claimError == nil && patchExists && patchParseErr == nil && resourceCoverageErr == nil && tempApplyErr == nil && baseStateMatches && baseRevisionMatches
 	return map[string]any{
 		"proposal":                  proposal,
 		"proposal_resources":        proposalResources,
@@ -118,6 +141,13 @@ func (s *Service) PatchValidate(ctx context.Context, args map[string]any) (map[s
 		"resource_coverage":         resourceCoverageErr == nil,
 		"resource_error":            errString(resourceCoverageErr),
 		"temp_apply_error":          errString(tempApplyErr),
+		"base_revision":             proposal.BaseRevision,
+		"current_revision":          currentRevision,
+		"base_revision_matches":     baseRevisionMatches,
+		"base_state_hash":           proposal.BaseStateHash,
+		"current_state_hash":        currentStateHash,
+		"base_state_matches":        baseStateMatches,
+		"working_tree_clean":        worktreeClean,
 		"policy":                    policyResult,
 		"human_approvals":           humanApprovals,
 		"human_approval":            approvedHuman,
@@ -167,6 +197,11 @@ func (s *Service) PatchReject(ctx context.Context, args map[string]any) (map[str
 }
 
 func (s *Service) PatchApply(ctx context.Context, args map[string]any) (map[string]any, error) {
+	transactionLock, err := processlock.AcquireNamed(s.root, "transaction.lock")
+	if err != nil {
+		return nil, fmt.Errorf("repository transaction is already in progress or cannot be locked: %w", err)
+	}
+	defer transactionLock.Close()
 	proposalID := stringArg(args, "proposal_id")
 	if proposalID == "" {
 		return nil, errors.New("proposal_id is required")
@@ -207,6 +242,33 @@ func (s *Service) PatchApply(ctx context.Context, args map[string]any) (map[stri
 	patchInfo, err := repo.ParseTouchedFiles(patchText)
 	if err != nil {
 		return nil, err
+	}
+	if err := repo.ValidatePatchPaths(s.root, patchInfo.Files); err != nil {
+		return nil, err
+	}
+	currentRevision, err := repo.GitHeadRevision(s.root)
+	if err != nil {
+		return nil, err
+	}
+	currentStateHash, err := repo.RepoStateHash(s.root)
+	if err != nil {
+		return nil, err
+	}
+	if proposal.BaseRevision != "" {
+		currentStateHash, err = repo.GitTreeHash(s.root)
+		if err != nil {
+			return nil, err
+		}
+		clean, err := repo.GitWorkingTreeClean(s.root)
+		if err != nil || !clean {
+			return nil, errors.New("authoritative repository has uncommitted changes and cannot accept a revision-pinned proposal")
+		}
+	}
+	if proposal.BaseRevision != "" && proposal.BaseRevision != currentRevision {
+		return nil, errors.New("proposal base revision changed before transaction apply")
+	}
+	if proposal.BaseStateHash != "" && proposal.BaseStateHash != currentStateHash {
+		return nil, errors.New("proposal base repository state changed before transaction apply")
 	}
 	rollbackEntries, err := repo.CreateRollbackArtifact(s.root, patchInfo.Files)
 	if err != nil {
@@ -285,6 +347,30 @@ func (s *Service) ProposalCreate(ctx context.Context, args map[string]any) (map[
 	if err != nil {
 		return nil, err
 	}
+	baseRevision := stringArg(args, "base_revision")
+	baseStateHash := stringArg(args, "base_state_hash")
+	if baseRevision == "" || baseStateHash == "" {
+		currentRevision, err := repo.GitHeadRevision(s.root)
+		if err != nil {
+			return nil, err
+		}
+		currentState, err := repo.RepoStateHash(s.root)
+		if err != nil {
+			return nil, err
+		}
+		if baseRevision == "" {
+			baseRevision = currentRevision
+		}
+		if baseStateHash == "" {
+			baseStateHash = currentState
+			if baseRevision != "" {
+				baseStateHash, err = repo.GitTreeHash(s.root)
+				if err != nil {
+					return nil, err
+				}
+			}
+		}
+	}
 
 	affectedResources, err := stringSliceArg(args, "affected_resources")
 	if err != nil {
@@ -299,25 +385,33 @@ func (s *Service) ProposalCreate(ctx context.Context, args map[string]any) (map[
 	}
 
 	proposalID := stringArgDefault(args, "proposal_id", generatedID("P"))
-	patchPath := filepath.Join(s.root, ".roundtable/patches", proposalID+".diff")
-	if err := os.MkdirAll(filepath.Dir(patchPath), 0o755); err != nil {
-		return nil, err
+	if !safeProposalID.MatchString(proposalID) {
+		return nil, errors.New("proposal_id must contain only letters, digits, underscores, and hyphens")
 	}
-	if err := os.WriteFile(patchPath, []byte(patch), 0o644); err != nil {
+	if _, err := s.store.GetProposal(ctx, proposalID); err == nil {
+		return nil, fmt.Errorf("proposal %q already exists", proposalID)
+	} else if !errors.Is(err, sql.ErrNoRows) {
+		return nil, fmt.Errorf("check proposal identity: %w", err)
+	}
+	patchPath := filepath.ToSlash(filepath.Join(".roundtable", "patches", proposalID+".diff"))
+	if err := writeProposalPatch(s.root, patchPath, []byte(patch)); err != nil {
 		return nil, err
 	}
 
 	proposal := db.Proposal{
-		ID:        proposalID,
-		TaskID:    taskID,
-		AgentID:   agentID,
-		Title:     title,
-		SummaryMD: summary,
-		PatchPath: filepath.ToSlash(filepath.Join(".roundtable/patches", proposalID+".diff")),
-		Status:    stringArgDefault(args, "status", "pending"),
-		Risk:      risk,
+		ID:                proposalID,
+		TaskID:            taskID,
+		AgentID:           agentID,
+		Title:             title,
+		SummaryMD:         summary,
+		PatchPath:         patchPath,
+		Status:            stringArgDefault(args, "status", "pending"),
+		Risk:              risk,
+		BaseRevision:      baseRevision,
+		BaseStateHash:     baseStateHash,
+		ProposerSessionID: stringArg(args, "proposer_session_id"),
 	}
-	if err := s.store.UpsertProposal(ctx, proposal); err != nil {
+	if err := s.store.InsertProposal(ctx, proposal); err != nil {
 		return nil, err
 	}
 	if err := s.ensureResourceRecords(ctx, affectedResources); err != nil {
@@ -337,6 +431,67 @@ func (s *Service) ProposalCreate(ctx context.Context, args map[string]any) (map[
 	return map[string]any{"proposal": saved, "proposal_resources": resources}, nil
 }
 
+func writeProposalPatch(repositoryRoot, relativePath string, patch []byte) error {
+	cleanRelative := filepath.ToSlash(filepath.Clean(filepath.FromSlash(relativePath)))
+	base := filepath.Base(filepath.FromSlash(relativePath))
+	proposalID := strings.TrimSuffix(base, ".diff")
+	if filepath.IsAbs(relativePath) || cleanRelative != relativePath || cleanRelative != ".roundtable/patches/"+base || !strings.HasSuffix(base, ".diff") || !safeProposalID.MatchString(proposalID) {
+		return errors.New("proposal patch path must be .roundtable/patches/<safe-proposal-id>.diff")
+	}
+	root, err := os.OpenRoot(repositoryRoot)
+	if err != nil {
+		return fmt.Errorf("open repository root for proposal patch: %w", err)
+	}
+	defer root.Close()
+
+	current := root
+	var opened []*os.Root
+	defer func() {
+		for i := len(opened) - 1; i >= 0; i-- {
+			_ = opened[i].Close()
+		}
+	}()
+	for _, component := range []string{".roundtable", "patches"} {
+		info, err := current.Lstat(component)
+		if errors.Is(err, os.ErrNotExist) {
+			if err := current.Mkdir(component, 0o700); err != nil && !errors.Is(err, os.ErrExist) {
+				return fmt.Errorf("create proposal patch directory %s: %w", component, err)
+			}
+			info, err = current.Lstat(component)
+		}
+		if err != nil {
+			return fmt.Errorf("inspect proposal patch directory %s: %w", component, err)
+		}
+		if info.Mode()&os.ModeSymlink != 0 || !info.IsDir() {
+			return fmt.Errorf("proposal patch directory %s must be a real directory, not a symlink", component)
+		}
+		next, err := current.OpenRoot(component)
+		if err != nil {
+			return fmt.Errorf("open proposal patch directory %s: %w", component, err)
+		}
+		openedInfo, err := next.Stat(".")
+		if err != nil || !os.SameFile(info, openedInfo) {
+			_ = next.Close()
+			return fmt.Errorf("proposal patch directory %s changed while opening", component)
+		}
+		opened = append(opened, next)
+		current = next
+	}
+
+	filename := filepath.Base(relativePath)
+	file, err := current.OpenFile(filename, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
+	if err != nil {
+		return fmt.Errorf("create proposal patch artifact exclusively: %w", err)
+	}
+	_, writeErr := file.Write(patch)
+	closeErr := file.Close()
+	if err := errors.Join(writeErr, closeErr); err != nil {
+		_ = current.Remove(filename)
+		return fmt.Errorf("write proposal patch artifact: %w", err)
+	}
+	return nil
+}
+
 func (s *Service) ProposalGet(ctx context.Context, args map[string]any) (map[string]any, error) {
 	proposalID := stringArg(args, "proposal_id")
 	if proposalID == "" {
@@ -354,6 +509,11 @@ func (s *Service) ProposalGet(ctx context.Context, args map[string]any) (map[str
 }
 
 func (s *Service) ProposalAttachPatch(ctx context.Context, args map[string]any) (map[string]any, error) {
+	transactionLock, err := processlock.AcquireNamed(s.root, "transaction.lock")
+	if err != nil {
+		return nil, fmt.Errorf("repository transaction is already in progress or cannot be locked: %w", err)
+	}
+	defer transactionLock.Close()
 	proposalID := stringArg(args, "proposal_id")
 	patch := stringArg(args, "patch")
 	if proposalID == "" || patch == "" {
@@ -362,6 +522,9 @@ func (s *Service) ProposalAttachPatch(ctx context.Context, args map[string]any) 
 	proposal, err := s.store.GetProposal(ctx, proposalID)
 	if err != nil {
 		return nil, err
+	}
+	if proposal.Status == "accepted" || proposal.Status == "applied" {
+		return nil, errors.New("cannot replace a patch after its proposal has been applied")
 	}
 	patchInfo, err := repo.ParseTouchedFiles(patch)
 	if err != nil {
@@ -375,6 +538,10 @@ func (s *Service) ProposalAttachPatch(ctx context.Context, args map[string]any) 
 	if err := s.validateClaimOwnership(ctx, proposal.AgentID, affectedResources); err != nil {
 		return nil, err
 	}
+	if err := s.store.InvalidateProposalEvidence(ctx, proposalID); err != nil {
+		return nil, err
+	}
+	proposal.Status = "pending"
 
 	patchPath := proposal.PatchPath
 	if patchPath == "" {
@@ -478,6 +645,11 @@ func (s *Service) ProposalList(ctx context.Context, args map[string]any) (map[st
 }
 
 func (s *Service) VoteCast(ctx context.Context, args map[string]any) (map[string]any, error) {
+	transactionLock, err := processlock.AcquireNamed(s.root, "transaction.lock")
+	if err != nil {
+		return nil, fmt.Errorf("proposal patch or transaction update is in progress: %w", err)
+	}
+	defer transactionLock.Close()
 	proposalID := stringArg(args, "proposal_id")
 	agentID := stringArg(args, "agent_id")
 	voteValue := stringArg(args, "vote")
@@ -492,6 +664,7 @@ func (s *Service) VoteCast(ctx context.Context, args map[string]any) (map[string
 		ID:         stringArgDefault(args, "vote_id", generatedID("V")),
 		ProposalID: proposalID,
 		AgentID:    agentID,
+		SessionID:  stringArg(args, "session_id"),
 		Vote:       voteValue,
 		Confidence: floatArgDefault(args, "confidence", 0),
 		ReasonMD:   reason,
@@ -763,7 +936,11 @@ func parseResourceID(resourceID string) (resourceType, resourcePath, symbolName 
 }
 
 func generatedID(prefix string) string {
-	return prefix + "-" + time.Now().UTC().Format("20060102T150405.000000000")
+	var entropy [16]byte
+	if _, err := rand.Read(entropy[:]); err == nil {
+		return prefix + "-" + hex.EncodeToString(entropy[:])
+	}
+	return fmt.Sprintf("%s-%x-%x", prefix, time.Now().UTC().UnixNano(), generatedIDFallback.Add(1))
 }
 
 func errString(err error) string {

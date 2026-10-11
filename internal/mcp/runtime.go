@@ -2,9 +2,12 @@ package mcp
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -13,6 +16,7 @@ import (
 	"sync"
 	"time"
 
+	"roundtable/internal/agentauth"
 	"roundtable/internal/claims"
 	"roundtable/internal/config"
 	"roundtable/internal/db"
@@ -33,7 +37,10 @@ type Runtime struct {
 	security  *security.Service
 	indexer   *symbols.Indexer
 	turnMu    sync.Mutex
+	agentAuth *agentauth.Authority
 }
+
+type agentClaimHashCheckedKey struct{}
 
 // Store exposes the runtime's shared authoritative store to the coordinator.
 func (r *Runtime) Store() *db.Store { return r.store }
@@ -41,6 +48,604 @@ func (r *Runtime) Store() *db.Store { return r.store }
 func (r *Runtime) Config() config.Config { return r.config }
 
 func (r *Runtime) Root() string { return r.root }
+
+func (r *Runtime) SetAgentAuthority(authority *agentauth.Authority) {
+	r.agentAuth = authority
+}
+
+// CallAgent is the only MCP dispatch path intended for external agent principals.
+// The identity comes from the server-side capability registry, never tool arguments.
+func (r *Runtime) CallAgent(ctx context.Context, token, tool string, args map[string]any) (map[string]any, error) {
+	if r.agentAuth == nil {
+		return nil, agentauth.ErrUnauthorized
+	}
+	identity, err := r.agentAuth.AuthorizeIdentity(token, tool)
+	if err != nil {
+		return nil, err
+	}
+	if err := r.validateLiveAgentIdentity(ctx, identity); err != nil {
+		return nil, err
+	}
+	bound := make(map[string]any, len(args)+4)
+	for key, value := range args {
+		bound[key] = value
+	}
+	for key, authoritative := range map[string]string{
+		"agent_id":            identity.AgentID,
+		"reviewer_id":         identity.AgentID,
+		"actor_id":            identity.AgentID,
+		"task_id":             identity.TaskID,
+		"run_id":              identity.RunID,
+		"session_id":          identity.SessionID,
+		"proposer_session_id": identity.SessionID,
+		"base_revision":       identity.BaseRevision,
+		"base_state_hash":     identity.BaseStateHash,
+	} {
+		if supplied, ok := bound[key]; ok && supplied != authoritative {
+			return nil, fmt.Errorf("agent capability does not permit overriding %s", key)
+		}
+		bound[key] = authoritative
+	}
+	if identity.ProposalID != "" {
+		if supplied, ok := bound["proposal_id"]; ok && supplied != identity.ProposalID {
+			return nil, fmt.Errorf("agent capability does not permit overriding proposal_id")
+		}
+		bound["proposal_id"] = identity.ProposalID
+	}
+	if tool == "table.watch" {
+		return r.agentTurnWatch(ctx, identity, bound)
+	}
+	// Agent-created coordination records must not let callers select an upsert
+	// key belonging to another principal. These IDs are created server-side.
+	if tool == "resource.claim" {
+		delete(bound, "claim_id")
+		delete(bound, "resource_id")
+		task, err := r.store.GetTask(ctx, identity.TaskID)
+		path := stringArg(bound, "path")
+		if err != nil || !taskPathAuthorized(task.ReadablePaths, path) {
+			return nil, agentauth.ErrUnauthorized
+		}
+		claimType := stringArg(bound, "claim_type")
+		switch strings.ToLower(strings.TrimSpace(identity.Role)) {
+		case "implementer":
+		case "reviewer", "security":
+			if claimType != "review" && claimType != "read" {
+				return nil, agentauth.ErrUnauthorized
+			}
+		case "tester":
+			if claimType != "read" {
+				return nil, agentauth.ErrUnauthorized
+			}
+		default:
+			return nil, agentauth.ErrUnauthorized
+		}
+		snapshotRoot, err := r.agentSnapshotRoot(identity)
+		if err != nil {
+			return nil, agentauth.ErrUnauthorized
+		}
+		baseHash, err := r.agentResourceHash(snapshotRoot, path, stringArg(bound, "resource_type"), stringArg(bound, "symbol"))
+		if err != nil {
+			return nil, agentauth.ErrUnauthorized
+		}
+		bound["base_hash"] = baseHash
+		ctx = context.WithValue(ctx, agentClaimHashCheckedKey{}, true)
+	}
+	if tool == "proposal.get" || tool == "vote.cast" || tool == "vote.list" || tool == "security.review" || tool == "test.evidence.submit" {
+		proposalID := stringArg(bound, "proposal_id")
+		if identity.ProposalID == "" || proposalID != identity.ProposalID {
+			return nil, agentauth.ErrUnauthorized
+		}
+	}
+	if tool == "proposal.request_review" {
+		proposalID := stringArg(bound, "proposal_id")
+		if proposalID == "" || (identity.ProposalID != "" && proposalID != identity.ProposalID) || (identity.ProposalID == "" && identity.Role != "implementer") {
+			return nil, agentauth.ErrUnauthorized
+		}
+	}
+	if tool == "proposal.list" {
+		if identity.ProposalID == "" {
+			return nil, agentauth.ErrUnauthorized
+		}
+		proposal, err := r.store.GetProposal(ctx, identity.ProposalID)
+		if err != nil || proposal.TaskID != identity.TaskID {
+			return nil, agentauth.ErrUnauthorized
+		}
+		return map[string]any{"proposals": []db.Proposal{proposal}}, nil
+	}
+	if tool == "vote.cast" {
+		delete(bound, "vote_id")
+	}
+	if tool == "security.review" {
+		delete(bound, "review_id")
+	}
+	if tool == "proposal.create" {
+		delete(bound, "proposal_id")
+		// Agent-controlled fields cannot pre-approve, reject, or otherwise
+		// transition a proposal at creation time or lower its assigned risk.
+		task, err := r.store.GetTask(ctx, identity.TaskID)
+		if err != nil {
+			return nil, agentauth.ErrUnauthorized
+		}
+		bound["status"] = "pending"
+		bound["risk"] = task.Risk
+		delete(bound, "affected_resources")
+		if err := r.authorizeAgentProposalPaths(ctx, identity, stringArg(bound, "patch")); err != nil {
+			return nil, err
+		}
+	}
+	if proposalID, ok := bound["proposal_id"].(string); ok && proposalID != "" && tool != "proposal.create" {
+		proposal, err := r.store.GetProposal(ctx, proposalID)
+		if err != nil {
+			return nil, agentauth.ErrUnauthorized
+		}
+		if proposal.TaskID != identity.TaskID {
+			return nil, agentauth.ErrUnauthorized
+		}
+		if tool == "proposal.attach_patch" && (proposal.AgentID != identity.AgentID || proposal.ProposerSessionID != identity.SessionID) {
+			return nil, agentauth.ErrUnauthorized
+		}
+		if tool == "proposal.request_review" && identity.Role == "implementer" && (proposal.AgentID != identity.AgentID || proposal.ProposerSessionID != identity.SessionID) {
+			return nil, agentauth.ErrUnauthorized
+		}
+		if tool == "proposal.attach_patch" {
+			delete(bound, "affected_resources")
+			if err := r.authorizeAgentProposalPaths(ctx, identity, stringArg(bound, "patch")); err != nil {
+				return nil, err
+			}
+		}
+	}
+	if tool == "resource.release" {
+		claimID, _ := bound["claim_id"].(string)
+		claim, err := r.store.GetClaim(ctx, claimID)
+		if err != nil || claim.AgentID != identity.AgentID || claim.TaskID != identity.TaskID {
+			return nil, agentauth.ErrUnauthorized
+		}
+	}
+	if tool == "repo.read_file" || tool == "repo.search" || tool == "repo.symbols" {
+		path := stringArg(bound, "path")
+		snapshotRoot, err := r.agentSnapshotRoot(identity)
+		if path == "" || err != nil || !r.agentHasPathClaim(ctx, identity, snapshotRoot, path) {
+			return nil, agentauth.ErrUnauthorized
+		}
+		// External agents may inspect only the immutable revision-pinned source
+		// tree, never files from the live authoritative checkout.
+		snapshotRuntime := &Runtime{
+			root: snapshotRoot, config: r.config, store: r.store, claims: r.claims,
+			proposals: r.proposals, security: r.security, indexer: r.indexer, agentAuth: r.agentAuth,
+		}
+		return snapshotRuntime.Call(ctx, tool, bound)
+	}
+	if tool == "resource.get" || tool == "resource.search" || tool == "test.run" || tool == "test.get_result" {
+		return nil, agentauth.ErrUnauthorized
+	}
+	return r.Call(ctx, tool, bound)
+}
+
+func (r *Runtime) agentTurnWatch(ctx context.Context, identity agentauth.Identity, args map[string]any) (map[string]any, error) {
+	limit := intArgDefault(args, "limit", 10)
+	if limit <= 0 {
+		limit = 10
+	}
+	if limit > 200 {
+		limit = 200
+	}
+	after := int64(intArgDefault(args, "after_event_id", 0))
+	if after < 0 {
+		return nil, errors.New("after_event_id must be zero or greater")
+	}
+	events, err := r.store.ListEvents(ctx, identity.RunID)
+	if err != nil {
+		return nil, err
+	}
+	scanned := make([]db.Event, 0, limit+1)
+	for _, event := range events {
+		if event.ID <= after {
+			continue
+		}
+		scanned = append(scanned, event)
+		if len(scanned) == limit+1 {
+			break
+		}
+	}
+	hasMore := len(scanned) > limit
+	if hasMore {
+		scanned = scanned[:limit]
+	}
+	visible := make([]db.Event, 0, len(scanned))
+	for _, event := range scanned {
+		if agentTurnEventVisible(event, identity.AgentID) {
+			visible = append(visible, event)
+		}
+	}
+	next := after
+	if len(scanned) > 0 {
+		next = scanned[len(scanned)-1].ID
+	}
+	return map[string]any{
+		"run_id": identity.RunID, "events": visible,
+		"next_after_event_id": next, "has_more_events": hasMore,
+	}, nil
+}
+
+func agentTurnEventVisible(event db.Event, agentID string) bool {
+	switch event.Type {
+	case "agent.turn_requested", "agent.turn_started", "agent.turn_completed":
+		return event.ActorID == agentID
+	case "agent.turn_scheduled":
+		var payload struct {
+			AgentID string `json:"agent_id"`
+		}
+		return json.Unmarshal([]byte(event.PayloadJSON), &payload) == nil && payload.AgentID == agentID
+	default:
+		return false
+	}
+}
+
+func (r *Runtime) validateLiveAgentIdentity(ctx context.Context, identity agentauth.Identity) error {
+	agent, err := r.store.GetAgent(ctx, identity.AgentID)
+	if err != nil || !agent.IsEnabled || !strings.EqualFold(strings.TrimSpace(agent.Role), identity.Role) {
+		return agentauth.ErrUnauthorized
+	}
+	task, err := r.store.GetTask(ctx, identity.TaskID)
+	if err != nil || task.Status != "in_progress" {
+		return agentauth.ErrUnauthorized
+	}
+	if strings.EqualFold(identity.Role, "implementer") {
+		if task.AssignedAgentID != identity.AgentID {
+			return agentauth.ErrUnauthorized
+		}
+	} else {
+		proposal, err := r.store.GetProposal(ctx, identity.ProposalID)
+		if err != nil || identity.ProposalID == "" || proposal.TaskID != identity.TaskID || proposal.AgentID == identity.AgentID || proposal.Status != "pending" && proposal.Status != "in_review" {
+			return agentauth.ErrUnauthorized
+		}
+		role := strings.ToLower(strings.TrimSpace(identity.Role))
+		switch role {
+		case "reviewer":
+		case "tester":
+			if proposal.Status != "in_review" {
+				return agentauth.ErrUnauthorized
+			}
+		case "security":
+			if proposal.Risk != "high" && proposal.Risk != "critical" {
+				return agentauth.ErrUnauthorized
+			}
+		default:
+			return agentauth.ErrUnauthorized
+		}
+	}
+	session, err := r.store.GetAgentSession(ctx, identity.SessionID)
+	if err != nil || session.AgentID != identity.AgentID || session.RunID != identity.RunID || session.Status != "starting" && session.Status != "running" {
+		return agentauth.ErrUnauthorized
+	}
+	return nil
+}
+
+func (r *Runtime) authorizeAgentProposalPaths(ctx context.Context, identity agentauth.Identity, patch string) error {
+	info, err := repo.ParseTouchedFiles(patch)
+	if err != nil {
+		return err
+	}
+	task, err := r.store.GetTask(ctx, identity.TaskID)
+	if err != nil {
+		return agentauth.ErrUnauthorized
+	}
+	claims, err := r.store.ListClaims(ctx)
+	if err != nil {
+		return err
+	}
+	for _, file := range info.Files {
+		if !taskPathAuthorized(task.ReadablePaths, file) || security.SensitiveAgentPath(file) {
+			return agentauth.ErrUnauthorized
+		}
+		resourceID := "file:" + filepath.ToSlash(file)
+		authorized := false
+		for _, claim := range claims {
+			if claim.AgentID == identity.AgentID && claim.TaskID == identity.TaskID && claim.ResourceID == resourceID && claim.Status == "active" && claim.ClaimType != "read" && claim.ClaimType != "review" {
+				authorized = true
+				break
+			}
+		}
+		if !authorized {
+			return agentauth.ErrUnauthorized
+		}
+	}
+	return nil
+}
+
+func (r *Runtime) agentSnapshotRoot(identity agentauth.Identity) (string, error) {
+	if identity.SessionID == "" || strings.ContainsAny(identity.SessionID, `/\\`) || identity.SessionID == "." || identity.SessionID == ".." || identity.SnapshotRoot == "" || !filepath.IsAbs(identity.SnapshotRoot) || filepath.Clean(identity.SnapshotRoot) != identity.SnapshotRoot {
+		return "", errors.New("agent capability has no clean pinned snapshot root")
+	}
+	repository, err := filepath.EvalSymlinks(r.root)
+	if err != nil {
+		return "", err
+	}
+	executionRoot := filepath.Join(repository, ".roundtable", "sessions", "agent-executions", identity.SessionID)
+	expected := filepath.Join(executionRoot, "source")
+	resolved, err := filepath.EvalSymlinks(identity.SnapshotRoot)
+	if err != nil || resolved != expected || filepath.Dir(resolved) != executionRoot {
+		return "", errors.New("agent snapshot root is not the assigned session source directory")
+	}
+	return resolved, nil
+}
+
+func (r *Runtime) agentHasPathClaim(ctx context.Context, identity agentauth.Identity, snapshotRoot, requested string) bool {
+	clean := filepath.ToSlash(filepath.Clean(requested))
+	if clean == "." || clean == ".." || strings.HasPrefix(clean, "../") || filepath.IsAbs(requested) {
+		return false
+	}
+	task, err := r.store.GetTask(ctx, identity.TaskID)
+	if err != nil || !taskPathAuthorized(task.ReadablePaths, clean) {
+		return false
+	}
+	requestedPath := filepath.Join(snapshotRoot, filepath.FromSlash(clean))
+	resolvedRequested, err := filepath.EvalSymlinks(requestedPath)
+	if err != nil || resolvedRequested != requestedPath || !withinRepo(snapshotRoot, resolvedRequested) {
+		return false
+	}
+	owned, err := r.claims.List(ctx, claims.StatusFilter{AgentID: identity.AgentID, Status: "active"})
+	if err != nil {
+		return false
+	}
+	for _, claim := range owned {
+		if claim.TaskID != identity.TaskID {
+			continue
+		}
+		resource, err := r.store.GetResource(ctx, claim.ResourceID)
+		if err != nil {
+			continue
+		}
+		resourcePath := filepath.ToSlash(filepath.Clean(resource.Path))
+		if resourcePath == "." || resourcePath == ".." || strings.HasPrefix(resourcePath, "../") || filepath.IsAbs(resource.Path) {
+			continue
+		}
+		resourceAbs := filepath.Join(snapshotRoot, filepath.FromSlash(resourcePath))
+		resolvedResource, err := filepath.EvalSymlinks(resourceAbs)
+		if err != nil || resolvedResource != resourceAbs || !withinRepo(snapshotRoot, resolvedResource) {
+			continue
+		}
+		if resource.Type == "directory" && (requestedPath == resourceAbs || withinRepo(resourceAbs, requestedPath)) {
+			return true
+		}
+		if (resource.Type == "file" || resource.Type == "symbol") && requestedPath == resourceAbs {
+			return true
+		}
+	}
+	return false
+}
+
+func taskPathAuthorized(paths []string, requested string) bool {
+	clean := filepath.ToSlash(filepath.Clean(requested))
+	if clean == "." || clean == ".." || strings.HasPrefix(clean, "../") || filepath.IsAbs(requested) || security.SensitiveAgentPath(clean) {
+		return false
+	}
+	for _, candidate := range paths {
+		if !security.ValidAgentPath(candidate) {
+			continue
+		}
+		if clean == candidate || strings.HasPrefix(clean, strings.TrimSuffix(candidate, "/")+"/") {
+			return true
+		}
+	}
+	return false
+}
+
+type agentHashFile struct {
+	path string
+	data []byte
+}
+
+func (r *Runtime) agentResourceHash(snapshotRoot, relativePath, resourceType, symbolName string) (string, error) {
+	clean := filepath.ToSlash(filepath.Clean(relativePath))
+	if clean != relativePath || clean == "." || clean == ".." || strings.HasPrefix(clean, "../") || filepath.IsAbs(relativePath) || security.SensitiveAgentPath(clean) {
+		return "", errors.New("agent resource path is not permitted")
+	}
+	root, err := os.OpenRoot(snapshotRoot)
+	if err != nil {
+		return "", err
+	}
+	defer root.Close()
+	switch resourceType {
+	case "file", "symbol":
+		data, exists, err := readAgentRootFile(root, clean)
+		if err != nil || !exists {
+			return "", err
+		}
+		if resourceType == "file" {
+			sum := sha256.Sum256(data)
+			return hex.EncodeToString(sum[:]), nil
+		}
+		found, err := r.indexer.IndexContent(clean, data)
+		if err != nil {
+			return "", err
+		}
+		for _, item := range found {
+			if item.Name == symbolName && item.StartLine > 0 && item.EndLine >= item.StartLine {
+				lines := strings.Split(string(data), "\n")
+				if item.StartLine > len(lines) {
+					return "", nil
+				}
+				end := item.EndLine
+				if end > len(lines) {
+					end = len(lines)
+				}
+				sum := sha256.Sum256([]byte(strings.Join(lines[item.StartLine-1:end], "\n")))
+				return hex.EncodeToString(sum[:]), nil
+			}
+		}
+		return "", nil
+	case "directory":
+		parent, base, owned, err := openAgentRootParent(root, clean)
+		if err != nil {
+			if errors.Is(err, os.ErrNotExist) {
+				return "", nil
+			}
+			return "", err
+		}
+		defer closeAgentRoots(owned)
+		directory, err := openAgentRootDirectory(parent, base)
+		if err != nil {
+			if errors.Is(err, os.ErrNotExist) {
+				return "", nil
+			}
+			return "", err
+		}
+		defer directory.Close()
+		files := make([]agentHashFile, 0)
+		entriesSeen, bytesSeen := 0, 0
+		if err := collectAgentDirectory(directory, clean, &files, &entriesSeen, &bytesSeen); err != nil {
+			return "", err
+		}
+		sort.Slice(files, func(i, j int) bool { return files[i].path < files[j].path })
+		hasher := sha256.New()
+		for _, file := range files {
+			_, _ = hasher.Write([]byte(file.path))
+			_, _ = hasher.Write([]byte{0})
+			_, _ = hasher.Write(file.data)
+			_, _ = hasher.Write([]byte{0})
+		}
+		return hex.EncodeToString(hasher.Sum(nil)), nil
+	default:
+		return "", nil
+	}
+}
+
+func openAgentRootParent(root *os.Root, relative string) (*os.Root, string, []*os.Root, error) {
+	parts := strings.Split(relative, "/")
+	parent := root
+	owned := make([]*os.Root, 0, len(parts)-1)
+	for _, component := range parts[:len(parts)-1] {
+		child, err := openAgentRootDirectory(parent, component)
+		if err != nil {
+			closeAgentRoots(owned)
+			return nil, "", nil, err
+		}
+		owned = append(owned, child)
+		parent = child
+	}
+	return parent, parts[len(parts)-1], owned, nil
+}
+
+func openAgentRootDirectory(parent *os.Root, name string) (*os.Root, error) {
+	before, err := parent.Lstat(name)
+	if err != nil {
+		return nil, err
+	}
+	if before.Mode()&os.ModeSymlink != 0 || !before.IsDir() {
+		return nil, errors.New("agent resource path contains a symlink or non-directory")
+	}
+	child, err := parent.OpenRoot(name)
+	if err != nil {
+		return nil, err
+	}
+	after, err := child.Stat(".")
+	if err != nil || !os.SameFile(before, after) {
+		_ = child.Close()
+		return nil, errors.New("agent resource directory changed during open")
+	}
+	return child, nil
+}
+
+func readAgentRootFile(root *os.Root, relative string) ([]byte, bool, error) {
+	parent, base, owned, err := openAgentRootParent(root, relative)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return nil, false, nil
+		}
+		return nil, false, err
+	}
+	defer closeAgentRoots(owned)
+	info, err := parent.Lstat(base)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil, false, nil
+	}
+	if err != nil {
+		return nil, false, err
+	}
+	if info.Mode()&os.ModeSymlink != 0 || !info.Mode().IsRegular() {
+		return nil, false, errors.New("agent file resource is not a regular non-symlink file")
+	}
+	file, err := parent.Open(base)
+	if err != nil {
+		return nil, false, err
+	}
+	defer file.Close()
+	opened, err := file.Stat()
+	if err != nil || !os.SameFile(info, opened) {
+		return nil, false, errors.New("agent file resource changed during open")
+	}
+	data, err := io.ReadAll(io.LimitReader(file, 16<<20+1))
+	if err != nil {
+		return nil, false, err
+	}
+	if len(data) > 16<<20 {
+		return nil, false, errors.New("agent file resource exceeds the 16 MiB hashing limit")
+	}
+	return data, true, nil
+}
+
+func collectAgentDirectory(directory *os.Root, relative string, files *[]agentHashFile, entriesSeen, bytesSeen *int) error {
+	dirFile, err := directory.Open(".")
+	if err != nil {
+		return err
+	}
+	entries, err := dirFile.ReadDir(-1)
+	_ = dirFile.Close()
+	if err != nil {
+		return err
+	}
+	for _, entry := range entries {
+		*entriesSeen++
+		if *entriesSeen > 100000 {
+			return errors.New("agent directory claim exceeds the inspection limit")
+		}
+		info, err := directory.Lstat(entry.Name())
+		if err != nil {
+			return err
+		}
+		if info.Mode()&os.ModeSymlink != 0 {
+			return errors.New("agent directory claim contains a symlink")
+		}
+		childPath := filepath.ToSlash(filepath.Join(relative, entry.Name()))
+		if info.IsDir() {
+			child, err := openAgentRootDirectory(directory, entry.Name())
+			if err != nil {
+				return err
+			}
+			err = collectAgentDirectory(child, childPath, files, entriesSeen, bytesSeen)
+			_ = child.Close()
+			if err != nil {
+				return err
+			}
+			continue
+		}
+		if !info.Mode().IsRegular() {
+			return errors.New("agent directory claim contains a special file")
+		}
+		data, exists, err := readAgentRootFile(directory, entry.Name())
+		if err != nil || !exists {
+			return err
+		}
+		*bytesSeen += len(data)
+		if *bytesSeen > 64<<20 {
+			return errors.New("agent directory claim exceeds the 64 MiB hashing limit")
+		}
+		*files = append(*files, agentHashFile{path: childPath, data: data})
+	}
+	return nil
+}
+
+func closeAgentRoots(roots []*os.Root) {
+	for index := len(roots) - 1; index >= 0; index-- {
+		_ = roots[index].Close()
+	}
+}
+
+func withinRepo(root, candidate string) bool {
+	rel, err := filepath.Rel(root, candidate)
+	return err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
+}
 
 type CallRequest struct {
 	Tool string         `json:"tool"`
@@ -138,6 +743,8 @@ func (r *Runtime) Call(ctx context.Context, tool string, args map[string]any) (m
 		return r.memoryMarkStale(ctx, args)
 	case "test.suggest":
 		return r.testSuggest(ctx, args)
+	case "test.evidence.submit":
+		return r.testEvidenceSubmit(ctx, args)
 	case "test.run":
 		return r.testRun(ctx, args)
 	case "test.get_result":
@@ -377,10 +984,15 @@ func (r *Runtime) taskCreate(ctx context.Context, args map[string]any) (map[stri
 	if title == "" || body == "" {
 		return nil, errors.New("title and body_md are required")
 	}
+	readablePaths, err := parseTaskResourcePaths(args["readable_paths"])
+	if err != nil {
+		return nil, err
+	}
 	task := db.Task{
 		ID:              stringArgDefault(args, "task_id", generatedID("T")),
 		Title:           title,
 		BodyMD:          body,
+		ReadablePaths:   readablePaths,
 		Status:          stringArgDefault(args, "status", "open"),
 		Priority:        intArgDefault(args, "priority", 100),
 		Risk:            stringArgDefault(args, "risk", "normal"),
@@ -394,6 +1006,42 @@ func (r *Runtime) taskCreate(ctx context.Context, args map[string]any) (map[stri
 		return nil, err
 	}
 	return map[string]any{"task": saved}, nil
+}
+
+func parseTaskResourcePaths(value any) ([]string, error) {
+	if value == nil {
+		return []string{}, nil
+	}
+	var raw []string
+	switch paths := value.(type) {
+	case []string:
+		raw = paths
+	case []any:
+		for _, item := range paths {
+			path, ok := item.(string)
+			if !ok {
+				return nil, errors.New("readable_paths must contain only strings")
+			}
+			raw = append(raw, path)
+		}
+	default:
+		return nil, errors.New("readable_paths must be an array of repository-relative paths")
+	}
+	if len(raw) > 256 {
+		return nil, errors.New("readable_paths cannot contain more than 256 entries")
+	}
+	seen := make(map[string]bool, len(raw))
+	result := make([]string, 0, len(raw))
+	for _, path := range raw {
+		if len(path) > 1024 || !security.ValidAgentPath(path) {
+			return nil, fmt.Errorf("readable path %q is not permitted", path)
+		}
+		if !seen[path] {
+			seen[path] = true
+			result = append(result, path)
+		}
+	}
+	return result, nil
 }
 
 func (r *Runtime) taskUpdateStatus(ctx context.Context, args map[string]any) (map[string]any, error) {
@@ -823,6 +1471,43 @@ func (r *Runtime) testRun(ctx context.Context, args map[string]any) (map[string]
 	}, nil
 }
 
+func (r *Runtime) testEvidenceSubmit(ctx context.Context, args map[string]any) (map[string]any, error) {
+	proposalID := stringArg(args, "proposal_id")
+	command := strings.TrimSpace(stringArg(args, "command"))
+	outcome := strings.ToLower(strings.TrimSpace(stringArg(args, "outcome")))
+	summary := strings.TrimSpace(stringArg(args, "summary_md"))
+	if proposalID == "" || command == "" || summary == "" {
+		return nil, errors.New("proposal_id, command, outcome, and summary_md are required")
+	}
+	if len(command) > 4096 || len(summary) > 8192 {
+		return nil, errors.New("test evidence command or summary exceeds its size limit")
+	}
+	if outcome != "passed" && outcome != "failed" && outcome != "inconclusive" {
+		return nil, errors.New("test evidence outcome must be passed, failed, or inconclusive")
+	}
+	proposal, err := r.store.GetProposal(ctx, proposalID)
+	if err != nil || proposal.TaskID != stringArg(args, "task_id") || (proposal.Status != "pending" && proposal.Status != "in_review" && proposal.Status != "revision_requested") {
+		return nil, agentauth.ErrUnauthorized
+	}
+	testRun := db.TestRun{
+		ID: generatedID("TR"), ProposalID: proposalID, TaskID: proposal.TaskID,
+		Command: command, Status: "reported", ReportedOutcome: outcome,
+		EvidenceSource: "agent_report", SubmittedBy: stringArg(args, "agent_id"),
+		SessionID: stringArg(args, "session_id"), SummaryMD: summary,
+	}
+	if err := r.store.UpsertTestRun(ctx, testRun); err != nil {
+		return nil, err
+	}
+	if _, err := r.store.AppendAgentSessionEvent(ctx, db.AgentSessionEvent{SessionID: testRun.SessionID, EventType: "test.evidence_reported", PayloadJSON: mustJSON(map[string]string{"test_run_id": testRun.ID, "proposal_id": proposalID, "reported_outcome": outcome})}); err != nil {
+		return nil, fmt.Errorf("record test evidence audit event: %w", err)
+	}
+	saved, err := r.store.GetTestRun(ctx, testRun.ID)
+	if err != nil {
+		return nil, err
+	}
+	return map[string]any{"test_run": saved}, nil
+}
+
 func (r *Runtime) testGetResult(ctx context.Context, args map[string]any) (map[string]any, error) {
 	testRunID := stringArg(args, "test_run_id")
 	if testRunID == "" {
@@ -923,7 +1608,7 @@ func (r *Runtime) repoSearch(args map[string]any) (map[string]any, error) {
 
 func (r *Runtime) resourceClaim(ctx context.Context, args map[string]any) (map[string]any, error) {
 	baseHash := stringArg(args, "base_hash")
-	if baseHash == "" {
+	if baseHash == "" && ctx.Value(agentClaimHashCheckedKey{}) != true {
 		computed, err := r.currentResourceHash(stringArg(args, "resource_type"), stringArg(args, "path"), stringArg(args, "symbol"))
 		if err != nil {
 			return nil, err
@@ -931,20 +1616,21 @@ func (r *Runtime) resourceClaim(ctx context.Context, args map[string]any) (map[s
 		baseHash = computed
 	}
 	req := claims.CreateRequest{
-		ID:           stringArg(args, "claim_id"),
-		RunID:        stringArg(args, "run_id"),
-		AgentID:      stringArg(args, "agent_id"),
-		TaskID:       stringArg(args, "task_id"),
-		ResourceID:   stringArg(args, "resource_id"),
-		ResourceType: stringArg(args, "resource_type"),
-		ResourcePath: stringArg(args, "path"),
-		SymbolName:   stringArg(args, "symbol"),
-		ClaimType:    stringArgDefault(args, "claim_type", "write"),
-		BaseHash:     baseHash,
-		TTL:          time.Duration(intArgDefault(args, "ttl_seconds", 900)) * time.Second,
-		Renewable:    boolArgDefault(args, "renewable", true),
-		ResumePolicy: stringArgDefault(args, "resume_policy", "hold"),
-		RationaleMD:  stringArg(args, "rationale"),
+		ID:                 stringArg(args, "claim_id"),
+		ExecutionSessionID: stringArg(args, "session_id"),
+		RunID:              stringArg(args, "run_id"),
+		AgentID:            stringArg(args, "agent_id"),
+		TaskID:             stringArg(args, "task_id"),
+		ResourceID:         stringArg(args, "resource_id"),
+		ResourceType:       stringArg(args, "resource_type"),
+		ResourcePath:       stringArg(args, "path"),
+		SymbolName:         stringArg(args, "symbol"),
+		ClaimType:          stringArgDefault(args, "claim_type", "write"),
+		BaseHash:           baseHash,
+		TTL:                time.Duration(intArgDefault(args, "ttl_seconds", 900)) * time.Second,
+		Renewable:          boolArgDefault(args, "renewable", true),
+		ResumePolicy:       stringArgDefault(args, "resume_policy", "hold"),
+		RationaleMD:        stringArg(args, "rationale"),
 	}
 	claim, err := r.claims.Create(ctx, req)
 	if err != nil {
@@ -976,6 +1662,7 @@ func (r *Runtime) resourceRelease(ctx context.Context, args map[string]any) (map
 func (r *Runtime) resourceClaimStatus(ctx context.Context, args map[string]any) (map[string]any, error) {
 	out, err := r.claims.List(ctx, claims.StatusFilter{
 		AgentID:    stringArg(args, "agent_id"),
+		TaskID:     stringArg(args, "task_id"),
 		ResourceID: stringArg(args, "resource_id"),
 		Status:     stringArg(args, "status"),
 	})

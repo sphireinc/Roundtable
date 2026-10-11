@@ -107,10 +107,11 @@ func DefaultRegistry() *Registry {
 				prop("limit", "integer"),
 				prop("after_event_id", "integer"),
 			)...)),
-			tool("task.create", "Create a task in shared local state.", schema([]string{"title", "body_md"}, optionalProperties(
+			tool("task.create", "Create a task in shared local state. readable_paths is the operator-authorized repository path scope available to its assigned agent; credential paths are always denied.", schema([]string{"title", "body_md"}, optionalProperties(
 				prop("priority", "integer"),
 				prop("risk", "string"),
 				prop("assigned_agent_id", "string"),
+				prop("readable_paths", "array", map[string]any{"items": map[string]any{"type": "string"}}),
 			)...)),
 			tool("task.get", "Fetch a task by id.", requiredSchema("task_id")),
 			tool("task.list", "List all local tasks ordered by priority, creation time, and ID.", emptySchema()),
@@ -119,6 +120,7 @@ func DefaultRegistry() *Registry {
 				prop("assigned_agent_id", "string"),
 			)...)),
 			tool("test.get_result", "Fetch a stored test result.", requiredSchema("test_run_id")),
+			tool("test.evidence.submit", "Submit bounded agent-reported test evidence. Reports are unverified and do not replace host-executed validation.", requiredSchema("proposal_id", "command", "outcome", "summary_md")),
 			tool("test.run", "Run a command through the executable allowlist and shell-character guard, and persist its output/result.", schema([]string{"command"}, optionalProperties(
 				prop("proposal_id", "string"),
 				prop("task_id", "string"),
