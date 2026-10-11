@@ -456,9 +456,9 @@ paths:
         '200': {description: Sessions, content: {application/json: {schema: {$ref: '#/components/schemas/Sessions'}}}}
     post:
       operationId: createSession
-      summary: Create and start a governed agent session
+      summary: Create an agent session record
       description: >-
-        Requires X-Actor-ID, an accepted human X-Actor-Role, a nonblank Idempotency-Key, and JSON fields agent_id, run_id, and adapter. The referenced agent must exist; this handler does not require it to be enabled. It creates a session registry record in starting status, captures the workspace root as its working directory, stores the workspace default branch for later compatibility checks, and appends session-started event records. It does not launch an adapter/provider subprocess or return process output. Optional provider, model, and external_session_id are recorded as metadata. The response's resume_command_template is a display template, not an executable command. Invalid input returns 400, unknown agent 404, authorization failure 403, and store conflict 409.
+        Requires X-Actor-ID, an accepted human X-Actor-Role, a nonblank Idempotency-Key, and JSON fields agent_id, run_id, and adapter. The referenced agent must exist; this handler does not require it to be enabled. It creates a session registry record in starting status, captures the workspace root as its working directory, stores the workspace default branch for later compatibility checks, and appends session-started event records. It does not launch an adapter/provider subprocess or return process output. Optional provider, model, and external_session_id are recorded as metadata. Built-in disposable adapters have an empty resume_command_template. Invalid input returns 400, unknown agent 404, authorization failure 403, and store conflict 409.
       parameters:
         - {$ref: '#/components/parameters/ActorID'}
         - {$ref: '#/components/parameters/ActorRole'}
@@ -1434,7 +1434,7 @@ components:
         health: {type: string, description: "Stored agent status, with an empty value projected as unknown; not an executable or heartbeat probe."}
         executable_version: {type: string, description: "Optional executable version field; the current agent response projection does not populate it."}
         capabilities: {type: object, additionalProperties: {type: boolean}, description: "Capability labels currently derived from exact adapter-name cases, not dynamically inspected from configured adapter metadata or enforced as OS restrictions."}
-        supports_resume: {type: boolean, description: "Hardcoded response capability: true for codex, claude, and gemini; false for other adapter names, regardless of custom configuration."}
+        supports_resume: {type: boolean, description: "Operational resume capability. False for built-in disposable container adapters because provider-home state is not retained."}
         supports_mcp: {type: boolean, description: "Hardcoded response capability: true for codex, claude, gemini, and opencode; false for other adapter names."}
         concurrency_limit: {type: integer, minimum: 1, description: "Advertised as 1 by the current handler; this response value does not enforce session scheduling or process concurrency."}
         policy_weight: {type: integer, minimum: 0, description: "Advertised as 1 by the current handler; this is not a dynamically loaded policy weight or enforced scheduling limit."}
@@ -1482,7 +1482,7 @@ components:
         provider: {type: string, description: "Optional provider metadata copied from the request; omitted when empty."}
         model: {type: string, description: "Optional model metadata copied from the request; omitted when empty."}
         external_session_id: {type: string, description: "Optional externally managed session identifier; omitted when none was supplied."}
-        resume_command_template: {type: string, description: "Generic `<adapter> resume <external_session_id>` display template; not taken from adapter configuration and not executed by the API."}
+        resume_command_template: {type: string, description: "Stored configured resume command, or empty for built-in disposable adapters; this API does not launch provider processes."}
         status: {type: string, enum: [starting, active, running, paused, resuming, stopped, terminated], description: "Persisted session lifecycle label; state transitions are control-plane records and do not themselves start, pause, resume, or kill a process."}
         started_at: {type: string, format: date-time, description: "Session creation timestamp in UTC RFC3339Nano form."}
         last_seen_at: {type: string, format: date-time, description: "Most recent stored session activity/heartbeat timestamp; does not establish process liveness."}

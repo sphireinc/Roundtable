@@ -6,11 +6,11 @@ The adapter package represents adapter configuration, capability metadata, and c
 
 Adapter entries live under `adapters` in `.roundtable/config.yaml`. Supported fields include `image`, `command`, `supports_resume`, `resume_pattern`, `supports_mcp`, `supports_readonly_workspace`, `captures_session_id`, `provider_hosts`, and `credential_env`. `image` is mandatory for execution and must contain the matching CLI; use an immutable image digest in production. Provider hosts are exact DNS names, not wildcards or IP literals. Credential variables are explicit API-key environment names only. Defaults for built-in names are fully enumerated in [Configuration Reference](CONFIGURATION.md).
 
-| Adapter | Default command | Resume pattern | MCP | Read-only workspace metadata | Captures session ID metadata |
+| Adapter | Default command | Resume argv pattern | MCP | Read-only workspace metadata | Captures session ID |
 | --- | --- | --- | --- | --- | --- |
-| `codex` | `codex` | `codex resume {{external_session_id}}` | yes | yes | yes |
-| `claude` | `claude` | `claude --resume {{external_session_id}}` | yes | yes | yes |
-| `gemini` | `gemini` | `gemini resume {{external_session_id}}` | yes | yes | yes |
+| `codex` | `codex` | disabled (provider home is disposable) | yes | yes | yes |
+| `claude` | `claude` | disabled (provider home is disposable) | yes | yes | yes |
+| `gemini` | `gemini` | disabled (provider home is disposable) | yes | yes | yes |
 | `opencode` | `opencode` | none | yes | yes | no |
 | `generic` | `sh` | none | no | yes | no |
 
@@ -34,15 +34,15 @@ Agent role capabilities are represented by short-lived random bearer tokens stor
 
 Session records are created/updated through the sessions CLI/API/MCP-related workflows and store adapter name, provider/model, external session ID, resume command, working directory, MCP socket, state, timestamps, and metadata. If `sessions register` receives no explicit resume command and the configured adapter has a nonempty pattern plus external session ID, the CLI replaces `{{external_session_id}}` and persists the result.
 
-`roundtable resume` produces a database-derived briefing and reconciles stale claims. It does not execute the saved resume command. External session identifiers, command lines, working directories, and metadata should be protected as operational data and scrubbed from public logs.
+`roundtable resume` produces a database-derived briefing and reconciles stale claims. It does not execute an external CLI. The HTTP session-creation API does not fabricate a resume command. External session identifiers, command lines, working directories, and metadata should be protected as operational data and scrubbed from public logs.
 
 ## Adapter package planning semantics
 
-The Go registry creates one `CLIAdapter` for every entry in the loaded configuration map, including custom names. Lookup is an exact, case-sensitive name match and returns a found/not-found result; it does not fall back to `generic`. Registry names are returned alphabetically. This package does not independently discover installed executables or probe their supported flags. Capability reporting simply copies the configured booleans; `captures_session_id` is exposed in the adapter capability JSON as `supports_session_capture`. Provider-specific session MCP manifests are injected only by `Execute`; `Start` alone returns a command plan without creating config files.
+The Go registry creates one `CLIAdapter` for every entry in the loaded configuration map, including custom names. Lookup is an exact, case-sensitive name match and returns a found/not-found result; it does not fall back to `generic`. Registry names are returned alphabetically. This package does not independently discover installed executables or probe their supported flags. Capability reporting copies the configured booleans; `captures_session_id` also enables machine-readable output and provider-specific session parsing during `Execute`. Codex `thread.started.thread_id`, Claude result `session_id`, and Gemini JSON `session_id` are recognized. Truncated output, malformed output, unsupported providers, and invalid identifiers produce no captured ID. Pin adapter images by immutable digest and verify them with the corresponding provider image before enabling capture in production; CLI flags are version-sensitive.
 
 ### Start plan
 
-`Start` requires nonblank session ID, agent ID, run ID, and working directory. It checks these strings with whitespace trimming but retains the original values in the returned record. It does not validate database associations, filesystem existence, executable availability, provider compatibility, or MCP connectivity.
+`Start` requires nonblank session ID, agent ID, run ID, and working directory. It checks these strings with whitespace trimming but retains the original values in the returned record. It does not validate database associations, filesystem existence, executable availability, provider compatibility, or MCP connectivity. Built-in CLI configurations capture IDs for audit but set `supports_resume: false`, because disposable provider-home state is not retained.
 
 The returned `LaunchSession` contains a session record with status `starting`, a UTC RFC3339 last-seen timestamp, provider/model, external session ID, working directory, socket, and a resume command when a pattern and external ID are available. Metadata contains `mode: start`, role, and task ID. Neither this record nor an event is saved by the adapter itself.
 
@@ -50,9 +50,9 @@ The start command array uses the trimmed configured `command` as **one array ele
 
 ### Resume plan
 
-`Resume` first rejects adapters whose `supports_resume` flag is false. It then requires a nonblank external session ID plus the same four required identifiers/directory as start. It returns status `resuming` and metadata containing `mode: resume`, role, task ID, and `briefing_md`. The briefing is stored in that metadata, not automatically passed to the planned executable. No persistence or process execution occurs.
+`Resume` first rejects adapters whose `supports_resume` flag is false. Built-in container adapters set it false. For a separately configured adapter that opts into resume, the method requires a valid external session ID plus the same identifiers/directory as start, then returns a provider-specific argv plan with the briefing passed as a single final argument. This plan method does not itself persist state or execute a process. Roundtable's disposable-worker policy does not retain provider-home state, so enabling resume metadata alone does not make a later resume operational.
 
-Resume command construction replaces every literal `{{external_session_id}}` occurrence in `resume_pattern` with the supplied ID. There is no escaping, shell quoting, validation, or expansion of other placeholders. A nonempty generated command is split using Go `strings.Fields`: whitespace separates arguments, but quotes are not interpreted and cannot protect spaces in an ID or argument. If the pattern or external ID is empty, the command array falls back to one trimmed configured-command element; unlike start, this fallback does not substitute the adapter name for an empty command. A true resume capability with an empty pattern therefore does not prove a usable resume command exists.
+Resume command construction splits the operator-controlled `resume_pattern` into argv fields and requires exactly one standalone `{{external_session_id}}` argument. IDs are restricted to 1-128 ASCII letters, digits, underscore, or hyphen, then substituted as one argv value; no shell is invoked. A nonblank resume briefing is appended as one argument, never interpolated into a shell string. Missing/malformed patterns and unsafe IDs fail explicitly. This basic argv grammar does not interpret shell quotes, so patterns needing whitespace-bearing fixed arguments are unsupported.
 
 `Stop` returns success without inspecting the session ID or stopping any process. The start/resume methods do not use their context to perform cancellable work. Statuses such as `starting` and `resuming` describe returned plans, not observed provider process state.
 
@@ -84,9 +84,9 @@ After saving, the API appends `agent.diagnostic.completed` under literal run ID 
 
 ## Remaining integration limits
 
-A real-time streaming UI, external-session resume/reconciliation, and stronger per-provider endpoint catalogs remain separate gaps. External agents still cannot write the authoritative repository; only the transaction manager applies approved proposals. Containerization is not a complete anti-exfiltration guarantee: an allowed provider can receive task context and patch content.
+Provider-home persistence and automatic external-session relaunch/reconciliation remain gaps. External agents still cannot write the authoritative repository; only the transaction manager applies approved proposals. Containerization is not a complete anti-exfiltration guarantee: an allowed provider can receive task context and patch content.
 
-Current unfinished scope is tracked in `TODO.md`: production hardening and provider-specific live compatibility/session capture.
+Actual compatibility with provider-pinned CLI images and authenticated provider sessions still requires live image-based verification and remains tracked in `TODO.md`. Adapter resume planning is distinct from orchestrator-driven process lifecycle; see [Sessions and Resume](SESSIONS.md).
 ## HTTP Agent Administration
 
 Workspace agent list/detail endpoints validate the workspace but read the **global** agent registry. Agent detail and active-session counts are not workspace-bound. Active sessions count exact statuses `active` or `running` for the agent, without heartbeat-age or process checks. Stored status is returned as `health`, with empty status mapped to `unknown`; no executable probe occurs during these reads.

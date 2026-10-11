@@ -1,6 +1,6 @@
 # Orchestration
 
-The Go coordinator is implemented in `internal/orchestrator`. It maintains the shared run state and performs idempotent scheduling work; it does not launch external agent processes. Agent work enters through the MCP tool boundary and is represented by persisted tasks, proposals, votes, decisions, claims, and events.
+The scheduler service in `internal/orchestrator` maintains shared run state and performs idempotent scheduling; process launch is delegated by the CLI runtime to the container execution supervisor in `internal/adapters`. `roundtable run` and `roundtable start` wrap scheduler ticks with assigned-task dispatch. External workers receive scoped MCP capabilities and submit patches through proposals; they do not mutate the authoritative repository.
 
 `roundtable start` is the continuously running project owner. It stays alive while idle, ticks each active run independently, and exposes coordinator health through `/healthz`; it does not create a run. The default interval is one second. Per-run tick failures are retried with capped backoff and mark service health degraded without preventing other runs from ticking. The official MCP HTTP endpoint and stdio bridge both dispatch through the same runtime. Foreground operation does not install a boot service or restart after host reboot.
 
@@ -21,7 +21,7 @@ The loop retries non-cancellation errors with a fixed configured delay. Each ret
 
 An outstanding agent turn request keeps the run active. A run with no tasks and no proposals remains active as `awaiting_initial_work`; this permits work to arrive later through MCP. Completion and blocking use the exact status classification below. Pending, in-review, and revision-requested proposals prevent convergence, while other proposal statuses do not, even if they are unfamiliar strings.
 
-This is state-based convergence, not proof that an external agent executed code or that a test suite passed. Agent process execution/session capture and automated test orchestration are distinct capabilities and must not be inferred from run-loop behavior.
+This is state-based convergence, not proof that an external agent executed code or that a test suite passed. Containerized agent execution and structured provider session-ID capture are separate supervised capabilities; disposable provider-home state means cross-execution resume is not operational. Automated test orchestration must not be inferred from run-loop behavior.
 
 ## Loop options
 

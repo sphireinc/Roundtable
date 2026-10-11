@@ -128,6 +128,36 @@ func TestExecutionSupervisorCollectsPatchWithoutChangingAuthoritativeRepository(
 	}
 }
 
+func TestExecutionSupervisorPersistsCapturedProviderSessionAndResumeCommand(t *testing.T) {
+	repository := supervisorGitRepo(t)
+	store := supervisorStore(t)
+	supervisorAssignTask(t, store, "implementer")
+	runtime := &supervisorFakeRuntime{started: make(chan struct{}), stdout: "{\"type\":\"thread.started\",\"thread_id\":\"thread-123\"}\n"}
+	supervisor := newSupervisorWithTestMCP(t, repository, store, agentauth.New(nil), runtime)
+	cfg := supervisorConfig()
+	adapter := cfg.Adapters["codex"]
+	adapter.SupportsResume = true
+	adapter.CapturesSessionID = true
+	adapter.ResumePattern = "codex exec resume {{external_session_id}} --json"
+	cfg.Adapters["codex"] = adapter
+	supervisor.registry = NewRegistry(cfg)
+	handle, err := supervisor.Launch(context.Background(), StartAgentRequest{SessionID: "S-capture-persist", AgentID: "A-1", RunID: "R-1", TaskID: "T-1", Role: "Implementer"}, time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	outcome, err := handle.Wait(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	persisted, err := store.GetAgentSession(context.Background(), "S-capture-persist")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if outcome.Session.ExternalSessionID != "thread-123" || persisted.ExternalSessionID != "thread-123" || persisted.ExternalResumeCommand != "codex exec resume thread-123 --json" {
+		t.Fatalf("captured provider session was not persisted: outcome=%+v stored=%+v", outcome.Session, persisted)
+	}
+}
+
 func TestExecutionSupervisorSubmitsCollectedPatchThroughAuthorizedProposalTool(t *testing.T) {
 	repository := supervisorGitRepo(t)
 	store := supervisorStore(t)
@@ -792,6 +822,7 @@ type supervisorFakeRuntime struct {
 	egressClosed      bool
 	stopErr           error
 	duringRun         func(context.Context, sandbox.Spec) error
+	stdout            string
 }
 
 type supervisorRuntimeWithoutVolumeCleaner struct{ base *supervisorFakeRuntime }
@@ -838,7 +869,11 @@ func (r *supervisorFakeRuntime) Run(ctx context.Context, spec sandbox.Spec) (san
 			return sandbox.ExecutionResult{}, err
 		}
 	}
-	return sandbox.ExecutionResult{ExitCode: 0, StartedAt: started, EndedAt: time.Now().UTC(), Stdout: "done"}, nil
+	stdout := r.stdout
+	if stdout == "" {
+		stdout = "done"
+	}
+	return sandbox.ExecutionResult{ExitCode: 0, StartedAt: started, EndedAt: time.Now().UTC(), Stdout: stdout}, nil
 }
 
 func supervisorConfig() config.Config {

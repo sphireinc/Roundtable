@@ -40,15 +40,15 @@ Each adapter entry accepts only the following fields:
 | --- | --- | --- |
 | `image` | string | Trusted Docker/Podman image containing the adapter CLI. Required for container execution; use an immutable digest reference in production. |
 | `command` | string | Executable name used by the adapter inside its configured container image. |
-| `supports_resume` | boolean | Capability metadata indicating whether a resume command is configured. |
-| `resume_pattern` | string | Resume command template; `{{external_session_id}}` is the session-ID placeholder. |
+| `supports_resume` | boolean | Capability metadata indicating whether a resume command is configured. Defaults false for containerized agents because provider-home state is disposable. |
+| `resume_pattern` | string | Optional argv template; built-in disposable container adapters default to empty. |
 | `supports_mcp` | boolean | Capability metadata for MCP support. |
 | `supports_readonly_workspace` | boolean | Capability metadata for restricted workspace access. |
 | `captures_session_id` | boolean | Capability metadata indicating external session ID capture. |
 | `provider_hosts` | comma-separated exact DNS names | HTTPS provider destinations permitted through the session CONNECT gateway. No wildcard or IP literal is accepted. An empty list fails closed for execution. |
 | `credential_env` | comma-separated environment variable names | Explicit API-key variables eligible for injection into this adapter's container. Values are read by exact name; arbitrary host environment variables are never forwarded. |
 
-Built-in defaults are `codex` (`codex resume {{external_session_id}}`), `claude` (`claude --resume {{external_session_id}}`), `gemini` (`gemini resume {{external_session_id}}`), `opencode` (resume/session capture disabled), and `generic` (`sh`, MCP/resume/session capture disabled). The executable must be installed and on `PATH` to be useful. These capability flags describe adapter support; they do not mean process launch, output streaming, or session-ID discovery is already implemented.
+Built-in defaults set `supports_resume: false` and an empty `resume_pattern` for Codex, Claude, and Gemini because the container's provider home is destroyed at cleanup; OpenCode and generic also have resume/session capture disabled. Codex, Claude, and Gemini session IDs are captured for audit via provider-specific structured output. Pin images by immutable digest and verify flags against the actual CLI version; Roundtable does not negotiate CLI versions. An explicitly configured resume pattern is split into argv fields, requires exactly one standalone ID placeholder, and does not use a shell. It does not provision persistent provider state.
 
 Adapter names are map keys and can be extended in configuration using the supported scalar fields. A role's `adapter` field refers to one of those names. Adding a custom name does not install the CLI or provision its image. External execution fails closed unless the selected adapter has a trusted `image` and a usable Docker or Podman runtime; there is no host-process fallback.
 
@@ -75,8 +75,8 @@ adapters:
   codex:
     image: registry.example/roundtable-codex@sha256:<immutable-digest>
     command: codex
-    supports_resume: true
-    resume_pattern: "codex resume {{external_session_id}}"
+    supports_resume: false
+    resume_pattern: ""
     supports_mcp: true
     supports_readonly_workspace: true
     captures_session_id: true

@@ -146,11 +146,11 @@ func TestInitSeedsAdapterCapabilities(t *testing.T) {
 	if err != nil {
 		t.Fatalf("get adapter capability failed: %v", err)
 	}
-	if !capability.SupportsResume || !capability.SupportsMCP || !capability.SupportsSessionCapture {
+	if capability.SupportsResume || !capability.SupportsMCP || !capability.SupportsSessionCapture {
 		t.Fatalf("unexpected codex capability: %+v", capability)
 	}
-	if !strings.Contains(capability.MetadataJSON, `"resume_pattern":"codex resume {{external_session_id}}"`) {
-		t.Fatalf("expected resume pattern in metadata, got %s", capability.MetadataJSON)
+	if !strings.Contains(capability.MetadataJSON, `"resume_pattern":""`) {
+		t.Fatalf("expected resume to be disabled in metadata, got %s", capability.MetadataJSON)
 	}
 
 	generic, err := store.GetAdapterCapability(context.Background(), "generic")
@@ -181,7 +181,7 @@ func TestSessionsCommandListsStoredSessions(t *testing.T) {
 		RunID:                 "RUN-1",
 		Adapter:               "codex",
 		ExternalSessionID:     "ext-123",
-		ExternalResumeCommand: "codex resume ext-123",
+		ExternalResumeCommand: "",
 		WorkingDirectory:      root,
 		Status:                "active",
 	}); err != nil {
@@ -196,7 +196,7 @@ func TestSessionsCommandListsStoredSessions(t *testing.T) {
 		t.Fatalf("sessions failed: %v", err)
 	}
 	got := output.String()
-	if !strings.Contains(got, "S-1 implementer-1 active codex codex resume ext-123") {
+	if !strings.Contains(got, "S-1 implementer-1 active codex ") {
 		t.Fatalf("unexpected sessions output: %s", got)
 	}
 }
@@ -222,7 +222,7 @@ func TestSessionsLifecycleCommandsPersistSessionState(t *testing.T) {
 	}, &output, &output); err != nil {
 		t.Fatalf("sessions register failed: %v", err)
 	}
-	if !strings.Contains(output.String(), "S-1 implementer-1 active codex resume ext-123") {
+	if strings.TrimSpace(output.String()) != "S-1 implementer-1 active" {
 		t.Fatalf("unexpected register output: %s", output.String())
 	}
 
@@ -261,7 +261,7 @@ func TestSessionsLifecycleCommandsPersistSessionState(t *testing.T) {
 	if err != nil {
 		t.Fatalf("get session failed: %v", err)
 	}
-	if session.Status != "ended" || session.ExternalResumeCommand != "codex resume ext-123" || session.EndedAt == "" {
+	if session.Status != "ended" || session.ExternalResumeCommand != "" || session.EndedAt == "" {
 		t.Fatalf("unexpected stored session: %+v", session)
 	}
 	events, err := store.ListAgentSessionEvents(context.Background(), "S-1")

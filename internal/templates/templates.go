@@ -80,22 +80,22 @@ agents:
 adapters:
   codex:
     command: codex
-    supports_resume: true
-    resume_pattern: "codex resume {{external_session_id}}"
+    supports_resume: false
+    resume_pattern: ""
     supports_mcp: true
     supports_readonly_workspace: true
     captures_session_id: true
   claude:
     command: claude
-    supports_resume: true
-    resume_pattern: "claude --resume {{external_session_id}}"
+    supports_resume: false
+    resume_pattern: ""
     supports_mcp: true
     supports_readonly_workspace: true
     captures_session_id: true
   gemini:
     command: gemini
-    supports_resume: true
-    resume_pattern: "gemini resume {{external_session_id}}"
+    supports_resume: false
+    resume_pattern: ""
     supports_mcp: true
     supports_readonly_workspace: true
     captures_session_id: true
@@ -140,7 +140,7 @@ If you have something pressing to report or do, call agent.turn_request with run
 
 Record rationale with claims, proposals, votes, decisions, and releases. Follow the assigned role's review responsibilities; never treat a role label as proof that a CLI process was launched. When work is complete or blocked, report the evidence and uncertainty, update shared task/proposal state through MCP, and release claims when appropriate.
 
-The local runtime currently coordinates turns and stores session metadata but does not automatically launch external agent CLI processes or capture their session IDs. Consult generated MCP manifest and project docs for the tool schema and current feature boundaries.
+The runtime launches assigned external CLI workers only inside configured containers and captures supported structured session IDs for audit. Provider-home state is disposable, so external session IDs are not operationally resumable by default. Consult generated MCP manifests and project docs for the tool schema and current feature boundaries.
 `
 
 const projectDoc = `# Project: Roundtable
@@ -154,7 +154,7 @@ Roundtable is a shared-state agentic development management system. Many agents 
 - Go CLI/runtime: initializes SQLite-backed state, serves local MCP tools, runs the coordinator loop, and provides table/watch/TUI projections.
 - HTTP API: separate Go control-plane service with workspace-scoped REST and WebSocket/event endpoints, OpenAPI contract, governance and operational routes.
 - Web UI: separate Next.js client for the API. The dashboard is wired; other shell links are not all implemented pages.
-- Agent integration: MCP coordination, capability metadata, and session/briefing records exist. Automatic external CLI process launch, supervision, and session capture are not yet wired into the orchestrator.
+- Agent integration: External CLI workers launch only in configured container runtimes, receive session-scoped MCP capabilities, and return governed patch proposals. Supported structured-output IDs are captured. Provider-home persistence, automatic provider-session relaunch/resume across disposable containers, and live compatibility with pinned/authenticated provider images are not implemented.
 
 ## Implemented foundations and known boundaries
 

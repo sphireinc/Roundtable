@@ -48,7 +48,7 @@ roundtable run [--root DIR] [--run ID] [--goal TEXT] [--resume] [--headless]
 | `--max-consecutive-errors` | `5` | Fail the run after this many consecutive cycle errors. |
 | `--max-iterations` | `0` | Maximum cycles; zero means unlimited except headless mode's one-cycle default. |
 
-Interactive mode runs the MCP server and TUI while the orchestration loop continues. It does not launch configured CLI agents. See [Orchestration](ORCHESTRATION.md).
+Interactive mode runs the MCP server and TUI while the orchestration loop and its assigned-task container dispatcher continue. External CLI processes launch only through the configured Docker/Podman supervisor; built-in adapters do not retain provider-home state for later resume. See [Orchestration](ORCHESTRATION.md) and [Adapters](ADAPTERS.md).
 
 `resume` prints a briefing for a registered agent session and reconciles stale claims for that agent; it does not restart the external CLI or the TUI:
 

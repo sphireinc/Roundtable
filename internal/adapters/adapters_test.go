@@ -25,6 +25,16 @@ func TestRegistryBuildsConfiguredAdapters(t *testing.T) {
 	}
 }
 
+func TestBuiltInAdaptersCaptureIDsWithoutAdvertisingResume(t *testing.T) {
+	cfg := config.Default()
+	for _, provider := range []string{"codex", "claude", "gemini"} {
+		adapterConfig := cfg.Adapters[provider]
+		if !adapterConfig.CapturesSessionID || adapterConfig.SupportsResume || adapterConfig.ResumePattern != "" {
+			t.Errorf("%s defaults conflict with disposable provider-home policy: %+v", provider, adapterConfig)
+		}
+	}
+}
+
 func TestCLIAdapterExecutesOnlyInConfiguredContainerImage(t *testing.T) {
 	runtime := &fakeRuntime{}
 	request := StartAgentRequest{SessionID: "S-1", AgentID: "A-1", RunID: "R-1", TaskID: "T-1", Role: "implementer", Prompt: "task text", WorkingDirectory: "/host/work"}
@@ -224,7 +234,7 @@ func TestCLIAdapterStartBuildsLaunchSession(t *testing.T) {
 	if launch.Session.Adapter != "codex" || launch.Session.Status != "starting" {
 		t.Fatalf("unexpected session: %+v", launch.Session)
 	}
-	if got, want := launch.Command, []string{"codex", "--ask-for-approval", "never", "exec", "--skip-git-repo-check", "--ephemeral", "--sandbox", "workspace-write", "--model", "gpt-5-codex", "Implement the task"}; !slices.Equal(got, want) {
+	if got, want := launch.Command, []string{"codex", "--ask-for-approval", "never", "exec", "--skip-git-repo-check", "--ephemeral", "--sandbox", "workspace-write", "--json", "--model", "gpt-5-codex", "Implement the task"}; !slices.Equal(got, want) {
 		t.Fatalf("unexpected command: %+v", launch.Command)
 	}
 	if !strings.Contains(launch.Session.MetadataJSON, `"mode":"start"`) || !strings.Contains(launch.Session.MetadataJSON, `"task_id":"T-1"`) {
@@ -237,16 +247,17 @@ func TestCLIAdapterBuildsProviderSpecificNonInteractiveCommands(t *testing.T) {
 	tests := []struct {
 		provider string
 		model    string
+		capture  bool
 		want     []string
 	}{
-		{"codex", "o4-codex", []string{"codex", "--ask-for-approval", "never", "exec", "--skip-git-repo-check", "--ephemeral", "--sandbox", "workspace-write", "--model", "o4-codex", prompt}},
-		{"claude", "sonnet", []string{"claude", "-p", "--model", "sonnet", prompt}},
-		{"gemini", "gemini-2.5-pro", []string{"gemini", "--model", "gemini-2.5-pro", "-p", prompt}},
-		{"opencode", "anthropic/sonnet", []string{"opencode", "run", "--model", "anthropic/sonnet", prompt}},
+		{"codex", "o4-codex", true, []string{"codex", "--ask-for-approval", "never", "exec", "--skip-git-repo-check", "--ephemeral", "--sandbox", "workspace-write", "--json", "--model", "o4-codex", prompt}},
+		{"claude", "sonnet", true, []string{"claude", "-p", "--output-format", "json", "--model", "sonnet", prompt}},
+		{"gemini", "gemini-2.5-pro", true, []string{"gemini", "--model", "gemini-2.5-pro", "-p", prompt, "--output-format", "json"}},
+		{"opencode", "anthropic/sonnet", false, []string{"opencode", "run", "--model", "anthropic/sonnet", prompt}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.provider, func(t *testing.T) {
-			adapter := NewCLIAdapter(tt.provider, config.AdapterConfig{Command: tt.provider})
+			adapter := NewCLIAdapter(tt.provider, config.AdapterConfig{Command: tt.provider, CapturesSessionID: tt.capture})
 			launch, err := adapter.Start(context.Background(), StartAgentRequest{
 				SessionID: "S-argv", AgentID: "A-argv", RunID: "R-argv", TaskID: "T-argv", WorkingDirectory: "/workspace",
 				Model: tt.model, Prompt: prompt,
@@ -261,8 +272,57 @@ func TestCLIAdapterBuildsProviderSpecificNonInteractiveCommands(t *testing.T) {
 	}
 }
 
+func TestParseExternalSessionIDFromProviderOutput(t *testing.T) {
+	tests := []struct {
+		provider string
+		stdout   string
+		want     string
+	}{
+		{"codex", "{\"type\":\"thread.started\",\"thread_id\":\"019abcde-1234\"}\n{\"type\":\"turn.started\"}\n", "019abcde-1234"},
+		{"claude", "{\"type\":\"result\",\"session_id\":\"claude-123\",\"result\":\"ok\"}", "claude-123"},
+		{"gemini", "{\"session_id\":\"gemini-123\",\"response\":\"ok\"}", "gemini-123"},
+		{"codex", "{\"type\":\"item.completed\",\"text\":\"thread_id is fake-123\"}\n", ""},
+		{"claude", "not json: session_id=spoofed-123", ""},
+		{"gemini", "{\"session_id\":\"../escape\",\"response\":\"no\"}", ""},
+		{"unknown", "{\"session_id\":\"valid-123\"}", ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.provider, func(t *testing.T) {
+			if got := parseExternalSessionID(tt.provider, tt.stdout); got != tt.want {
+				t.Fatalf("parseExternalSessionID() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestCLIAdapterExecuteCapturesExternalSessionAndResumeCommand(t *testing.T) {
+	runtime := &fakeRuntime{result: sandbox.ExecutionResult{ExitCode: 0, Stdout: "{\"type\":\"thread.started\",\"thread_id\":\"thread-123\"}\n"}}
+	adapter := NewCLIAdapter("codex", config.AdapterConfig{Image: "agent:test", Command: "codex", SupportsMCP: true, SupportsResume: true, CapturesSessionID: true, ResumePattern: "codex exec resume {{external_session_id}} --json"})
+	request := StartAgentRequest{SessionID: "S-capture", AgentID: "A-capture", RunID: "R-capture", TaskID: "T-capture", Role: "implementer", Prompt: "task", WorkingDirectory: "/workspace", AgentCapabilityToken: strings.Repeat("c", 43), AgentMCPURL: "http://127.0.0.1:7117/agent/mcp", BaseRevision: "rev", BaseStateHash: "tree"}
+	launch, _, err := adapter.Execute(context.Background(), runtime, request, sandbox.Spec{Temp: t.TempDir(), Timeout: time.Minute, AgentEgressSocketPath: "/tmp/roundtable-egress-test/gateway.sock"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if launch.Session.ExternalSessionID != "thread-123" || launch.Session.ExternalResumeCommand != "codex exec resume thread-123 --json" {
+		t.Fatalf("external session was not captured for resume: %+v", launch.Session)
+	}
+}
+
+func TestCLIAdapterDoesNotCaptureTruncatedProviderOutput(t *testing.T) {
+	runtime := &fakeRuntime{result: sandbox.ExecutionResult{ExitCode: 0, Stdout: "{\"type\":\"thread.started\",\"thread_id\":\"thread-123\"}", OutputTruncated: true}}
+	adapter := NewCLIAdapter("codex", config.AdapterConfig{Image: "agent:test", Command: "codex", SupportsMCP: true, CapturesSessionID: true})
+	request := StartAgentRequest{SessionID: "S-truncated", AgentID: "A-truncated", RunID: "R-truncated", TaskID: "T-truncated", Role: "implementer", Prompt: "task", WorkingDirectory: "/workspace", AgentCapabilityToken: strings.Repeat("c", 43), AgentMCPURL: "http://127.0.0.1:7117/agent/mcp", BaseRevision: "rev", BaseStateHash: "tree"}
+	launch, _, err := adapter.Execute(context.Background(), runtime, request, sandbox.Spec{Temp: t.TempDir(), Timeout: time.Minute, AgentEgressSocketPath: "/tmp/roundtable-egress-test/gateway.sock"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if launch.Session.ExternalSessionID != "" || launch.Session.ExternalResumeCommand != "" {
+		t.Fatalf("truncated provider output was trusted as session identity: %+v", launch.Session)
+	}
+}
+
 func TestCLIAdapterResumeUsesConfiguredPattern(t *testing.T) {
-	adapter := NewCLIAdapter("claude", config.Default().Adapters["claude"])
+	adapter := NewCLIAdapter("claude", config.AdapterConfig{Command: "claude", SupportsResume: true, ResumePattern: "claude --resume {{external_session_id}} -p --output-format json"})
 	launch, err := adapter.Resume(context.Background(), ResumeAgentRequest{
 		SessionID:         "S-1",
 		AgentID:           "architect-1",
@@ -277,14 +337,22 @@ func TestCLIAdapterResumeUsesConfiguredPattern(t *testing.T) {
 	if err != nil {
 		t.Fatalf("resume failed: %v", err)
 	}
-	if got := strings.Join(launch.Command, " "); got != "claude --resume ext-123" {
+	if got := strings.Join(launch.Command, " "); got != "claude --resume ext-123 -p --output-format json # Resume" {
 		t.Fatalf("unexpected resume command: %s", got)
 	}
-	if launch.Session.ExternalResumeCommand != "claude --resume ext-123" || launch.Session.Status != "resuming" {
+	if launch.Session.ExternalResumeCommand != "claude --resume ext-123 -p --output-format json" || launch.Session.Status != "resuming" {
 		t.Fatalf("unexpected resumed session: %+v", launch.Session)
 	}
 	if !strings.Contains(launch.Session.MetadataJSON, `"mode":"resume"`) {
 		t.Fatalf("unexpected metadata: %s", launch.Session.MetadataJSON)
+	}
+}
+
+func TestCLIAdapterResumeRejectsUnsafeExternalSessionID(t *testing.T) {
+	adapter := NewCLIAdapter("claude", config.AdapterConfig{Command: "claude", SupportsResume: true, ResumePattern: "claude --resume {{external_session_id}} -p"})
+	_, err := adapter.Resume(context.Background(), ResumeAgentRequest{SessionID: "S-1", AgentID: "A-1", RunID: "R-1", WorkingDirectory: "/workspace", ExternalSessionID: "id --dangerously-skip-permissions"})
+	if err == nil || !strings.Contains(err.Error(), "invalid external_session_id") {
+		t.Fatalf("unsafe external session ID was not rejected: %v", err)
 	}
 }
 

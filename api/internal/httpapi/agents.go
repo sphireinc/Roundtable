@@ -140,7 +140,7 @@ func (s *Server) agentResponse(r *http.Request, agent db.Agent) (agentResponse, 
 	resume, mcp := false, false
 	switch agent.Adapter {
 	case "codex", "claude", "gemini":
-		resume, mcp = true, true
+		mcp = true
 	case "opencode":
 		mcp = true
 	}

@@ -39,7 +39,7 @@ func TestSessionLifecycleStateMachineAndWorkspaceBoundary(t *testing.T) {
 	if err := json.Unmarshal(res.Body.Bytes(), &created); err != nil {
 		t.Fatal(err)
 	}
-	if created.Status != "starting" || created.ResumeCommandTemplate != "codex resume <external_session_id>" {
+	if created.Status != "starting" || created.ResumeCommandTemplate != "" {
 		t.Fatalf("created = %+v", created)
 	}
 

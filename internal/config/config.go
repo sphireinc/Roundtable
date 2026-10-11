@@ -97,8 +97,8 @@ func Default() Config {
 		Adapters: map[string]AdapterConfig{
 			"codex": {
 				Command:                   "codex",
-				SupportsResume:            true,
-				ResumePattern:             "codex resume {{external_session_id}}",
+				SupportsResume:            false,
+				ResumePattern:             "",
 				SupportsMCP:               true,
 				SupportsReadOnlyWorkspace: true,
 				CapturesSessionID:         true,
@@ -107,8 +107,8 @@ func Default() Config {
 			},
 			"claude": {
 				Command:                   "claude",
-				SupportsResume:            true,
-				ResumePattern:             "claude --resume {{external_session_id}}",
+				SupportsResume:            false,
+				ResumePattern:             "",
 				SupportsMCP:               true,
 				SupportsReadOnlyWorkspace: true,
 				CapturesSessionID:         true,
@@ -117,8 +117,8 @@ func Default() Config {
 			},
 			"gemini": {
 				Command:                   "gemini",
-				SupportsResume:            true,
-				ResumePattern:             "gemini resume {{external_session_id}}",
+				SupportsResume:            false,
+				ResumePattern:             "",
 				SupportsMCP:               true,
 				SupportsReadOnlyWorkspace: true,
 				CapturesSessionID:         true,

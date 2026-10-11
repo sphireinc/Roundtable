@@ -11,6 +11,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 	"time"
@@ -37,6 +38,8 @@ type AdapterCapabilities struct {
 
 const agentMCPContainerSocket = "/run/roundtable-agent-mcp.sock"
 const agentEgressContainerSocket = "/run/roundtable-egress/g"
+
+var validExternalSessionID = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9_-]{0,127}$`)
 
 type StartAgentRequest struct {
 	SessionID            string
@@ -159,6 +162,12 @@ func (a *CLIAdapter) Execute(ctx context.Context, runtime sandbox.Runtime, req S
 		result.Stderr = strings.ReplaceAll(result.Stderr, secret, "[REDACTED_PROVIDER_CREDENTIAL]")
 		if runErr != nil {
 			runErr = errors.New(strings.ReplaceAll(runErr.Error(), secret, "[REDACTED_PROVIDER_CREDENTIAL]"))
+		}
+	}
+	if a.cfg.CapturesSessionID && !result.OutputTruncated {
+		if externalID := parseExternalSessionID(a.name, result.Stdout); externalID != "" {
+			launch.Session.ExternalSessionID = externalID
+			launch.Session.ExternalResumeCommand = a.resumeCommandWhenSupported(externalID)
 		}
 	}
 	metadata := map[string]any{}
@@ -378,7 +387,7 @@ func (a *CLIAdapter) Start(_ context.Context, req StartAgentRequest) (LaunchSess
 		Provider:              req.Provider,
 		Model:                 req.Model,
 		ExternalSessionID:     req.ExternalSessionID,
-		ExternalResumeCommand: a.resumeCommand(req.ExternalSessionID),
+		ExternalResumeCommand: a.resumeCommandWhenSupported(req.ExternalSessionID),
 		WorkingDirectory:      req.WorkingDirectory,
 		MCPSocket:             req.MCPSocket,
 		Status:                "starting",
@@ -395,8 +404,8 @@ func (a *CLIAdapter) Resume(_ context.Context, req ResumeAgentRequest) (LaunchSe
 	if !a.cfg.SupportsResume {
 		return LaunchSession{}, fmt.Errorf("adapter %s does not support resume", a.name)
 	}
-	if strings.TrimSpace(req.ExternalSessionID) == "" {
-		return LaunchSession{}, errors.New("external_session_id is required for resume")
+	if !validExternalSessionID.MatchString(req.ExternalSessionID) {
+		return LaunchSession{}, errors.New("invalid external_session_id for resume")
 	}
 	if strings.TrimSpace(req.SessionID) == "" || strings.TrimSpace(req.AgentID) == "" || strings.TrimSpace(req.RunID) == "" || strings.TrimSpace(req.WorkingDirectory) == "" {
 		return LaunchSession{}, errors.New("session_id, agent_id, run_id, and working_directory are required")
@@ -409,16 +418,20 @@ func (a *CLIAdapter) Resume(_ context.Context, req ResumeAgentRequest) (LaunchSe
 		Provider:              req.Provider,
 		Model:                 req.Model,
 		ExternalSessionID:     req.ExternalSessionID,
-		ExternalResumeCommand: a.resumeCommand(req.ExternalSessionID),
+		ExternalResumeCommand: a.resumeCommandWhenSupported(req.ExternalSessionID),
 		WorkingDirectory:      req.WorkingDirectory,
 		MCPSocket:             req.MCPSocket,
 		Status:                "resuming",
 		LastSeenAt:            time.Now().UTC().Format(time.RFC3339),
 		MetadataJSON:          mustJSON(map[string]any{"mode": "resume", "role": req.Role, "task_id": req.TaskID, "briefing_md": req.ResumeBriefingMD}),
 	}
+	args, err := a.resumeArgs(req.ExternalSessionID, req.ResumeBriefingMD)
+	if err != nil {
+		return LaunchSession{}, err
+	}
 	return LaunchSession{
 		Session: session,
-		Command: a.resumeArgs(req.ExternalSessionID),
+		Command: args,
 	}, nil
 }
 
@@ -435,6 +448,9 @@ func (a *CLIAdapter) startCommand(req StartAgentRequest) []string {
 	switch a.name {
 	case "codex":
 		args = append(args, "--ask-for-approval", "never", "exec", "--skip-git-repo-check", "--ephemeral", "--sandbox", "workspace-write")
+		if a.cfg.CapturesSessionID {
+			args = append(args, "--json")
+		}
 		if req.Model != "" {
 			args = append(args, "--model", req.Model)
 		}
@@ -443,6 +459,9 @@ func (a *CLIAdapter) startCommand(req StartAgentRequest) []string {
 		}
 	case "claude":
 		args = append(args, "-p")
+		if a.cfg.CapturesSessionID {
+			args = append(args, "--output-format", "json")
+		}
 		if req.Model != "" {
 			args = append(args, "--model", req.Model)
 		}
@@ -455,6 +474,9 @@ func (a *CLIAdapter) startCommand(req StartAgentRequest) []string {
 		}
 		if req.Prompt != "" {
 			args = append(args, "-p", req.Prompt)
+		}
+		if a.cfg.CapturesSessionID {
+			args = append(args, "--output-format", "json")
 		}
 	case "opencode":
 		args = append(args, "run")
@@ -477,19 +499,85 @@ func (a *CLIAdapter) startCommand(req StartAgentRequest) []string {
 	return args
 }
 
-func (a *CLIAdapter) resumeArgs(externalSessionID string) []string {
-	command := a.resumeCommand(externalSessionID)
-	if command == "" {
-		return []string{strings.TrimSpace(a.cfg.Command)}
+func (a *CLIAdapter) resumeArgs(externalSessionID, briefing string) ([]string, error) {
+	if !validExternalSessionID.MatchString(externalSessionID) {
+		return nil, errors.New("invalid external_session_id for resume")
 	}
-	return strings.Fields(command)
+	args := strings.Fields(a.cfg.ResumePattern)
+	placeholderCount := 0
+	for index, arg := range args {
+		if arg == "{{external_session_id}}" {
+			args[index] = externalSessionID
+			placeholderCount++
+		}
+	}
+	if placeholderCount != 1 || len(args) == 0 {
+		return nil, fmt.Errorf("adapter %s resume_pattern must contain exactly one standalone {{external_session_id}} argument", a.name)
+	}
+	if strings.TrimSpace(briefing) != "" {
+		args = append(args, strings.TrimSpace(briefing))
+	}
+	return args, nil
 }
 
 func (a *CLIAdapter) resumeCommand(externalSessionID string) string {
-	if externalSessionID == "" || a.cfg.ResumePattern == "" {
+	if !validExternalSessionID.MatchString(externalSessionID) || a.cfg.ResumePattern == "" {
 		return ""
 	}
-	return strings.ReplaceAll(a.cfg.ResumePattern, "{{external_session_id}}", externalSessionID)
+	args := strings.Fields(a.cfg.ResumePattern)
+	placeholderCount := 0
+	for index, arg := range args {
+		if arg == "{{external_session_id}}" {
+			args[index] = externalSessionID
+			placeholderCount++
+		}
+	}
+	if placeholderCount != 1 {
+		return ""
+	}
+	return strings.Join(args, " ")
+}
+
+func (a *CLIAdapter) resumeCommandWhenSupported(externalSessionID string) string {
+	if !a.cfg.SupportsResume {
+		return ""
+	}
+	return a.resumeCommand(externalSessionID)
+}
+
+func parseExternalSessionID(provider, output string) string {
+	valid := func(candidate string) string {
+		if validExternalSessionID.MatchString(candidate) {
+			return candidate
+		}
+		return ""
+	}
+	if provider == "codex" {
+		for _, line := range strings.Split(output, "\n") {
+			var event struct {
+				Type     string `json:"type"`
+				ThreadID string `json:"thread_id"`
+			}
+			if json.Unmarshal([]byte(line), &event) == nil && event.Type == "thread.started" {
+				return valid(event.ThreadID)
+			}
+		}
+		return ""
+	}
+	if provider != "claude" && provider != "gemini" {
+		return ""
+	}
+	var outputEnvelope struct {
+		Type      string `json:"type"`
+		SessionID string `json:"session_id"`
+	}
+	if json.Unmarshal([]byte(strings.TrimSpace(output)), &outputEnvelope) != nil {
+		return ""
+	}
+	if provider == "claude" && outputEnvelope.Type != "result" {
+		return ""
+	}
+	return valid(outputEnvelope.SessionID)
 }
 
 func mustJSON(value any) string {

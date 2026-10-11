@@ -18,7 +18,7 @@ An active run may be waiting for initial work, a pending agent turn, unresolved 
 
 ## Adapter command does not execute
 
-The adapter package currently computes command/resume plans and capability metadata; the orchestrator does not launch external CLI agents or capture their session IDs. Confirm agent CLI installation only if using the command plan manually. See [Agent Adapters](ADAPTERS.md) and [Sessions and Resume](SESSIONS.md).
+The execution supervisor launches configured external CLI workers inside containers and captures supported structured session IDs. It does not retain provider-home state after execution cleanup, so a captured ID alone cannot resume a later execution. Confirm container runtime/image availability and inspect persisted execution metadata. See [Agent Adapters](ADAPTERS.md) and [Sessions and Resume](SESSIONS.md).
 
 ## UI configuration or API connection failure
 
@@ -76,7 +76,7 @@ Effective settings overlay only the latest workspace revision's one section onto
 
 ## Deliberation or session says running but no agent executes
 
-HTTP deliberation start changes stored status without launching a provider, advancing rounds, or enforcing its budget/time metadata. HTTP session creation records `starting` without spawning a CLI. Check the actual runtime process, adapter execution path, and session evidence separately. A static readiness label or stored status is not a process probe. Do not repeatedly create sessions/deliberations to force execution. See [Deliberation Administration](../api/README.md#deliberation-administration), [Sessions](SESSIONS.md), and [Adapters](ADAPTERS.md).
+HTTP deliberation start changes stored status without launching a provider, advancing rounds, or enforcing its budget/time metadata. HTTP session creation records `starting` without spawning a CLI. The separate coordinator execution supervisor launches configured external CLIs inside containers and captures supported structured session IDs, but provider-home persistence and automatic resume across disposable containers are not implemented. Check the actual runtime process and execution evidence separately; a static readiness label or stored status is not a process probe. Do not repeatedly create sessions/deliberations to force execution. See [Deliberation Administration](../api/README.md#deliberation-administration), [Sessions](SESSIONS.md), and [Adapters](ADAPTERS.md).
 
 ## Compensation proposal fails patch parsing
 

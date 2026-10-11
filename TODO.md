@@ -1,2 +1,2 @@
-  - Verify provider-pinned CLI compatibility and implement/test provider-specific external session ID capture and resume where supported.
+  - Run authenticated smoke tests against immutable, provider-pinned Codex, Claude, and Gemini CLI images; confirm structured-output flags and captured IDs. Adapter parsing/argv unit and supervisor persistence coverage is implemented, but live provider compatibility is not yet verified. Built-in provider resume remains intentionally disabled under the disposable-worker policy.
   - Do production hardening: config validation, error surfacing, performance tuning, and operational docs.

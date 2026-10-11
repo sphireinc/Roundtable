@@ -622,6 +622,7 @@ func (s *ExecutionSupervisor) run(ctx context.Context, cancel context.CancelFunc
 	process.Stderr = redactCapability(process.Stderr, req.AgentCapabilityToken)
 	if launch.Session.ID != "" {
 		session.ExternalSessionID = launch.Session.ExternalSessionID
+		session.ExternalResumeCommand = launch.Session.ExternalResumeCommand
 	}
 	if process.TimedOut || errors.Is(ctx.Err(), context.DeadlineExceeded) {
 		session.Status = "timed_out"

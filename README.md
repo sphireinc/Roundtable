@@ -11,7 +11,7 @@ Instead of giving several agents independent copies of a codebase and reconcilin
 **[Documentation](https://sphireinc.github.io/Roundtable/)** · **[Quickstart](docs/QUICKSTART.md)** · **[Architecture](docs/ARCHITECTURE.md)** · **[Agent protocol](AGENTS.ROUNDTABLE.md)** · **[Governance policy](POLICIES.ROUNDTABLE.md)**
 
 > [!IMPORTANT]
-> **Project status: experimental / active development.** Roundtable implements substantial coordination and governance infrastructure, but it is **not yet a turnkey autonomous coding team**. The coordinator does not launch or supervise external coding-agent processes, and some security and validation boundaries are not fully enforced. Start in a trusted, local development environment. See [What works today](#what-works-today) and [Known limitations](#known-limitations).
+> **Project status: experimental / active development.** Roundtable implements substantial coordination and governance infrastructure, but it is **not yet a turnkey autonomous coding team**. The coordinator can launch and supervise external coding-agent processes inside configured containers; built-in agents use disposable provider state, so later provider-session resume is disabled. Some security and validation boundaries are not fully enforced. Start in a trusted, local development environment. See [What works today](#what-works-today) and [Known limitations](#known-limitations).
 
 ![Roundtable's human operator overseeing specialized AI agents](arch2.png)
 
@@ -36,7 +36,7 @@ An important distinction: Roundtable also has a configurable **agent Chair / Mod
 | **Security** | Reviews security-sensitive changes and can record objections or vetoes under policy. |
 | **Memory Oracle** | Preserves and retrieves durable project facts, decisions, and context. |
 
-Roles are **not permanently bound to specific models**. Roundtable's configuration describes adapters and model metadata for roles and implementer/reviewer pools. Its built-in adapter definitions cover Codex, Claude, Gemini, OpenCode, and a generic adapter. **Adapter configuration does not mean the corresponding provider process is automatically launched.** See [Configuration](docs/CONFIGURATION.md) and [Adapters](docs/ADAPTERS.md).
+Roles are **not permanently bound to specific models**. Roundtable's configuration describes adapters and model metadata for roles and implementer/reviewer pools. Its built-in adapter definitions cover Codex, Claude, Gemini, OpenCode, and a generic adapter. Configuration alone does not launch a process; `roundtable run`/`start` dispatches assigned tasks through the container supervisor when a trusted image and supported runtime are configured. See [Configuration](docs/CONFIGURATION.md) and [Adapters](docs/ADAPTERS.md).
 
 ## Why Roundtable?
 
@@ -114,6 +114,7 @@ The repository includes implemented components for:
 | **Workspace initialization** | Scaffolds project protocol/policy files, configuration, SQLite state, memory directories, and generated agent-tool assets. |
 | **Durable coordination** | Persists runs, tasks, agents, sessions, scheduled turns, claims, proposals, reviews/decisions, events, and memory. |
 | **Coordinator loop** | Assigns open tasks to configured implementer IDs, requests reviews, schedules queued turns, and evaluates state-based convergence. |
+| **Containerized CLI workers** | Dispatches assigned tasks to configured Docker/Podman images with scoped MCP capabilities; workers return governed proposal patches. Built-in provider session IDs are captured for audit, but provider-home state is disposable and operational resume is disabled. |
 | **CLI + terminal visibility** | `init`, `run`, `resume`, `sessions`, `table`, `watch`, `claims`, `symbols`, and `mcp` commands; interactive terminal UI. |
 | **Local tool API** | Roundtable-specific Unix-socket tool dispatch for state queries and supported engineering operations. |
 | **Resource claims** | File/directory/symbol resource identities, claim lifecycle, TTL, conflict checks, and stale-state reconciliation functions. |
@@ -122,7 +123,7 @@ The repository includes implemented components for:
 | **Persistence and memory** | SQLite-backed history, event records, project memory, and session metadata. |
 | **Separate API + web UI** | HTTP control-plane endpoints and a functional dashboard, alongside incomplete administrative surfaces. |
 
-The existence of a command, schema, or database record **does not imply automated external-agent execution or end-to-end enforcement**. For precise behavior, consult the [implementation-focused documentation](https://sphireinc.github.io/Roundtable/).
+The existence of a command, schema, or database record **does not imply that every task launches a provider, that a task is accepted, or that governance is enforced end to end**. Container execution requires trusted images and a usable runtime. For precise behavior, consult the [implementation-focused documentation](https://sphireinc.github.io/Roundtable/).
 
 ## Quickstart (local runtime)
 
@@ -131,7 +132,7 @@ The existence of a command, schema, or database record **does not imply automate
 - **Go 1.26 or newer**, as specified in [`go.mod`](go.mod).
 - A working **C toolchain / CGO** for the project's SQLite dependency (`go-sqlite3`).
 - A **POSIX environment** for the current Unix-domain socket transport.
-- Optional coding-agent CLIs installed separately if you intend to attach external participants. Installation alone does not connect or launch them.
+- Docker or Podman and trusted, configured agent images containing the provider CLI and Roundtable's scoped MCP bridge executable.
 
 Clone and build Roundtable:
 
@@ -234,7 +235,7 @@ Other project-facing documents are part of the operating contract:
 
 Roundtable is deliberately explicit about the distance between its architectural goals and current guarantees:
 
-1. **No automatic coding-agent process supervision.** Adapter descriptions and command plans exist, but the Go coordinator does not yet launch/resume and monitor external agent CLI processes. See [Orchestration](docs/ORCHESTRATION.md) and [Adapters](docs/ADAPTERS.md).
+1. **Provider session resume is not operational across disposable runs.** The execution supervisor launches and monitors external CLI workers inside configured containers, captures supported structured session IDs, and sends patches through proposal governance. It does not retain provider-home transcripts/state after cleanup or relaunch a later provider session. See [Orchestration](docs/ORCHESTRATION.md) and [Adapters](docs/ADAPTERS.md).
 2. **Local tool callers are trusted.** The Unix-socket protocol does not authenticate individual agent principals. Actor IDs supplied as tool arguments are not identity proof. Treat socket/file permissions as a critical trust boundary. See [MCP tools](docs/MCP_TOOLS.md).
 3. **Claims are not fully race-proof.** Conflict checking and acquisition do not yet provide a single database-enforced atomic exclusion boundary. See [Claims](docs/CLAIMS.md).
 4. **Patch evidence can become stale.** Replacing a proposal's patch does not automatically invalidate previous votes, approvals, security records, or tests. See [Transactions](docs/TRANSACTIONS.md).

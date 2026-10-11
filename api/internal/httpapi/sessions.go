@@ -103,7 +103,7 @@ func (s *Server) createSession(w http.ResponseWriter, r *http.Request) {
 	now := time.Now().UTC().Format(time.RFC3339Nano)
 	id := fmt.Sprintf("session-%d", time.Now().UnixNano())
 	metadata, _ := json.Marshal(map[string]string{"workspace_id": workspace.ID, "branch": workspace.DefaultBranch})
-	session := db.AgentSession{ID: id, AgentID: input.AgentID, RunID: input.RunID, Adapter: input.Adapter, Provider: input.Provider, Model: input.Model, ExternalSessionID: input.ExternalSessionID, ExternalResumeCommand: input.Adapter + " resume {{external_session_id}}", WorkingDirectory: workspace.RootPath, Status: "starting", StartedAt: now, LastSeenAt: now, MetadataJSON: string(metadata)}
+	session := db.AgentSession{ID: id, AgentID: input.AgentID, RunID: input.RunID, Adapter: input.Adapter, Provider: input.Provider, Model: input.Model, ExternalSessionID: input.ExternalSessionID, WorkingDirectory: workspace.RootPath, Status: "starting", StartedAt: now, LastSeenAt: now, MetadataJSON: string(metadata)}
 	if err := s.config.Store.UpsertAgentSession(r.Context(), session); err != nil {
 		WriteProblem(w, r, 409, "session_create_conflict", "Session could not be created", err.Error())
 		return
@@ -296,7 +296,7 @@ func isHeartbeatSessionState(status string) bool {
 	return isActiveSessionState(status)
 }
 func toSessionResponse(session db.AgentSession) sessionResponse {
-	return sessionResponse{ID: session.ID, AgentID: session.AgentID, RunID: session.RunID, Adapter: session.Adapter, Provider: session.Provider, Model: session.Model, ExternalSessionID: session.ExternalSessionID, ResumeCommandTemplate: session.Adapter + " resume <external_session_id>", Status: session.Status, StartedAt: session.StartedAt, LastSeenAt: session.LastSeenAt, EndedAt: session.EndedAt}
+	return sessionResponse{ID: session.ID, AgentID: session.AgentID, RunID: session.RunID, Adapter: session.Adapter, Provider: session.Provider, Model: session.Model, ExternalSessionID: session.ExternalSessionID, ResumeCommandTemplate: session.ExternalResumeCommand, Status: session.Status, StartedAt: session.StartedAt, LastSeenAt: session.LastSeenAt, EndedAt: session.EndedAt}
 }
 func (s *Server) appendSessionEvent(ctx context.Context, session db.AgentSession, event, actor, requestID string) {
 	payload, _ := json.Marshal(map[string]any{"session_id": session.ID, "status": session.Status, "request_id": requestID})

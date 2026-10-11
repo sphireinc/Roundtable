@@ -7,7 +7,7 @@ This guide starts the local Go runtime. The separate HTTP API and Next.js UI hav
 - Go version declared in the root `go.mod`.
 - A local loopback TCP listener for standard MCP HTTP; the compatibility socket additionally requires Unix-domain socket support.
 - SQLite support provided by the Go dependencies; no external database server is required.
-- Optional agent CLIs (`codex`, `claude`, `gemini`, `opencode`) for integrations. The current adapter layer advertises capabilities and constructs launch/resume plans; it does not yet supervise real agent processes.
+- Optional Docker or Podman runtime plus trusted agent images containing the configured CLI and Roundtable executable. External CLI processes are supervised only in containers and submit patches as governed proposals. Captured provider session IDs are operational metadata; provider-home persistence and automatic resume across disposable containers are not implemented.
 
 ## Initialize
 
@@ -90,7 +90,7 @@ Use `roundtable table`, `roundtable watch`, `roundtable claims list`, and `round
 3. Confirm the HTTP bind is loopback unless remote access is intentional and protected by TLS plus `ROUNDTABLE_MCP_TOKEN`. Socket recovery rejects non-socket and live paths and removes only a confirmed stale socket. Protect the project account and socket permissions.
 4. Review the [MCP transport](MCP_TOOLS.md) and its authority: HTTP/stdio are standard MCP transports, while the compatibility Unix socket is custom Roundtable IPC. None provides cryptographic per-agent identity or an OS sandbox. A connected caller can invoke implemented mutating tools; proposal/policy/approval/transaction gates remain the application boundary.
 5. If using the separate HTTP service, review [authentication limitations](../api/README.md#authentication-and-authorization) before sharing either token. An agent token is not currently a reliably isolated human-control boundary. Do not start the publicly mapped Compose service with empty credentials on a shared network or put privileged tokens in browser public variables.
-6. Keep the run ID and database association explicit when requesting turns. A standalone socket server accepts tool calls but does not tick the scheduler; headless single-cycle mode does not provide a continuously listening interactive coordinator. Turn scheduling does not launch external CLI agents.
+6. Keep the run ID and database association explicit when requesting turns. A standalone socket server accepts tool calls but does not tick the scheduler; headless single-cycle mode does not provide a continuously listening interactive coordinator. A turn-request event alone does not launch an agent; the running coordinator separately dispatches assigned tasks through the container supervisor.
 
 ### Interpreting the First Successful Run
 

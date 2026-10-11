@@ -345,7 +345,7 @@ Required fields: `agent_id`, `display_name`, `adapter_type`, `enabled`, `health`
 | `health` | `string` | yes |  | Stored agent status, with an empty value projected as unknown; not an executable or heartbeat probe. |
 | `executable_version` | `string` | no |  | Optional executable version field; the current agent response projection does not populate it. |
 | `capabilities` | object (values of `boolean`) | yes |  | Capability labels currently derived from exact adapter-name cases, not dynamically inspected from configured adapter metadata or enforced as OS restrictions. |
-| `supports_resume` | `boolean` | yes |  | Hardcoded response capability: true for codex, claude, and gemini; false for other adapter names, regardless of custom configuration. |
+| `supports_resume` | `boolean` | yes |  | Operational resume capability; false for built-in disposable container adapters because provider-home state is not retained. |
 | `supports_mcp` | `boolean` | yes |  | Hardcoded response capability: true for codex, claude, gemini, and opencode; false for other adapter names. |
 | `concurrency_limit` | `integer` | yes | minimum=1 | Advertised as 1 by the current handler; this response value does not enforce session scheduling or process concurrency. |
 | `policy_weight` | `integer` | yes | minimum=0 | Advertised as 1 by the current handler; this is not a dynamically loaded policy weight or enforced scheduling limit. |

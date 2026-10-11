@@ -28,7 +28,7 @@ func TestAgentRegistryRedactsCommandAndSupportsDrainDisable(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/workspaces/ws-agent/agents", nil)
 	res := httptest.NewRecorder()
 	server.Handler().ServeHTTP(res, req)
-	if res.Code != http.StatusOK || bytes.Contains(res.Body.Bytes(), []byte("secret")) || !bytes.Contains(res.Body.Bytes(), []byte(`"supports_resume":true`)) {
+	if res.Code != http.StatusOK || bytes.Contains(res.Body.Bytes(), []byte("secret")) || !bytes.Contains(res.Body.Bytes(), []byte(`"supports_resume":false`)) {
 		t.Fatalf("list = %d %s", res.Code, res.Body.String())
 	}
 
